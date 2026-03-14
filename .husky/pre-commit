@@ -1,64 +1,143 @@
 #!/bin/sh
 
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$STAGED_FILES" ] && exit 0
 
-# --- 1. TypeScript type checking (only when .ts files are staged) ---
+# --- 1. TypeScript type checking ---
 if echo "$STAGED_FILES" | grep -qE '\.tsx?$'; then
+    echo "🔍 Running TypeScript type check..."
     pnpm run typecheck || exit 1
 fi
 
-# --- 2. Prevent secrets and credentials from being committed ---
-SECRETS_PATTERN='(PRIVATE KEY|password\s*=\s*["\x27][^"\x27]{8,}|api[_-]?key\s*[:=]\s*["\x27][^"\x27]{8,}|secret\s*[:=]\s*["\x27][^"\x27]{8,}|AWS_SECRET_ACCESS_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|sk-[a-zA-Z0-9]{32,})'
-
-if [ -n "$STAGED_FILES" ]; then
-    MATCHES=$(echo "$STAGED_FILES" | xargs grep -lEi "$SECRETS_PATTERN" 2>/dev/null | grep -v '.husky/' | grep -v 'pnpm-lock.yaml' || true)
-    if [ -n "$MATCHES" ]; then
-        echo "❌ Possible secrets detected in staged files:"
-        echo ""
-        echo "$MATCHES" | while read -r f; do
-            echo "   $f"
-        done
+# --- 2. Gitleaks secret detection ---
+if command -v gitleaks > /dev/null 2>&1; then
+    echo "🔐 Scanning for secrets (gitleaks)..."
+    gitleaks protect --staged --config .gitleaks.toml --no-banner || {
         echo ""
         echo "   To override: git commit --no-verify"
         exit 1
-    fi
+    }
+else
+    echo "⚠️  gitleaks not installed — skipping secret scan (brew install gitleaks)"
 fi
 
-# --- 3. Prevent large files (>1MB) ---
-if [ -n "$STAGED_FILES" ]; then
-    LARGE=""
-    for file in $STAGED_FILES; do
-        if [ -f "$file" ]; then
-            SIZE=$(wc -c < "$file" 2>/dev/null || echo "0")
-            SIZE=$(echo "$SIZE" | tr -d ' ')
-            if [ "$SIZE" -gt 1048576 ] 2>/dev/null; then
-                LARGE="$LARGE  $file ($((SIZE / 1024))KB)\n"
-            fi
-        fi
-    done
-    if [ -n "$LARGE" ]; then
-        echo "❌ Large files (>1MB) detected:"
-        printf "$LARGE"
-        echo "   To override: git commit --no-verify"
-        exit 1
-    fi
+# --- 3. Sensitive file extensions ---
+SENSITIVE_EXTS=$(echo "$STAGED_FILES" | grep -Ei '\.(pem|key|p12|pfx|jks|keystore|cer|der|gpg|asc|kdbx)$' || true)
+if [ -n "$SENSITIVE_EXTS" ]; then
+    echo "❌ Sensitive credential/certificate files detected:"
+    echo "$SENSITIVE_EXTS" | sed 's/^/   /'
+    echo ""
+    echo "   These should not be in version control."
+    echo "   To override: git commit --no-verify"
+    exit 1
 fi
 
-# --- 4. Check for merge conflict markers ---
-if [ -n "$STAGED_FILES" ]; then
-    CONFLICT_FILES=$(echo "$STAGED_FILES" | xargs grep -lE '^(<{7}|>{7}|={7})' 2>/dev/null || true)
-    if [ -n "$CONFLICT_FILES" ]; then
-        echo "❌ Merge conflict markers found:"
-        echo "$CONFLICT_FILES" | sed 's/^/   /'
-        exit 1
-    fi
+# --- 4. Sensitive infrastructure files ---
+INFRA_FILES=$(echo "$STAGED_FILES" | grep -Ei '(kubeconfig|terraform\.tfstate|\.tfvars$|credentials\.json|service.account\.json)' || true)
+if [ -n "$INFRA_FILES" ]; then
+    echo "❌ Infrastructure secret files detected:"
+    echo "$INFRA_FILES" | sed 's/^/   /'
+    echo ""
+    echo "   To override: git commit --no-verify"
+    exit 1
 fi
 
-# --- 5. Prevent .env files from being committed ---
+# --- 5. Prevent .env files ---
 ENV_FILES=$(echo "$STAGED_FILES" | grep -E '\.env(\..+)?$' | grep -v '\.example$' || true)
 if [ -n "$ENV_FILES" ]; then
     echo "❌ Environment files should not be committed:"
     echo "$ENV_FILES" | sed 's/^/   /'
     echo "   Add to .gitignore or use .env.example instead."
     exit 1
+fi
+
+# --- 6. Hardcoded internal IPs and AWS account IDs ---
+if [ -n "$STAGED_FILES" ]; then
+    # Check for AWS account IDs (12-digit numbers in ARN patterns)
+    AWS_MATCHES=$(echo "$STAGED_FILES" | xargs grep -nE 'arn:aws:[a-z0-9-]+:[a-z0-9-]*:[0-9]{12}:' 2>/dev/null | grep -v 'test/' | grep -v '.husky/' || true)
+    if [ -n "$AWS_MATCHES" ]; then
+        echo "⚠️  Possible AWS account IDs in non-test files:"
+        echo "$AWS_MATCHES" | head -5 | sed 's/^/   /'
+        echo ""
+        echo "   Consider using variables or parameter store references."
+        echo "   To override: git commit --no-verify"
+        exit 1
+    fi
+fi
+
+# --- 7. YAML/JSON structured secrets ---
+if [ -n "$STAGED_FILES" ]; then
+    STRUCTURED_SECRETS=$(echo "$STAGED_FILES" | grep -E '\.(ya?ml|json)$' | grep -v 'pnpm-lock.yaml' | grep -v 'package.json' | grep -v '.gitleaks.toml' | xargs grep -nEi '["'\''](password|secret_key|api_key|access_key|private_key|auth_token|client_secret)["'\'']\s*[:=]' 2>/dev/null | grep -v 'test/podman/' || true)
+    if [ -n "$STRUCTURED_SECRETS" ]; then
+        echo "❌ Structured secrets found in config files:"
+        echo "$STRUCTURED_SECRETS" | head -5 | sed 's/^/   /'
+        echo ""
+        echo "   Use environment variables or a secret manager."
+        echo "   To override: git commit --no-verify"
+        exit 1
+    fi
+fi
+
+# --- 8. Security TODOs/FIXMEs ---
+if [ -n "$STAGED_FILES" ]; then
+    SEC_TODOS=$(echo "$STAGED_FILES" | xargs grep -nEi '(TODO|FIXME|HACK|XXX).*(secret|password|cred|auth|token|key|vuln|insecure|unsafe|hardcod)' 2>/dev/null | grep -v '.husky/' || true)
+    if [ -n "$SEC_TODOS" ]; then
+        echo "⚠️  Security-related TODOs found (review before shipping):"
+        echo "$SEC_TODOS" | head -5 | sed 's/^/   /'
+        echo ""
+    fi
+fi
+
+# --- 9. Large files (>1MB) ---
+LARGE=""
+for file in $STAGED_FILES; do
+    if [ -f "$file" ]; then
+        SIZE=$(wc -c < "$file" 2>/dev/null || echo "0")
+        SIZE=$(echo "$SIZE" | tr -d ' ')
+        if [ "$SIZE" -gt 1048576 ] 2>/dev/null; then
+            LARGE="$LARGE   $file ($((SIZE / 1024))KB)\n"
+        fi
+    fi
+done
+if [ -n "$LARGE" ]; then
+    echo "❌ Large files (>1MB) detected:"
+    printf "$LARGE"
+    echo "   To override: git commit --no-verify"
+    exit 1
+fi
+
+# --- 10. Merge conflict markers ---
+CONFLICT_FILES=$(echo "$STAGED_FILES" | xargs grep -lE '^(<{7}|>{7}|={7})' 2>/dev/null || true)
+if [ -n "$CONFLICT_FILES" ]; then
+    echo "❌ Merge conflict markers found:"
+    echo "$CONFLICT_FILES" | sed 's/^/   /'
+    exit 1
+fi
+
+# --- 11. Shellcheck on staged shell scripts ---
+SHELL_FILES=$(echo "$STAGED_FILES" | grep -E '\.sh$' || true)
+if [ -n "$SHELL_FILES" ] && command -v shellcheck > /dev/null 2>&1; then
+    echo "🐚 Linting shell scripts (shellcheck)..."
+    SHELLCHECK_FAILED=""
+    for f in $SHELL_FILES; do
+        if ! shellcheck -S warning "$f" 2>/dev/null; then
+            SHELLCHECK_FAILED="yes"
+        fi
+    done
+    if [ -n "$SHELLCHECK_FAILED" ]; then
+        echo ""
+        echo "   Fix shellcheck warnings above or override: git commit --no-verify"
+        exit 1
+    fi
+fi
+
+# --- 12. Dependency audit on lockfile changes ---
+if echo "$STAGED_FILES" | grep -q 'pnpm-lock.yaml'; then
+    if command -v pnpm > /dev/null 2>&1; then
+        echo "📦 Auditing dependencies..."
+        pnpm audit --prod 2>/dev/null || {
+            echo "⚠️  Dependency vulnerabilities found (see above)"
+            echo "   This is a warning — commit will proceed."
+        }
+    fi
 fi

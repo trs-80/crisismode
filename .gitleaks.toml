@@ -1,0 +1,11 @@
+# Gitleaks configuration for CrisisMode
+# https://github.com/gitleaks/gitleaks
+
+title = "CrisisMode Secret Detection"
+
+[allowlist]
+  # Test fixtures and mock data are allowed to contain fake secrets
+  paths = [
+    '''test/podman/mock-hub/.*''',
+    '''pnpm-lock\.yaml''',
+  ]
