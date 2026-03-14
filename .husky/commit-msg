@@ -1,0 +1,39 @@
+#!/bin/sh
+
+# Enforce conventional commit format:
+#   type(scope): description
+#   type: description
+#
+# Allowed types: feat, fix, docs, style, refactor, test, chore, ci, perf, build
+#
+# Also allows Co-Authored-By lines, merge commits, and initial commits.
+
+commit_msg=$(cat "$1")
+
+# Allow merge commits
+if echo "$commit_msg" | head -1 | grep -qE "^Merge "; then
+    exit 0
+fi
+
+# Allow initial commit
+if echo "$commit_msg" | head -1 | grep -qiE "^initial commit"; then
+    exit 0
+fi
+
+# Check conventional commit format on first line
+if ! echo "$commit_msg" | head -1 | grep -qE "^(feat|fix|docs|style|refactor|test|chore|ci|perf|build)(\(.+\))?: .{1,}$"; then
+    echo "❌ Commit message must follow Conventional Commits format:"
+    echo ""
+    echo "   type(scope): description"
+    echo ""
+    echo "   Allowed types: feat, fix, docs, style, refactor, test, chore, ci, perf, build"
+    echo ""
+    echo "   Examples:"
+    echo "     feat(agent): add PostgreSQL vacuum recovery step"
+    echo "     fix: correct replication lag threshold check"
+    echo "     docs: update README with test instructions"
+    echo "     chore: update dependencies"
+    echo ""
+    echo "   Your message: $(head -1 "$1")"
+    exit 1
+fi

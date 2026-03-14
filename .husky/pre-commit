@@ -1,0 +1,64 @@
+#!/bin/sh
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+# --- 1. TypeScript type checking (only when .ts files are staged) ---
+if echo "$STAGED_FILES" | grep -qE '\.tsx?$'; then
+    pnpm run typecheck || exit 1
+fi
+
+# --- 2. Prevent secrets and credentials from being committed ---
+SECRETS_PATTERN='(PRIVATE KEY|password\s*=\s*["\x27][^"\x27]{8,}|api[_-]?key\s*[:=]\s*["\x27][^"\x27]{8,}|secret\s*[:=]\s*["\x27][^"\x27]{8,}|AWS_SECRET_ACCESS_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|sk-[a-zA-Z0-9]{32,})'
+
+if [ -n "$STAGED_FILES" ]; then
+    MATCHES=$(echo "$STAGED_FILES" | xargs grep -lEi "$SECRETS_PATTERN" 2>/dev/null | grep -v '.husky/' | grep -v 'pnpm-lock.yaml' || true)
+    if [ -n "$MATCHES" ]; then
+        echo "❌ Possible secrets detected in staged files:"
+        echo ""
+        echo "$MATCHES" | while read -r f; do
+            echo "   $f"
+        done
+        echo ""
+        echo "   To override: git commit --no-verify"
+        exit 1
+    fi
+fi
+
+# --- 3. Prevent large files (>1MB) ---
+if [ -n "$STAGED_FILES" ]; then
+    LARGE=""
+    for file in $STAGED_FILES; do
+        if [ -f "$file" ]; then
+            SIZE=$(wc -c < "$file" 2>/dev/null || echo "0")
+            SIZE=$(echo "$SIZE" | tr -d ' ')
+            if [ "$SIZE" -gt 1048576 ] 2>/dev/null; then
+                LARGE="$LARGE  $file ($((SIZE / 1024))KB)\n"
+            fi
+        fi
+    done
+    if [ -n "$LARGE" ]; then
+        echo "❌ Large files (>1MB) detected:"
+        printf "$LARGE"
+        echo "   To override: git commit --no-verify"
+        exit 1
+    fi
+fi
+
+# --- 4. Check for merge conflict markers ---
+if [ -n "$STAGED_FILES" ]; then
+    CONFLICT_FILES=$(echo "$STAGED_FILES" | xargs grep -lE '^(<{7}|>{7}|={7})' 2>/dev/null || true)
+    if [ -n "$CONFLICT_FILES" ]; then
+        echo "❌ Merge conflict markers found:"
+        echo "$CONFLICT_FILES" | sed 's/^/   /'
+        exit 1
+    fi
+fi
+
+# --- 5. Prevent .env files from being committed ---
+ENV_FILES=$(echo "$STAGED_FILES" | grep -E '\.env(\..+)?$' | grep -v '\.example$' || true)
+if [ -n "$ENV_FILES" ]; then
+    echo "❌ Environment files should not be committed:"
+    echo "$ENV_FILES" | sed 's/^/   /'
+    echo "   Add to .gitignore or use .env.example instead."
+    exit 1
+fi
