@@ -27,12 +27,15 @@ export interface EngineCallbacks {
   onBlastRadiusCheck?: (step: SystemActionStep, message: string) => void;
 }
 
+export type ExecutionMode = 'dry-run' | 'execute';
+
 export class ExecutionEngine {
   private recorder: ForensicRecorder;
   private coveredRiskLevels: RiskLevel[] = [];
   private callbacks: EngineCallbacks;
   private backend: PgBackend;
   private executionState: ExecutionState;
+  private mode: ExecutionMode;
 
   constructor(
     private context: AgentContext,
@@ -41,10 +44,12 @@ export class ExecutionEngine {
     recorder: ForensicRecorder,
     backend: PgBackend,
     callbacks: EngineCallbacks = {},
+    mode: ExecutionMode = 'dry-run',
   ) {
     this.recorder = recorder;
     this.callbacks = callbacks;
     this.backend = backend;
+    this.mode = mode;
     this.executionState = {
       completedSteps: [],
       currentStepIndex: 0,
@@ -273,18 +278,55 @@ export class ExecutionEngine {
       }
     }
 
-    // Simulate command execution (state transitions happen here)
-    this.recorder.addLogEntry({
-      type: 'step_complete',
-      stepId: step.stepId,
-      message: `Executed command: ${step.command.type} ${step.command.operation || step.command.statement || ''}`.trim(),
-    });
+    // Execute or log the command based on mode
+    const cmdDesc = `${step.command.type} ${step.command.operation || step.command.statement || ''}`.trim();
 
-    // After step 4, transition simulator to recovering
+    if (this.mode === 'execute' && step.command.statement && step.command.type === 'sql') {
+      // Live execution: run the SQL
+      try {
+        await this.backend.executeSQL(step.command.statement);
+        this.recorder.addLogEntry({
+          type: 'step_complete',
+          stepId: step.stepId,
+          message: `Executed command: ${cmdDesc}`,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.recorder.addLogEntry({
+          type: 'step_failed',
+          stepId: step.stepId,
+          message: `Command execution failed: ${errMsg}`,
+        });
+        return {
+          stepId: step.stepId,
+          step,
+          status: 'failed',
+          startedAt,
+          completedAt: new Date().toISOString(),
+          durationMs: Date.now() - startTime,
+          error: `Command execution failed: ${errMsg}`,
+        };
+      }
+    } else if (this.mode === 'dry-run') {
+      this.recorder.addLogEntry({
+        type: 'step_complete',
+        stepId: step.stepId,
+        message: `[DRY-RUN] Would execute: ${cmdDesc}`,
+      });
+      this.callbacks.onCapture?.(`[DRY-RUN] ${step.name}`, 'skipped');
+    } else {
+      // Structured commands (non-SQL) — log in both modes
+      this.recorder.addLogEntry({
+        type: 'step_complete',
+        stepId: step.stepId,
+        message: `Executed command: ${cmdDesc}`,
+      });
+    }
+
+    // Simulator state transitions (no-op for live client)
     if (step.stepId === 'step-004') {
       this.backend.transition('recovering');
     }
-    // After step 8, transition simulator to recovered
     if (step.stepId === 'step-008') {
       this.backend.transition('recovered');
     }

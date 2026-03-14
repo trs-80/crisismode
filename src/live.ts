@@ -3,7 +3,8 @@
  * containers in the podman test environment.
  *
  * Usage:
- *   pnpm run live              # defaults to localhost:5432/5433
+ *   pnpm run live              # dry-run mode (default)
+ *   pnpm run live --execute    # live execution with mutations
  *   PG_HOST=10.0.0.1 pnpm run live  # custom host
  */
 
@@ -11,11 +12,11 @@ import { PgReplicationAgent } from './agent/pg-replication/agent.js';
 import { PgLiveClient } from './agent/pg-replication/live-client.js';
 import { assembleContext } from './framework/context.js';
 import { validatePlan } from './framework/validator.js';
-import { matchCatalog, getCatalogEntry } from './framework/catalog.js';
+import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
-import { ExecutionEngine, type EngineCallbacks } from './framework/engine.js';
+import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
 import type { AgentContext } from './types/agent-context.js';
-import type { HumanApprovalStep, SystemActionStep } from './types/step-types.js';
+import type { HumanApprovalStep } from './types/step-types.js';
 import * as display from './demo/display.js';
 
 const FORENSIC_OUTPUT_PATH = 'output/forensic-record-live.json';
@@ -25,6 +26,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function runLive(): Promise<void> {
+  const execMode: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
   const pgHost = process.env.PG_HOST || 'localhost';
   const pgPort = parseInt(process.env.PG_PORT || '5432', 10);
   const pgReplicaPort = parseInt(process.env.PG_REPLICA_PORT || '5433', 10);
@@ -157,12 +159,19 @@ async function runLive(): Promise<void> {
     await sleep(300);
 
     // ── Phase 7: Execution ──
-    display.phase(7, 'Execution (Live — READ-ONLY)');
-    console.log('');
-    console.log('  ⚠️  Live execution is currently READ-ONLY.');
-    console.log('  Diagnosis and state capture steps will execute against real PG.');
-    console.log('  System actions that mutate state are logged but not executed.');
-    console.log('');
+    if (execMode === 'execute') {
+      display.phase(7, 'Execution (Live — EXECUTE MODE)');
+      console.log('');
+      console.log('  🔴 EXECUTE MODE — SQL mutations WILL be run against real PostgreSQL.');
+      console.log('');
+    } else {
+      display.phase(7, 'Execution (Live — DRY-RUN)');
+      console.log('');
+      console.log('  🟡 DRY-RUN — Diagnosis and checks run against real PG.');
+      console.log('     System actions are logged but NOT executed.');
+      console.log('     To execute mutations: pnpm run live -- --execute');
+      console.log('');
+    }
 
     const recorder = new ForensicRecorder();
     recorder.setContext(context);
@@ -200,6 +209,7 @@ async function runLive(): Promise<void> {
       recorder,
       liveClient,
       callbacks,
+      execMode,
     );
     engine.setCoveredRiskLevels(catalogMatch.coveredRiskLevels);
 

@@ -4,6 +4,7 @@ import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { ExecutionState } from '../../types/execution-state.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import type { ReplicaStatus } from './backend.js';
 import { pgReplicationManifest } from './manifest.js';
 import type { PgBackend } from './backend.js';
 import { PgSimulator } from './simulator.js';
@@ -52,8 +53,16 @@ export class PgReplicationAgent implements RecoveryAgent {
     };
   }
 
-  async plan(_context: AgentContext, _diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
+  async plan(_context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
     const now = new Date().toISOString();
+
+    // Dynamic target resolution: find the worst-lagging replica from diagnosis
+    const replicas = (diagnosis.findings[0]?.data as { replicas: ReplicaStatus[] })?.replicas ?? [];
+    const target = this.findWorstReplica(replicas);
+    const targetAddr = target?.client_addr ?? 'unknown';
+    const targetId = `pg-replica-${targetAddr.replace(/[./]/g, '-')}`;
+    const primaryId = String(_context.trigger.payload.instance || 'pg-primary');
+
     const steps: RecoveryStep[] = [
       // Step 1: diagnosis_action
       {
@@ -61,12 +70,12 @@ export class PgReplicationAgent implements RecoveryAgent {
         type: 'diagnosis_action',
         name: 'Assess current replication lag across all replicas',
         executionContext: 'postgresql_read',
-        target: 'pg-primary-us-east-1',
+        target: primaryId,
         command: {
           type: 'sql',
           subtype: 'query',
           statement:
-            "SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, (extract(epoch FROM now() - pg_last_xact_replay_timestamp()))::int AS lag_seconds FROM pg_stat_replication;",
+            "SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, COALESCE(EXTRACT(EPOCH FROM replay_lag)::int, 0) AS lag_seconds FROM pg_stat_replication;",
         },
         outputCapture: {
           name: 'current_replication_status',
@@ -84,7 +93,7 @@ export class PgReplicationAgent implements RecoveryAgent {
         message: {
           summary: 'Automated recovery initiated for PostgreSQL replication lag cascade',
           detail:
-            "Agent 'postgresql-replication-recovery' has diagnosed a replication lag cascade on pg-primary-us-east-1. A recovery plan has been approved and execution is beginning.",
+            `Agent 'postgresql-replication-recovery' has diagnosed a replication lag cascade on ${primaryId}. Target replica: ${targetAddr} (lag: ${target?.lag_seconds ?? '?'}s). Execution is beginning.`,
           contextReferences: ['current_replication_status'],
           actionRequired: false,
         },
@@ -120,25 +129,25 @@ export class PgReplicationAgent implements RecoveryAgent {
       {
         stepId: 'step-004',
         type: 'system_action',
-        name: 'Disconnect lagging replica from replication',
+        name: `Disconnect lagging replica ${targetAddr} from replication`,
         description:
-          'Terminates the WAL sender process for pg-replica-us-east-1b to prevent the primary from being blocked by a slow consumer.',
+          `Terminates the WAL sender process for ${targetId} to prevent the primary from being blocked by a slow consumer.`,
         executionContext: 'postgresql_write',
-        target: 'pg-primary-us-east-1',
+        target: primaryId,
         riskLevel: 'elevated',
         command: {
           type: 'sql',
           subtype: 'dml',
           statement:
-            "SELECT pg_terminate_backend(pid) FROM pg_stat_replication WHERE client_addr = '10.0.1.52' AND state = 'streaming';",
+            `SELECT pg_terminate_backend(pid) FROM pg_stat_replication WHERE client_addr = '${targetAddr}';`,
         },
         preConditions: [
           {
-            description: 'Replica is currently connected and streaming',
+            description: `Replica ${targetAddr} is currently connected`,
             check: {
               type: 'sql',
               statement:
-                "SELECT count(*) FROM pg_stat_replication WHERE client_addr = '10.0.1.52' AND state = 'streaming';",
+                `SELECT count(*) FROM pg_stat_replication WHERE client_addr = '${targetAddr}';`,
               expect: { operator: 'gte', value: 1 },
             },
           },
@@ -166,11 +175,11 @@ export class PgReplicationAgent implements RecoveryAgent {
           ],
         },
         successCriteria: {
-          description: 'WAL sender process for the target replica is no longer present',
+          description: `WAL sender for ${targetAddr} is no longer present`,
           check: {
             type: 'sql',
             statement:
-              "SELECT count(*) FROM pg_stat_replication WHERE client_addr = '10.0.1.52';",
+              `SELECT count(*) FROM pg_stat_replication WHERE client_addr = '${targetAddr}';`,
             expect: { operator: 'eq', value: 0 },
           },
         },
@@ -180,8 +189,8 @@ export class PgReplicationAgent implements RecoveryAgent {
           estimatedDuration: 'PT30S',
         },
         blastRadius: {
-          directComponents: ['pg-replica-us-east-1b'],
-          indirectComponents: ['user-api-read-pool'],
+          directComponents: [targetId],
+          indirectComponents: ['read-pool'],
           maxImpact: 'single_replica_disconnected',
           cascadeRisk: 'low',
         },
@@ -193,34 +202,34 @@ export class PgReplicationAgent implements RecoveryAgent {
         stepId: 'step-005',
         type: 'system_action',
         name: 'Redirect read traffic away from disconnected replica',
-        description: 'Update HAProxy to remove pg-replica-us-east-1b from the read pool.',
+        description: `Update load balancer to remove ${targetId} from the read pool.`,
         executionContext: 'linux_process',
-        target: 'haproxy-us-east-1',
+        target: 'load-balancer',
         riskLevel: 'routine',
         command: {
           type: 'structured_command',
           operation: 'config_reload',
-          parameters: { service: 'haproxy', action: 'remove_backend', backend: 'pg-replica-us-east-1b' },
+          parameters: { service: 'load-balancer', action: 'remove_backend', backend: targetId },
         },
         statePreservation: {
           before: [],
           after: [],
         },
         successCriteria: {
-          description: 'HAProxy config reloaded successfully',
+          description: 'Load balancer config reloaded successfully',
           check: {
             type: 'structured_command',
             operation: 'service_status',
-            parameters: { service: 'haproxy' },
+            parameters: { service: 'load-balancer' },
             expect: { operator: 'eq', value: 'running' },
           },
         },
         rollback: {
           type: 'automatic',
-          description: 'HAProxy continues with previous config on reload failure.',
+          description: 'Load balancer continues with previous config on reload failure.',
         },
         blastRadius: {
-          directComponents: ['haproxy-us-east-1'],
+          directComponents: ['load-balancer'],
           indirectComponents: [],
           maxImpact: 'load_balancer_config_reload',
           cascadeRisk: 'none',
@@ -263,23 +272,22 @@ export class PgReplicationAgent implements RecoveryAgent {
         approvers: [{ role: 'database_owner', required: true }],
         requiredApprovals: 1,
         presentation: {
-          summary: 'Ready to begin replica resynchronization',
+          summary: `Ready to begin resynchronization for ${targetAddr}`,
           detail:
-            'The primary has been stabilized and remaining replicas are catching up. The next phase will resynchronize pg-replica-us-east-1b, which requires a pg_basebackup that will temporarily increase I/O load on the primary.',
+            `The primary has been stabilized. The next phase will resynchronize ${targetId}, which requires a pg_basebackup that will temporarily increase I/O load on the primary.`,
           contextReferences: ['replication_state_post_disconnect', 'post_stabilization_replication_state'],
           proposedActions: [
-            'Drop and recreate invalid replication slot for pg-replica-us-east-1b',
-            'Initiate pg_basebackup from primary to pg-replica-us-east-1b',
+            `Drop and recreate invalid replication slot for ${targetId}`,
+            `Initiate pg_basebackup from primary to ${targetId}`,
             'Re-establish streaming replication',
             'Verify replication lag returns to < 10 seconds',
           ],
           riskSummary:
-            'Read capacity reduced by ~33% for estimated 8-12 minutes. Primary I/O load will increase during pg_basebackup. No data loss risk.',
+            'Primary I/O load will increase during pg_basebackup. No data loss risk.',
           alternatives: [
             {
               action: 'skip',
-              description:
-                'Skip resynchronization. Replication will remain broken for pg-replica-us-east-1b until manually repaired.',
+              description: `Skip resynchronization. Replication will remain broken for ${targetId} until manually repaired.`,
             },
             {
               action: 'abort',
@@ -291,27 +299,25 @@ export class PgReplicationAgent implements RecoveryAgent {
         timeoutAction: 'escalate',
         escalateTo: {
           role: 'engineering_lead',
-          message:
-            'Approval timeout reached for replica resynchronization. Escalating for decision.',
+          message: 'Approval timeout reached for replica resynchronization. Escalating for decision.',
         },
       },
       // Step 8: system_action (high) — pg_basebackup + resync
       {
         stepId: 'step-008',
         type: 'system_action',
-        name: 'Initiate pg_basebackup and re-establish replication',
+        name: `Initiate pg_basebackup and re-establish replication for ${targetAddr}`,
         description:
-          'Performs a full base backup from the primary to pg-replica-us-east-1b and configures streaming replication.',
+          `Performs a full base backup from the primary to ${targetId} and configures streaming replication.`,
         executionContext: 'postgresql_write',
-        target: 'pg-replica-us-east-1b',
+        target: targetId,
         riskLevel: 'high',
         command: {
           type: 'structured_command',
           operation: 'pg_basebackup',
           parameters: {
-            source: 'pg-primary-us-east-1',
-            target: 'pg-replica-us-east-1b',
-            slot: 'replica_us_east_1b',
+            source: primaryId,
+            target: targetId,
             checkpoint: 'fast',
             walMethod: 'stream',
           },
@@ -331,8 +337,7 @@ export class PgReplicationAgent implements RecoveryAgent {
             {
               name: 'pre_basebackup_primary_state',
               captureType: 'sql_query',
-              statement:
-                'SELECT * FROM pg_stat_replication; SELECT * FROM pg_replication_slots;',
+              statement: 'SELECT * FROM pg_stat_replication;',
               captureCost: 'negligible',
               capturePolicy: 'required',
               retention: 'P30D',
@@ -350,22 +355,21 @@ export class PgReplicationAgent implements RecoveryAgent {
           ],
         },
         successCriteria: {
-          description: 'Replica is streaming and lag is under 30 seconds',
+          description: `Replica ${targetAddr} is streaming and lag is under 30 seconds`,
           check: {
             type: 'sql',
             statement:
-              "SELECT count(*) FROM pg_stat_replication WHERE client_addr = '10.0.1.52' AND state = 'streaming';",
+              `SELECT count(*) FROM pg_stat_replication WHERE client_addr = '${targetAddr}' AND state = 'streaming';`,
             expect: { operator: 'gte', value: 1 },
           },
         },
         rollback: {
           type: 'manual',
-          description:
-            'If pg_basebackup fails, the replica data directory may be in an inconsistent state. Manual intervention required to restart the process or restore from a known good backup.',
+          description: 'If pg_basebackup fails, manual intervention required to restart the process.',
         },
         blastRadius: {
-          directComponents: ['pg-replica-us-east-1b', 'pg-primary-us-east-1'],
-          indirectComponents: ['user-api-read-pool', 'reporting-service'],
+          directComponents: [targetId, primaryId],
+          indirectComponents: ['read-pool'],
           maxImpact: 'increased_primary_io_load_during_basebackup',
           cascadeRisk: 'medium',
         },
@@ -378,11 +382,11 @@ export class PgReplicationAgent implements RecoveryAgent {
         type: 'conditional',
         name: 'Restore traffic or notify for manual intervention',
         condition: {
-          description: 'Replica is streaming and lag is under threshold',
+          description: `Replica ${targetAddr} is streaming with lag under 10s`,
           check: {
             type: 'sql',
             statement:
-              "SELECT count(*) FROM pg_stat_replication WHERE client_addr = '10.0.1.52' AND state = 'streaming' AND (extract(epoch FROM replay_lag))::int < 10;",
+              `SELECT count(*) FROM pg_stat_replication WHERE client_addr = '${targetAddr}' AND state = 'streaming';`,
             expect: { operator: 'gte', value: 1 },
           },
         },
@@ -391,29 +395,29 @@ export class PgReplicationAgent implements RecoveryAgent {
           type: 'system_action',
           name: 'Restore read traffic to recovered replica',
           executionContext: 'linux_process',
-          target: 'haproxy-us-east-1',
+          target: 'load-balancer',
           riskLevel: 'routine',
           command: {
             type: 'structured_command',
             operation: 'config_reload',
-            parameters: { service: 'haproxy', action: 'add_backend', backend: 'pg-replica-us-east-1b' },
+            parameters: { service: 'load-balancer', action: 'add_backend', backend: targetId },
           },
           statePreservation: { before: [], after: [] },
           successCriteria: {
-            description: 'HAProxy config reloaded successfully',
+            description: 'Load balancer config reloaded successfully',
             check: {
               type: 'structured_command',
               operation: 'service_status',
-              parameters: { service: 'haproxy' },
+              parameters: { service: 'load-balancer' },
               expect: { operator: 'eq', value: 'running' },
             },
           },
           rollback: {
             type: 'automatic',
-            description: 'HAProxy continues with previous config.',
+            description: 'Load balancer continues with previous config.',
           },
           blastRadius: {
-            directComponents: ['haproxy-us-east-1'],
+            directComponents: ['load-balancer'],
             indirectComponents: [],
             maxImpact: 'load_balancer_config_reload',
             cascadeRisk: 'none',
@@ -427,9 +431,9 @@ export class PgReplicationAgent implements RecoveryAgent {
           name: 'Notify DBA: replica not healthy after resync',
           recipients: [{ role: 'on_call_dba', urgency: 'high' }],
           message: {
-            summary: 'Replica did not reach healthy state after resynchronization',
+            summary: `Replica ${targetAddr} did not reach healthy state after resynchronization`,
             detail:
-              'pg-replica-us-east-1b completed pg_basebackup but replication lag has not dropped below threshold. Manual investigation is recommended. Read traffic has NOT been restored to this replica.',
+              `${targetId} completed pg_basebackup but is not streaming. Manual investigation recommended. Read traffic has NOT been restored.`,
             contextReferences: ['post_basebackup_replication_state'],
             actionRequired: true,
           },
@@ -448,7 +452,7 @@ export class PgReplicationAgent implements RecoveryAgent {
         message: {
           summary: 'PostgreSQL replication recovery completed',
           detail:
-            'Recovery plan for replication_lag_cascade on pg-primary-us-east-1 has completed. The lagging replica (pg-replica-us-east-1b) was disconnected, the primary was stabilized, and the replica was resynchronized via pg_basebackup. All replicas are now streaming with lag under threshold.',
+            `Recovery plan for replication_lag_cascade on ${primaryId} has completed. Target replica: ${targetAddr} (${targetId}).`,
           contextReferences: ['post_basebackup_replication_state'],
           actionRequired: false,
         },
@@ -467,27 +471,27 @@ export class PgReplicationAgent implements RecoveryAgent {
         createdAt: now,
         estimatedDuration: 'PT15M',
         summary:
-          'Recover PostgreSQL replication by disconnecting lagging replicas, stabilizing the primary, and re-syncing replicas sequentially.',
+          `Recover PostgreSQL replication by disconnecting lagging replica ${targetAddr}, stabilizing the primary, and re-syncing.`,
         supersedes: null,
       },
       impact: {
         affectedSystems: [
           {
-            identifier: 'pg-primary-us-east-1',
+            identifier: primaryId,
             technology: 'postgresql',
             role: 'primary',
             impactType: 'reduced_read_capacity',
           },
           {
-            identifier: 'pg-replica-us-east-1b',
+            identifier: targetId,
             technology: 'postgresql',
             role: 'replica',
             impactType: 'temporary_unavailability',
           },
         ],
-        affectedServices: ['user-api', 'reporting-service'],
+        affectedServices: ['read-pool'],
         estimatedUserImpact:
-          'Read queries may experience elevated latency for approximately 10 minutes. No write impact expected.',
+          'Read queries may experience elevated latency during recovery. No write impact expected.',
         dataLossRisk: 'none',
       },
       steps,
@@ -515,15 +519,15 @@ export class PgReplicationAgent implements RecoveryAgent {
       }
 
       const now = new Date().toISOString();
+      const primaryId = String(_context.trigger.payload.instance || 'pg-primary');
       const revisedSteps: RecoveryStep[] = [
-        // New step: drop invalid slot
         {
           stepId: 'step-006a',
           type: 'system_action',
           name: 'Drop invalid replication slot',
           description: `Slot '${invalidSlot.slot_name}' has WAL status 'lost' and must be recreated.`,
           executionContext: 'postgresql_write',
-          target: 'pg-primary-us-east-1',
+          target: primaryId,
           riskLevel: 'elevated',
           command: {
             type: 'sql',
@@ -552,22 +556,21 @@ export class PgReplicationAgent implements RecoveryAgent {
             },
           },
           blastRadius: {
-            directComponents: ['pg-primary-us-east-1'],
-            indirectComponents: ['pg-replica-us-east-1b'],
+            directComponents: [primaryId],
+            indirectComponents: [],
             maxImpact: 'replication_slot_removed',
             cascadeRisk: 'low',
           },
           timeout: 'PT30S',
           retryPolicy: { maxRetries: 0, retryable: false },
         },
-        // New step: recreate slot
         {
           stepId: 'step-006b',
           type: 'system_action',
           name: 'Recreate replication slot',
-          description: `Create a fresh physical replication slot for pg-replica-us-east-1b.`,
+          description: `Create a fresh physical replication slot '${invalidSlot.slot_name}'.`,
           executionContext: 'postgresql_write',
-          target: 'pg-primary-us-east-1',
+          target: primaryId,
           riskLevel: 'routine',
           command: {
             type: 'sql',
@@ -584,7 +587,7 @@ export class PgReplicationAgent implements RecoveryAgent {
             },
           },
           blastRadius: {
-            directComponents: ['pg-primary-us-east-1'],
+            directComponents: [primaryId],
             indirectComponents: [],
             maxImpact: 'replication_slot_created',
             cascadeRisk: 'none',
@@ -606,30 +609,15 @@ export class PgReplicationAgent implements RecoveryAgent {
             scenario: 'replication_lag_cascade',
             createdAt: now,
             estimatedDuration: 'PT18M',
-            summary:
-              'Revised plan: drop and recreate invalid replication slot before proceeding with replica resync.',
-            supersedes: _executionState.completedSteps.length > 0
-              ? 'original'
-              : null,
+            summary: `Revised plan: drop and recreate invalid slot '${invalidSlot.slot_name}' before proceeding.`,
+            supersedes: _executionState.completedSteps.length > 0 ? 'original' : null,
           },
           impact: {
             affectedSystems: [
-              {
-                identifier: 'pg-primary-us-east-1',
-                technology: 'postgresql',
-                role: 'primary',
-                impactType: 'reduced_read_capacity',
-              },
-              {
-                identifier: 'pg-replica-us-east-1b',
-                technology: 'postgresql',
-                role: 'replica',
-                impactType: 'temporary_unavailability',
-              },
+              { identifier: primaryId, technology: 'postgresql', role: 'primary', impactType: 'reduced_read_capacity' },
             ],
-            affectedServices: ['user-api', 'reporting-service'],
-            estimatedUserImpact:
-              'Read queries may experience elevated latency for approximately 12 minutes.',
+            affectedServices: ['read-pool'],
+            estimatedUserImpact: 'Read queries may experience elevated latency for approximately 12 minutes.',
             dataLossRisk: 'none',
           },
           steps: revisedSteps,
@@ -642,5 +630,10 @@ export class PgReplicationAgent implements RecoveryAgent {
     }
 
     return { action: 'continue' };
+  }
+
+  private findWorstReplica(replicas: ReplicaStatus[]): ReplicaStatus | undefined {
+    if (replicas.length === 0) return undefined;
+    return replicas.reduce((worst, r) => (r.lag_seconds > worst.lag_seconds ? r : worst), replicas[0]);
   }
 }

@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "live": "tsx src/live.ts",
+    "webhook": "tsx src/webhook.ts",
     "typecheck": "tsc --noEmit",
     "prepare": "husky"
   },
