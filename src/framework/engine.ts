@@ -326,12 +326,9 @@ export class ExecutionEngine {
       });
     }
 
-    // Simulator state transitions (no-op for live client)
-    if (step.stepId === 'step-004') {
-      this.backend.transition('recovering');
-    }
-    if (step.stepId === 'step-008') {
-      this.backend.transition('recovered');
+    // State transitions declared by the step (simulator uses these; live client no-ops)
+    if (step.stateTransition) {
+      this.backend.transition(step.stateTransition);
     }
 
     // Check success criteria

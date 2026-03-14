@@ -33,6 +33,7 @@ export interface SystemActionStep {
   blastRadius: BlastRadius;
   timeout: string;
   retryPolicy?: RetryPolicy;
+  stateTransition?: string;
 }
 
 export interface DiagnosisActionStep {

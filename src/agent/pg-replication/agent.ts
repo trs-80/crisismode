@@ -13,6 +13,28 @@ import type { PgBackend } from './backend.js';
 import { PgSimulator } from './simulator.js';
 import { aiDiagnose } from './ai-diagnosis.js';
 
+/**
+ * Validates that a value is a valid IPv4 address.
+ * Used to prevent SQL injection when embedding addresses in plan steps.
+ */
+function validateIPv4(addr: string): string {
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(addr)) {
+    throw new Error(`Invalid IPv4 address: ${addr}`);
+  }
+  return addr;
+}
+
+/**
+ * Validates that a value is a safe PostgreSQL identifier (slot name).
+ * Only allows alphanumeric characters and underscores.
+ */
+function validateSlotName(name: string): string {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+    throw new Error(`Invalid replication slot name: ${name}`);
+  }
+  return name;
+}
+
 export class PgReplicationAgent implements RecoveryAgent {
   manifest = pgReplicationManifest;
   backend: PgBackend;
@@ -88,7 +110,7 @@ export class PgReplicationAgent implements RecoveryAgent {
     // Dynamic target resolution: find the worst-lagging replica from diagnosis
     const replicas = (diagnosis.findings[0]?.data as { replicas: ReplicaStatus[] })?.replicas ?? [];
     const target = this.findWorstReplica(replicas);
-    const targetAddr = target?.client_addr ?? 'unknown';
+    const targetAddr = target ? validateIPv4(target.client_addr) : 'unknown';
     const targetId = `pg-replica-${targetAddr.replace(/[./]/g, '-')}`;
     const primaryId = String(_context.trigger.payload.instance || 'pg-primary');
 
@@ -225,6 +247,7 @@ export class PgReplicationAgent implements RecoveryAgent {
         },
         timeout: 'PT60S',
         retryPolicy: { maxRetries: 0, retryable: false },
+        stateTransition: 'recovering',
       },
       // Step 5: system_action (routine) — redirect read traffic
       {
@@ -404,6 +427,7 @@ export class PgReplicationAgent implements RecoveryAgent {
         },
         timeout: 'PT20M',
         retryPolicy: { maxRetries: 1, retryable: true },
+        stateTransition: 'recovered',
       },
       // Step 9: conditional
       {
@@ -543,6 +567,8 @@ export class PgReplicationAgent implements RecoveryAgent {
     const invalidSlot = slots.find((s) => s.wal_status === 'lost');
 
     if (invalidSlot) {
+      const safeSlotName = validateSlotName(invalidSlot.slot_name);
+
       if (this.backend instanceof PgSimulator) {
         (this.backend as PgSimulator).markSlotRecreated();
       }
@@ -554,14 +580,14 @@ export class PgReplicationAgent implements RecoveryAgent {
           stepId: 'step-006a',
           type: 'system_action',
           name: 'Drop invalid replication slot',
-          description: `Slot '${invalidSlot.slot_name}' has WAL status 'lost' and must be recreated.`,
+          description: `Slot '${safeSlotName}' has WAL status 'lost' and must be recreated.`,
           executionContext: 'postgresql_write',
           target: primaryId,
           riskLevel: 'elevated',
           command: {
             type: 'sql',
             subtype: 'function_call',
-            statement: `SELECT pg_drop_replication_slot('${invalidSlot.slot_name}');`,
+            statement: `SELECT pg_drop_replication_slot('${safeSlotName}');`,
           },
           statePreservation: {
             before: [
@@ -580,7 +606,7 @@ export class PgReplicationAgent implements RecoveryAgent {
             description: 'Slot no longer exists',
             check: {
               type: 'sql',
-              statement: `SELECT count(*) FROM pg_replication_slots WHERE slot_name = '${invalidSlot.slot_name}';`,
+              statement: `SELECT count(*) FROM pg_replication_slots WHERE slot_name = '${safeSlotName}';`,
               expect: { operator: 'eq', value: 0 },
             },
           },
@@ -597,21 +623,21 @@ export class PgReplicationAgent implements RecoveryAgent {
           stepId: 'step-006b',
           type: 'system_action',
           name: 'Recreate replication slot',
-          description: `Create a fresh physical replication slot '${invalidSlot.slot_name}'.`,
+          description: `Create a fresh physical replication slot '${safeSlotName}'.`,
           executionContext: 'postgresql_write',
           target: primaryId,
           riskLevel: 'routine',
           command: {
             type: 'sql',
             subtype: 'function_call',
-            statement: `SELECT pg_create_physical_replication_slot('${invalidSlot.slot_name}');`,
+            statement: `SELECT pg_create_physical_replication_slot('${safeSlotName}');`,
           },
           statePreservation: { before: [], after: [] },
           successCriteria: {
             description: 'Slot exists and is available',
             check: {
               type: 'sql',
-              statement: `SELECT count(*) FROM pg_replication_slots WHERE slot_name = '${invalidSlot.slot_name}';`,
+              statement: `SELECT count(*) FROM pg_replication_slots WHERE slot_name = '${safeSlotName}';`,
               expect: { operator: 'eq', value: 1 },
             },
           },
@@ -638,7 +664,7 @@ export class PgReplicationAgent implements RecoveryAgent {
             scenario: 'replication_lag_cascade',
             createdAt: now,
             estimatedDuration: 'PT18M',
-            summary: `Revised plan: drop and recreate invalid slot '${invalidSlot.slot_name}' before proceeding.`,
+            summary: `Revised plan: drop and recreate invalid slot '${safeSlotName}' before proceeding.`,
             supersedes: _executionState.completedSteps.length > 0 ? 'original' : null,
           },
           impact: {

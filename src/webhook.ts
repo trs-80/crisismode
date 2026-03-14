@@ -25,6 +25,8 @@ import type { AgentContext } from './types/agent-context.js';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const MODE: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
 const HUB_ENDPOINT = process.env.HUB_ENDPOINT || 'http://localhost:8080';
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
+const MAX_BODY_BYTES = 1_048_576; // 1 MiB
 
 // Hub client for forensic record submission
 const hubClient = new HubClient({ endpoint: HUB_ENDPOINT });
@@ -70,8 +72,30 @@ function log(msg: string): void {
 
 async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let totalBytes = 0;
+  for await (const chunk of req) {
+    totalBytes += (chunk as Buffer).length;
+    if (totalBytes > MAX_BODY_BYTES) {
+      req.destroy();
+      throw new Error(`Request body exceeds ${MAX_BODY_BYTES} byte limit`);
+    }
+    chunks.push(chunk as Buffer);
+  }
   return Buffer.concat(chunks).toString();
+}
+
+function validateAlertPayload(body: unknown): body is AlertManagerPayload {
+  if (typeof body !== 'object' || body === null) return false;
+  const obj = body as Record<string, unknown>;
+  if (typeof obj.version !== 'string' && typeof obj.status !== 'string') return false;
+  if (!Array.isArray(obj.alerts)) return false;
+  return true;
+}
+
+function isAuthenticated(req: IncomingMessage): boolean {
+  if (!WEBHOOK_SECRET) return true; // No secret configured — allow all (dev mode)
+  const authHeader = req.headers.authorization;
+  return authHeader === `Bearer ${WEBHOOK_SECRET}`;
 }
 
 async function handleAlert(payload: AlertManagerPayload): Promise<{
@@ -205,11 +229,23 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 
   // AlertManager webhook endpoint
   if (req.method === 'POST' && path === '/api/v1/alerts') {
+    if (!isAuthenticated(req)) {
+      json(res, 401, { error: 'unauthorized' });
+      return;
+    }
+
     try {
       const body = await readBody(req);
-      const payload: AlertManagerPayload = JSON.parse(body);
+      const parsed: unknown = JSON.parse(body);
 
-      log(`📨 Received ${payload.alerts?.length ?? 0} alert(s) (status: ${payload.status})`);
+      if (!validateAlertPayload(parsed)) {
+        json(res, 400, { error: 'invalid alert payload: expected object with alerts array' });
+        return;
+      }
+
+      const payload = parsed;
+
+      log(`📨 Received ${payload.alerts.length} alert(s) (status: ${payload.status})`);
 
       // Handle resolved alerts
       if (payload.status === 'resolved') {
@@ -228,22 +264,22 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return;
   }
 
-  // Health check
+  // Health check — minimal, no internal state
   if (req.method === 'GET' && path === '/health') {
+    json(res, 200, { status: 'ok' });
+    return;
+  }
+
+  // Debug — detailed status, requires authentication
+  if (req.method === 'GET' && path === '/debug') {
+    if (!isAuthenticated(req)) {
+      json(res, 401, { error: 'unauthorized' });
+      return;
+    }
     json(res, 200, {
       status: 'ok',
       mode: MODE,
       uptime: process.uptime(),
-      activeRecoveries: activeRecoveries.size,
-      pg: { host: pgConfig.host, port: pgConfig.port },
-    });
-    return;
-  }
-
-  // Status — list active recoveries
-  if (req.method === 'GET' && path === '/status') {
-    json(res, 200, {
-      mode: MODE,
       activeRecoveries: [...activeRecoveries],
     });
     return;
@@ -261,7 +297,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  Port:     ${PORT}`);
   console.log(`  Endpoint: http://localhost:${PORT}/api/v1/alerts`);
   console.log(`  Health:   http://localhost:${PORT}/health`);
-  console.log(`  PG:       ${pgConfig.host}:${pgConfig.port}`);
+  console.log(`  Auth:     ${WEBHOOK_SECRET ? '🔐 WEBHOOK_SECRET configured' : '⚠️  No WEBHOOK_SECRET (dev mode, all requests accepted)'}`);
   console.log('');
   console.log('  Waiting for AlertManager webhooks...');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
