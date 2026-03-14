@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 declare module 'pg' {
   export interface PoolConfig {
     host?: string;

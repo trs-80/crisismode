@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 export type RiskLevel = 'routine' | 'elevated' | 'high' | 'critical';
 
 export type TrustLevel = 'observe' | 'copilot' | 'autopilot' | 'full_autonomy';

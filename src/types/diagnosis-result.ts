@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 export interface DiagnosisResult {
   status: 'identified' | 'partial' | 'inconclusive' | 'unable';
   scenario: string | null;

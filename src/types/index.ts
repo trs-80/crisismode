@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 export * from './common.js';
 export * from './manifest.js';
 export * from './step-types.js';

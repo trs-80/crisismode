@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { RecoveryStep, SystemActionStep } from '../types/step-types.js';
 import type { AgentContext } from '../types/agent-context.js';

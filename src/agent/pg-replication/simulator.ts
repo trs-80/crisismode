@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import type { PgBackend, ReplicaStatus, ReplicationSlot } from './backend.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';

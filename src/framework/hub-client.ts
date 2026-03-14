@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 /**
  * HubClient — communicates with the hub API for spoke enrollment,
  * heartbeat, forensic record submission, and policy retrieval.

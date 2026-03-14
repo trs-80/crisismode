@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 export { assembleContext } from './context.js';
 export { validatePlan } from './validator.js';
 export { executeCapture, validateBlastRadius, shouldRequireApproval } from './safety.js';

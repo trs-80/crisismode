@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import type { AgentManifest } from '../../types/manifest.js';
 
 export const redisMemoryManifest: AgentManifest = {

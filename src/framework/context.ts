@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import type { AgentContext } from '../types/agent-context.js';
 import type { AgentManifest } from '../types/manifest.js';
 

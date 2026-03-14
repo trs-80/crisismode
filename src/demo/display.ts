@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import chalk from 'chalk';
 import type { RecoveryStep, SystemActionStep, HumanApprovalStep } from '../types/step-types.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';

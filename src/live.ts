@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 /**
  * Live mode entry point — runs the PgReplicationAgent against real PostgreSQL
  * containers in the podman test environment.

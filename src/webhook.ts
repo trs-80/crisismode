@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 /**
  * Webhook receiver — accepts AlertManager webhook payloads and triggers
  * the recovery agent pipeline.

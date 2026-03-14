@@ -1,0 +1,37 @@
+CrisisMode — AI Crisis Recovery Framework
+Copyright 2026 CrisisMode Contributors
+
+This product includes software developed by the CrisisMode project
+(https://crisismode.ai).
+
+Licensed under the Apache License, Version 2.0.
+
+--------------------------------------------------------------------------------
+
+This repository contains two categories of software with different licensing:
+
+OPEN SOURCE (Apache 2.0):
+  - Spoke runtime (src/framework/, src/agent/, src/types/)
+  - Agent SDK and contract specification (specs/foundational/)
+  - Test infrastructure (test/)
+  - Helm chart (deploy/)
+
+COMMERCIAL (All Rights Reserved):
+  - Hub API server, coordination engine, and management UI
+    (not included in this repository — available via crisismode.ai)
+  - Hub analytics, multi-tenant coordination, and enrichment services
+
+The spoke runtime and agent SDK are designed to operate independently
+for development, testing, and single-spoke deployments. The commercial
+hub provides centralized coordination, analytics, and management for
+multi-spoke enterprise deployments.
+
+--------------------------------------------------------------------------------
+
+Third-party software included in this project:
+
+- Node.js (MIT License) — https://nodejs.org
+- TypeScript (Apache 2.0) — https://www.typescriptlang.org
+- PostgreSQL client library "pg" (MIT License) — https://github.com/brianc/node-postgres
+- Anthropic SDK (MIT License) — https://github.com/anthropics/anthropic-sdk-node
+- Chalk (MIT License) — https://github.com/chalk/chalk

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import { PgReplicationAgent } from '../agent/pg-replication/agent.js';
 import { assembleContext } from '../framework/context.js';
 import { validatePlan } from '../framework/validator.js';

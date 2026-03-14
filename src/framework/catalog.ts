@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import type { CatalogEntry } from '../types/catalog-entry.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { RiskLevel } from '../types/common.js';

@@ -243,4 +243,11 @@ Enforced automatically via husky:
 
 ## License
 
-Proprietary. All rights reserved.
+The spoke runtime, agent SDK, and specifications are licensed under **Apache 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
+
+| Component | License |
+|---|---|
+| Spoke runtime (`src/framework/`, `src/agent/`, `src/types/`) | Apache 2.0 |
+| Agent SDK and contract spec (`specs/foundational/`) | Apache 2.0 |
+| Test infrastructure (`test/`, `deploy/`) | Apache 2.0 |
+| Hub API, coordination, and management UI | Commercial (not in this repo) |

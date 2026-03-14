@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ForensicRecord, ExecutionLogEntry } from '../types/forensic-record.js';

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 import * as readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import type { HumanApprovalStep, HumanNotificationStep } from '../types/step-types.js';

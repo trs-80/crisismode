@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 // Mock Hub API — minimal HTTP server that simulates the CrisisMode hub
 // for spoke testing. No dependencies required (runs on Node built-in http).
 

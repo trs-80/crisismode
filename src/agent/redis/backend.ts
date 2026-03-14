@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
 /**
  * RedisBackend — interface for querying Redis state.
  * Both the simulator and live client implement this.
