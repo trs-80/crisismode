@@ -1,0 +1,134 @@
+# CrisisMode Test Environment — Podman Compose
+#
+# Stands up a PostgreSQL primary/replica pair, postgres_exporter,
+# Prometheus, AlertManager, and a mock hub API.
+#
+# Usage:
+#   cd test/podman && podman-compose up -d
+#   ./scripts/status.sh
+
+name: crisismode-test
+
+networks:
+  crisismode-net:
+    driver: bridge
+
+volumes:
+  pg-primary-data:
+  pg-replica-data:
+  prometheus-data:
+  alertmanager-data:
+
+services:
+
+  # --- PostgreSQL 16 Primary ---
+  pg-primary:
+    image: docker.io/library/postgres:16-alpine
+    container_name: cm-pg-primary
+    networks:
+      - crisismode-net
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: crisismode
+      POSTGRES_PASSWORD: crisismode
+      POSTGRES_DB: crisismode
+    volumes:
+      - pg-primary-data:/var/lib/postgresql/data
+      - ./init/primary-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - ./config/pg_hba_primary.conf:/etc/postgresql/pg_hba.conf:ro
+    command: >
+      postgres
+        -c wal_level=replica
+        -c max_wal_senders=5
+        -c max_replication_slots=5
+        -c hot_standby=on
+        -c hba_file=/etc/postgresql/pg_hba.conf
+        -c listen_addresses='*'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crisismode"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- PostgreSQL 16 Replica ---
+  pg-replica:
+    image: docker.io/library/postgres:16-alpine
+    container_name: cm-pg-replica
+    networks:
+      - crisismode-net
+    ports:
+      - "5433:5432"
+    environment:
+      PGUSER: replicator
+      PGPASSWORD: replicator
+    volumes:
+      - pg-replica-data:/var/lib/postgresql/data
+      - ./init/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    entrypoint: ["/bin/bash", "/replica-entrypoint.sh"]
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crisismode"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- PostgreSQL Exporter ---
+  pg-exporter:
+    image: docker.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: cm-pg-exporter
+    networks:
+      - crisismode-net
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://crisismode:crisismode@pg-primary:5432/crisismode?sslmode=disable"
+      DATA_SOURCE_URI_LIST: "pg-primary:5432/crisismode?sslmode=disable,pg-replica:5432/crisismode?sslmode=disable"
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+
+  # --- Prometheus ---
+  prometheus:
+    image: docker.io/prom/prometheus:v2.51.0
+    container_name: cm-prometheus
+    networks:
+      - crisismode-net
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=1d"
+    depends_on:
+      - pg-exporter
+
+  # --- AlertManager ---
+  alertmanager:
+    image: docker.io/prom/alertmanager:v0.27.0
+    container_name: cm-alertmanager
+    networks:
+      - crisismode-net
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+
+  # --- Mock Hub API ---
+  mock-hub:
+    image: docker.io/library/node:20-alpine
+    container_name: cm-mock-hub
+    networks:
+      - crisismode-net
+    ports:
+      - "8080:8080"
+    working_dir: /app
+    volumes:
+      - ./mock-hub:/app:ro
+    command: ["node", "server.mjs"]

@@ -1,0 +1,23 @@
+global:
+  resolve_timeout: 1m
+
+route:
+  receiver: "crisismode-spoke"
+  group_by: ["alertname", "service"]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 5m
+
+  routes:
+    - match:
+        service: postgresql
+      receiver: "crisismode-spoke"
+
+receivers:
+  - name: "crisismode-spoke"
+    webhook_configs:
+      # Points to the spoke webhook receiver.
+      # In podman: host.containers.internal routes to the host machine.
+      # Change to spoke container name when spoke runs in compose.
+      - url: "http://host.containers.internal:3000/api/v1/alerts"
+        send_resolved: true

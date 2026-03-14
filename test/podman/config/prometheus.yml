@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+rule_files:
+  - alert-rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["pg-exporter:9187"]
+        labels:
+          cluster: "test"
+          environment: "dev"

@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CrisisMode — Recovery Agent Framework</title>
+  <meta name="description" content="An open framework for building autonomous recovery agents that restore IT systems during severe incidents. Safety guarantees, forensic preservation, and human-in-the-loop as first-class primitives.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300;1,9..40,400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-primary: #0a0a0b;
+      --bg-secondary: #111113;
+      --bg-tertiary: #18181b;
+      --bg-elevated: #1e1e22;
+      --border: #2a2a2e;
+      --border-subtle: #1f1f23;
+      --text-primary: #e4e4e7;
+      --text-secondary: #a1a1aa;
+      --text-tertiary: #71717a;
+      --text-muted: #52525b;
+      --amber: #f59e0b;
+      --amber-dim: #b45309;
+      --amber-glow: rgba(245, 158, 11, 0.08);
+      --amber-glow-strong: rgba(245, 158, 11, 0.15);
+      --red: #ef4444;
+      --red-dim: #991b1b;
+      --green: #22c55e;
+      --green-dim: #166534;
+      --cyan: #06b6d4;
+      --cyan-dim: #155e75;
+      --font-mono: 'DM Mono', 'Menlo', 'Monaco', monospace;
+      --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* Scanline overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.03) 2px,
+        rgba(0, 0, 0, 0.03) 4px
+      );
+    }
+
+    ::selection {
+      background: var(--amber);
+      color: var(--bg-primary);
+    }
+
+    a { color: var(--amber); text-decoration: none; transition: color 0.2s; }
+    a:hover { color: var(--text-primary); }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 0 2rem;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(10, 10, 11, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .nav-brand {
+      font-family: var(--font-mono);
+      font-weight: 500;
+      font-size: 0.875rem;
+      letter-spacing: 0.05em;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .nav-brand .indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--amber);
+      box-shadow: 0 0 8px var(--amber);
+      animation: pulse-indicator 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-indicator {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 2rem;
+      list-style: none;
+    }
+
+    .nav-links a {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover { color: var(--text-primary); }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 8rem 2rem 4rem;
+      position: relative;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 100%;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% 0%, var(--amber-glow) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 20% 20%, rgba(239, 68, 68, 0.03) 0%, transparent 50%);
+      pointer-events: none;
+    }
+
+    .hero-grid {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(var(--border-subtle) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse 70% 50% at 50% 30%, black 20%, transparent 70%);
+      -webkit-mask-image: radial-gradient(ellipse 70% 50% at 50% 30%, black 20%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-content {
+      max-width: 900px;
+      margin: 0 auto;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--amber);
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .hero-label::before {
+      content: '';
+      display: block;
+      width: 24px;
+      height: 1px;
+      background: var(--amber-dim);
+    }
+
+    .hero h1 {
+      font-family: var(--font-mono);
+      font-size: clamp(2.5rem, 5vw, 4rem);
+      font-weight: 500;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin-bottom: 1.5rem;
+    }
+
+    .hero h1 .highlight {
+      color: var(--amber);
+    }
+
+    .hero-description {
+      font-size: 1.125rem;
+      line-height: 1.7;
+      color: var(--text-secondary);
+      max-width: 640px;
+      margin-bottom: 2.5rem;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      letter-spacing: 0.04em;
+      padding: 0.75rem 1.5rem;
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn:hover {
+      border-color: var(--text-muted);
+      background: var(--bg-elevated);
+    }
+
+    .btn-primary {
+      background: var(--amber);
+      color: var(--bg-primary);
+      border-color: var(--amber);
+      font-weight: 500;
+    }
+
+    .btn-primary:hover {
+      background: #eab308;
+      border-color: #eab308;
+      color: var(--bg-primary);
+    }
+
+    /* ── TERMINAL DEMO ── */
+    .terminal-section {
+      padding: 6rem 2rem;
+      position: relative;
+    }
+
+    .terminal-container {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    .terminal {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.3),
+        0 20px 60px rgba(0, 0, 0, 0.5),
+        0 0 80px var(--amber-glow);
+    }
+
+    .terminal-header {
+      display: flex;
+      align-items: center;
+      padding: 0.75rem 1rem;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border);
+      gap: 0.5rem;
+    }
+
+    .terminal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+    }
+
+    .terminal-dot.red { background: var(--red-dim); border-color: var(--red); }
+    .terminal-dot.amber { background: var(--amber-dim); border-color: var(--amber); }
+    .terminal-dot.green { background: var(--green-dim); border-color: var(--green); }
+
+    .terminal-title {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      margin-left: 0.5rem;
+    }
+
+    .terminal-body {
+      padding: 1.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      line-height: 1.8;
+      min-height: 380px;
+      overflow: hidden;
+    }
+
+    .terminal-line {
+      opacity: 0;
+      transform: translateY(4px);
+      animation: line-appear 0.3s ease forwards;
+    }
+
+    @keyframes line-appear {
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .t-dim { color: var(--text-muted); }
+    .t-amber { color: var(--amber); }
+    .t-green { color: var(--green); }
+    .t-red { color: var(--red); }
+    .t-cyan { color: var(--cyan); }
+    .t-white { color: var(--text-primary); }
+    .t-secondary { color: var(--text-secondary); }
+    .t-bold { font-weight: 500; }
+
+    .cursor-blink {
+      display: inline-block;
+      width: 8px;
+      height: 14px;
+      background: var(--amber);
+      margin-left: 2px;
+      vertical-align: middle;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* ── SECTIONS ── */
+    section {
+      padding: 6rem 2rem;
+    }
+
+    .section-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--amber-dim);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .section-label::before {
+      content: '';
+      display: block;
+      width: 16px;
+      height: 1px;
+      background: var(--amber-dim);
+    }
+
+    .section-title {
+      font-family: var(--font-mono);
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      font-weight: 500;
+      line-height: 1.3;
+      margin-bottom: 1rem;
+      letter-spacing: -0.01em;
+    }
+
+    .section-description {
+      color: var(--text-secondary);
+      font-size: 1.0625rem;
+      line-height: 1.7;
+      max-width: 640px;
+      margin-bottom: 3rem;
+    }
+
+    /* ── PRINCIPLE SECTION ── */
+    .principle-section {
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-secondary);
+    }
+
+    .principle-banner {
+      max-width: 800px;
+      margin: 0 auto 4rem;
+      text-align: center;
+      padding: 3rem 2rem;
+      border: 1px solid var(--border);
+      background: var(--bg-primary);
+      position: relative;
+    }
+
+    .principle-banner::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border: 1px solid transparent;
+      background: linear-gradient(135deg, var(--amber-dim), transparent 40%, transparent 60%, var(--amber-dim)) border-box;
+      mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+      -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+      mask-composite: exclude;
+      -webkit-mask-composite: xor;
+      pointer-events: none;
+    }
+
+    .principle-banner blockquote {
+      font-family: var(--font-mono);
+      font-size: 1.25rem;
+      font-weight: 400;
+      color: var(--text-primary);
+      line-height: 1.5;
+      font-style: italic;
+    }
+
+    .principle-banner blockquote .highlight {
+      color: var(--amber);
+      font-style: normal;
+      font-weight: 500;
+    }
+
+    .principle-banner cite {
+      display: block;
+      margin-top: 1rem;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-style: normal;
+      letter-spacing: 0.05em;
+    }
+
+    /* ── FEATURES GRID ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1px;
+      background: var(--border-subtle);
+      border: 1px solid var(--border-subtle);
+    }
+
+    .feature-card {
+      background: var(--bg-primary);
+      padding: 2rem;
+      transition: background 0.3s;
+    }
+
+    .feature-card:hover {
+      background: var(--bg-secondary);
+    }
+
+    .feature-icon {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--amber);
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .feature-card h3 {
+      font-family: var(--font-mono);
+      font-size: 0.9375rem;
+      font-weight: 500;
+      margin-bottom: 0.75rem;
+      line-height: 1.4;
+    }
+
+    .feature-card p {
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+      line-height: 1.65;
+    }
+
+    /* ── FLOW SECTION ── */
+    .flow-section {
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .flow-steps {
+      display: grid;
+      gap: 0;
+      counter-reset: flow-step;
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: 80px 1fr;
+      gap: 0;
+      counter-increment: flow-step;
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 1.5rem 0;
+      transition: background 0.2s;
+    }
+
+    .flow-step:hover {
+      background: var(--amber-glow);
+    }
+
+    .flow-step-num {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      padding-top: 0.15rem;
+    }
+
+    .flow-step-num::before {
+      content: counter(flow-step, decimal-leading-zero);
+    }
+
+    .flow-step-content h4 {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.35rem;
+    }
+
+    .flow-step-content p {
+      font-size: 0.8125rem;
+      color: var(--text-tertiary);
+      line-height: 1.5;
+    }
+
+    .flow-step-tag {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.625rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 0.15rem 0.5rem;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+
+    .flow-step-tag.agent { border-color: var(--cyan-dim); color: var(--cyan); }
+    .flow-step-tag.framework { border-color: var(--amber-dim); color: var(--amber); }
+    .flow-step-tag.human { border-color: var(--green-dim); color: var(--green); }
+
+    /* ── LAYERS SECTION ── */
+    .layers-section {
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-secondary);
+    }
+
+    .layers-stack {
+      max-width: 700px;
+    }
+
+    .layer-row {
+      border: 1px solid var(--border);
+      border-bottom: none;
+      padding: 1.25rem 1.5rem;
+      background: var(--bg-primary);
+      transition: background 0.2s, border-color 0.2s;
+    }
+
+    .layer-row:last-child { border-bottom: 1px solid var(--border); }
+
+    .layer-row:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--text-muted);
+    }
+
+    .layer-row:hover + .layer-row {
+      border-top-color: var(--text-muted);
+    }
+
+    .layer-header {
+      display: flex;
+      align-items: baseline;
+      gap: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .layer-num {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--amber);
+      letter-spacing: 0.05em;
+    }
+
+    .layer-name {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    .layer-badge {
+      font-family: var(--font-mono);
+      font-size: 0.5625rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+      padding: 0.1rem 0.4rem;
+      margin-left: auto;
+    }
+
+    .layer-desc {
+      font-size: 0.8125rem;
+      color: var(--text-tertiary);
+      line-height: 1.55;
+      padding-left: calc(0.6875rem + 1rem);
+    }
+
+    /* ── SPEC SECTION ── */
+    .spec-section {
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .spec-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1px;
+      background: var(--border-subtle);
+      border: 1px solid var(--border-subtle);
+      margin-bottom: 3rem;
+    }
+
+    .spec-stat {
+      background: var(--bg-primary);
+      padding: 1.5rem;
+      text-align: center;
+    }
+
+    .spec-stat-value {
+      font-family: var(--font-mono);
+      font-size: 2rem;
+      font-weight: 300;
+      color: var(--amber);
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+
+    .spec-stat-label {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    /* ── CTA ── */
+    .cta-section {
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-secondary);
+      text-align: center;
+    }
+
+    .cta-section .section-inner {
+      max-width: 640px;
+    }
+
+    .cta-section .section-label { justify-content: center; }
+    .cta-section .section-label::before { display: none; }
+
+    .cta-section .section-title {
+      margin-bottom: 1.5rem;
+    }
+
+    .cta-actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 2rem;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border-subtle);
+      padding: 2rem;
+      text-align: center;
+    }
+
+    footer p {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      color: var(--text-muted);
+      letter-spacing: 0.05em;
+    }
+
+    /* ── SCROLL ANIMATIONS ── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      nav { padding: 0 1rem; }
+      .nav-links { gap: 1rem; }
+      .nav-links a { font-size: 0.6875rem; }
+      .hero { padding: 6rem 1.5rem 3rem; }
+      section { padding: 4rem 1.5rem; }
+      .features-grid { grid-template-columns: 1fr; }
+      .flow-step { grid-template-columns: 50px 1fr; }
+      .spec-stats { grid-template-columns: repeat(2, 1fr); }
+      .terminal-body { font-size: 0.6875rem; min-height: 300px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <div class="nav-brand">
+      <span class="indicator"></span>
+      CRISISMODE
+    </div>
+    <ul class="nav-links">
+      <li><a href="#how-it-works">How It Works</a></li>
+      <li><a href="#architecture">Architecture</a></li>
+      <li><a href="#spec">Specification</a></li>
+      <li><a href="https://github.com/trs-80/crisismode" target="_blank" rel="noopener">GitHub</a></li>
+    </ul>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-grid"></div>
+    <div class="hero-content">
+      <div class="hero-label">Recovery Agent Framework</div>
+      <h1>
+        When systems fail,<br>
+        <span class="highlight">agents recover.</span>
+      </h1>
+      <p class="hero-description">
+        CrisisMode is an open framework for building autonomous recovery agents that restore IT systems during severe incidents. Safety guarantees, forensic state preservation, and human-in-the-loop coordination — as first-class primitives.
+      </p>
+      <div class="hero-actions">
+        <a href="https://github.com/trs-80/crisismode" class="btn btn-primary" target="_blank" rel="noopener">View on GitHub</a>
+        <a href="#how-it-works" class="btn">How It Works &darr;</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- TERMINAL DEMO -->
+  <section class="terminal-section">
+    <div class="terminal-container">
+      <div class="terminal" id="terminal">
+        <div class="terminal-header">
+          <div class="terminal-dot red"></div>
+          <div class="terminal-dot amber"></div>
+          <div class="terminal-dot green"></div>
+          <span class="terminal-title">crisismode — pnpm dev</span>
+        </div>
+        <div class="terminal-body" id="terminal-body"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CORE PRINCIPLE -->
+  <section class="principle-section" id="how-it-works">
+    <div class="section-inner">
+      <div class="principle-banner reveal">
+        <blockquote>
+          "<span class="highlight">Agents propose</span>, the framework disposes. Agents produce recovery plans describing what they intend to do. The framework validates, orchestrates, and enforces those plans."
+        </blockquote>
+        <cite>— Recovery Agent Contract Specification v0.2.1</cite>
+      </div>
+
+      <!-- FEATURES -->
+      <div class="section-label reveal">Core Capabilities</div>
+      <h2 class="section-title reveal">Built for the worst moment</h2>
+      <p class="section-description reveal">
+        CrisisMode is not a general-purpose automation platform. It is the tool an organization reaches for when normal operational tooling has failed or is insufficient.
+      </p>
+
+      <div class="features-grid reveal">
+        <div class="feature-card">
+          <div class="feature-icon">01 — Safety</div>
+          <h3>Safety by Default</h3>
+          <p>Agents inherit safety guarantees from the framework. An agent that follows the contract cannot bypass state preservation, skip approval gates, or exceed its declared blast radius.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">02 — Forensics</div>
+          <h3>Forensic-First Recovery</h3>
+          <p>The framework captures system state before mutating actions, preserving evidence for post-incident analysis, compliance, and learning — within the constraints of system health.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">03 — Human-in-the-Loop</div>
+          <h3>Structured Human Interaction</h3>
+          <p>Notification, approval, escalation, and communication are first-class primitives with the same rigor as system actions. Not an afterthought — a design constraint.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">04 — Speed</div>
+          <h3>Approval Speed, Not Bypass</h3>
+          <p>Pre-authorized action catalogs make approval fast for known scenarios. The system never provides mechanisms to skip approval under pressure.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">05 — Trust</div>
+          <h3>Graduated Trust</h3>
+          <p>Agents earn autonomy over time through demonstrated reliability in specific scenarios and environments. Trust is scoped per agent, scenario, and environment.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">06 — Resilience</div>
+          <h3>Graceful Degradation</h3>
+          <p>The framework sheds capabilities progressively as the environment degrades, rather than failing entirely. Recovery capability is always available at some level.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- EXECUTION FLOW -->
+  <section class="flow-section" id="execution-flow">
+    <div class="section-inner">
+      <div class="section-label reveal">Execution Flow</div>
+      <h2 class="section-title reveal">13 steps from alert to recovery</h2>
+      <p class="section-description reveal">
+        Every recovery follows a structured sequence. The framework orchestrates each phase — agents never interact directly with target systems.
+      </p>
+
+      <div class="flow-steps reveal">
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Trigger <span class="flow-step-tag framework">Framework</span></h4>
+            <p>Framework receives trigger from alert, health check, or manual invocation</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Catalog Check <span class="flow-step-tag framework">Framework</span></h4>
+            <p>Check pre-authorized action catalogs for matching scenario</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Agent Selection <span class="flow-step-tag framework">Framework</span></h4>
+            <p>Identify applicable agent based on trigger context and manifest declarations</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Context Assembly <span class="flow-step-tag framework">Framework</span></h4>
+            <p>Assemble context bundle — system topology, trust levels, organizational policies</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Diagnosis <span class="flow-step-tag agent">Agent</span></h4>
+            <p>Agent performs read-only investigation using provided context</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Diagnostic Plan <span class="flow-step-tag agent">Agent</span></h4>
+            <p>Agent may submit a lightweight diagnostic plan for investigative mutations</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Plan Creation <span class="flow-step-tag agent">Agent</span></h4>
+            <p>Agent produces a Recovery Plan — linear steps with bounded decision points</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Plan Validation <span class="flow-step-tag framework">Framework</span></h4>
+            <p>Validate plan against manifest, organizational policies, and blast radius</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Catalog Match <span class="flow-step-tag framework">Framework</span></h4>
+            <p>If plan matches a catalog entry, approval is pre-satisfied for covered risk levels</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Human Gates <span class="flow-step-tag human">Human</span></h4>
+            <p>Execute approval gates per risk classification and trust level</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Execution <span class="flow-step-tag framework">Framework</span></h4>
+            <p>Orchestrate plan steps: snapshot → action → verify → notify</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Replanning <span class="flow-step-tag agent">Agent</span></h4>
+            <p>At declared checkpoints, agent may revise remaining plan based on current state</p>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-step-num"></div>
+          <div class="flow-step-content">
+            <h4>Completion <span class="flow-step-tag framework">Framework</span></h4>
+            <p>Produce forensic record and trigger post-recovery notifications</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ARCHITECTURE LAYERS -->
+  <section class="layers-section" id="architecture">
+    <div class="section-inner">
+      <div class="section-label reveal">Degradation Architecture</div>
+      <h2 class="section-title reveal">Four layers, designed to shed</h2>
+      <p class="section-description reveal">
+        The framework operates as concentric layers. As the environment degrades, outer layers shed while core recovery remains available. A recovery tool that requires healthy infrastructure to operate is useless.
+      </p>
+
+      <div class="layers-stack reveal">
+        <div class="layer-row">
+          <div class="layer-header">
+            <span class="layer-num">L4</span>
+            <span class="layer-name">Enrichment</span>
+            <span class="layer-badge">Phase 2</span>
+          </div>
+          <p class="layer-desc">Advanced trust analytics, stakeholder communication rendering, observed impact monitoring, topology feedback loop</p>
+        </div>
+        <div class="layer-row">
+          <div class="layer-header">
+            <span class="layer-num">L3</span>
+            <span class="layer-name">Coordination</span>
+            <span class="layer-badge">Should be available</span>
+          </div>
+          <p class="layer-desc">Human approval routing, escalation management, notification delivery, pre-authorized catalog matching, fallback approval</p>
+        </div>
+        <div class="layer-row">
+          <div class="layer-header">
+            <span class="layer-num">L2</span>
+            <span class="layer-name">Safety</span>
+            <span class="layer-badge">Must be available</span>
+          </div>
+          <p class="layer-desc">State preservation capture, plan validation against manifest, blast radius enforcement, forensic record assembly</p>
+        </div>
+        <div class="layer-row">
+          <div class="layer-header">
+            <span class="layer-num">L1</span>
+            <span class="layer-name">Execution Kernel</span>
+            <span class="layer-badge">Always available</span>
+          </div>
+          <p class="layer-desc">Sequential plan execution, command dispatch, precondition evaluation, success criteria checks, local audit log, stepwise rollback. Zero external dependencies.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SPEC -->
+  <section class="spec-section" id="spec">
+    <div class="section-inner">
+      <div class="section-label reveal">The Specification</div>
+      <h2 class="section-title reveal">Rigorous by design</h2>
+      <p class="section-description reveal">
+        The Recovery Agent Contract Specification defines the interface between agents and framework with the precision of a protocol specification. Every requirement is phased, every interaction is structured, every decision is auditable.
+      </p>
+
+      <div class="spec-stats reveal">
+        <div class="spec-stat">
+          <div class="spec-stat-value">7</div>
+          <div class="spec-stat-label">Step Types</div>
+        </div>
+        <div class="spec-stat">
+          <div class="spec-stat-value">4</div>
+          <div class="spec-stat-label">Risk Levels</div>
+        </div>
+        <div class="spec-stat">
+          <div class="spec-stat-value">4</div>
+          <div class="spec-stat-label">Trust Levels</div>
+        </div>
+        <div class="spec-stat">
+          <div class="spec-stat-value">4</div>
+          <div class="spec-stat-label">Degradation Layers</div>
+        </div>
+        <div class="spec-stat">
+          <div class="spec-stat-value">3</div>
+          <div class="spec-stat-label">Blast Radius Tiers</div>
+        </div>
+        <div class="spec-stat">
+          <div class="spec-stat-value">22</div>
+          <div class="spec-stat-label">Specification Sections</div>
+        </div>
+      </div>
+
+      <div class="features-grid reveal">
+        <div class="feature-card">
+          <div class="feature-icon">Recovery Plans</div>
+          <h3>Readable Under Pressure</h3>
+          <p>Linear sequences with bounded decision points. A plan with 10 steps and one binary decision is comprehensible at 3 AM during a P1 outage. A 30-node graph is not.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">Replanning</div>
+          <h3>Adaptability Without Complexity</h3>
+          <p>When conditions change beyond what a binary decision point can handle, the agent produces a new plan. Simple plans, clean audit trail, novel situations handled naturally.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">Pre-Authorization</div>
+          <h3>Reviewed in Calm, Activated in Crisis</h3>
+          <p>Organizations pre-authorize specific recovery approaches during calm conditions. A crisis activates the pre-approved response — fast for the safe phase, controlled for the risky phase.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <div class="section-inner">
+      <div class="section-label reveal">Get Started</div>
+      <h2 class="section-title reveal">Recovery is too important to improvise</h2>
+      <p class="section-description reveal" style="margin-left: auto; margin-right: auto;">
+        CrisisMode is open source. Read the specification, run the interactive demo, build your first recovery agent.
+      </p>
+      <div class="cta-actions reveal">
+        <a href="https://github.com/trs-80/crisismode" class="btn btn-primary" target="_blank" rel="noopener">GitHub Repository</a>
+        <a href="https://github.com/trs-80/crisismode/blob/main/specs/foundational/recovery-agent-contract.md" class="btn" target="_blank" rel="noopener">Read the Spec</a>
+        <a href="#terminal" class="btn">Watch the Demo</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <p>CrisisMode &mdash; Recovery Agent Contract Specification v0.2.1</p>
+  </footer>
+
+  <script>
+    // ── Scroll Reveal ──
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+          }
+        });
+      },
+      { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
+    );
+
+    document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
+
+    // ── Terminal Animation ──
+    const terminalLines = [
+      { text: '$ pnpm dev', classes: 't-white t-bold' },
+      { text: '', classes: '' },
+      { text: '════════════════════════════════════════════════════════════', classes: 't-dim' },
+      { text: '  ⚠  CRISISMODE — Recovery Agent Framework', classes: 't-amber t-bold' },
+      { text: '  PostgreSQL Replication Lag Cascade Recovery', classes: 't-dim' },
+      { text: '════════════════════════════════════════════════════════════', classes: 't-dim' },
+      { text: '', classes: '' },
+      { text: '  Phase 1: Trigger', classes: 't-cyan t-bold' },
+      { text: '  ALERT FIRED  alertname=PostgresReplicationLagCritical', classes: 't-amber' },
+      { text: '', classes: '' },
+      { text: '  Phase 5: Diagnosis', classes: 't-cyan t-bold' },
+      { text: '  [CRITICAL] 3 replicas found, 1 severely lagging (342s)', classes: 't-red' },
+      { text: '  ✓ Identified: replication_lag_cascade (92% confidence)', classes: 't-green' },
+      { text: '', classes: '' },
+      { text: '  Phase 9: Execution', classes: 't-cyan t-bold' },
+      { text: '  Step step-004 [system_action]', classes: 't-white t-bold' },
+      { text: '  ◆ Capture: replication_state_snapshot — captured', classes: 't-dim' },
+      { text: '  ✓ Precondition: Replica is connected and streaming', classes: 't-green' },
+      { text: '  ✓ Success: WAL sender terminated', classes: 't-green' },
+      { text: '  ● SUCCESS (1ms)', classes: 't-green' },
+      { text: '', classes: '' },
+      { text: '  Step step-006 [replanning_checkpoint]', classes: 't-white t-bold' },
+      { text: '  ↻ Agent discovered invalid replication slot', classes: 't-cyan' },
+      { text: '  ↻ Revised plan: drop + recreate slot. Fast replan: approved', classes: 't-cyan' },
+      { text: '', classes: '' },
+      { text: '  ┌──────────────────────────────────────────┐', classes: 't-amber' },
+      { text: '  │       HUMAN APPROVAL REQUIRED            │', classes: 't-amber t-bold' },
+      { text: '  └──────────────────────────────────────────┘', classes: 't-amber' },
+      { text: '  Enter your decision (approve/skip/reject): _', classes: 't-white', cursor: true },
+    ];
+
+    const terminalBody = document.getElementById('terminal-body');
+    let lineIndex = 0;
+    let terminalStarted = false;
+
+    function addTerminalLine() {
+      if (lineIndex >= terminalLines.length) return;
+
+      const line = terminalLines[lineIndex];
+      const div = document.createElement('div');
+      div.className = 'terminal-line';
+      div.style.animationDelay = '0s';
+
+      if (line.text === '') {
+        div.innerHTML = '&nbsp;';
+      } else {
+        div.innerHTML = `<span class="${line.classes}">${escapeHtml(line.text)}</span>`;
+        if (line.cursor) {
+          div.querySelector('span').innerHTML =
+            div.querySelector('span').innerHTML.replace('_', '<span class="cursor-blink"></span>');
+        }
+      }
+
+      terminalBody.appendChild(div);
+      terminalBody.scrollTop = terminalBody.scrollHeight;
+      lineIndex++;
+
+      const delay = line.text === '' ? 80 : line.cursor ? 600 : 120;
+      setTimeout(addTerminalLine, delay);
+    }
+
+    function escapeHtml(text) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    const terminalObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !terminalStarted) {
+          terminalStarted = true;
+          setTimeout(addTerminalLine, 400);
+        }
+      },
+      { threshold: 0.3 }
+    );
+
+    terminalObserver.observe(document.getElementById('terminal'));
+  </script>
+
+</body>
+</html>

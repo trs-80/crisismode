@@ -1,0 +1,46 @@
+groups:
+  - name: postgresql_replication
+    rules:
+      # Matches the trigger label in the PgReplicationAgent manifest:
+      # alertname: 'PostgresReplicationLagCritical'
+      - alert: PostgresReplicationLagCritical
+        expr: pg_replication_lag > 30
+        for: 30s
+        labels:
+          severity: critical
+          service: postgresql
+          cluster: test
+        annotations:
+          summary: "PostgreSQL replication lag exceeds 30s"
+          description: "Replication lag is {{ $value }}s on {{ $labels.instance }}"
+
+      - alert: PostgresReplicationLagWarning
+        expr: pg_replication_lag > 10
+        for: 1m
+        labels:
+          severity: warning
+          service: postgresql
+          cluster: test
+        annotations:
+          summary: "PostgreSQL replication lag exceeds 10s"
+          description: "Replication lag is {{ $value }}s on {{ $labels.instance }}"
+
+      - alert: PostgresTooManyConnections
+        expr: pg_stat_activity_count > 200
+        for: 30s
+        labels:
+          severity: critical
+          service: postgresql
+        annotations:
+          summary: "PostgreSQL connection count exceeds 200"
+          description: "{{ $value }} active connections on {{ $labels.instance }}"
+
+      - alert: PostgresReplicationSlotInactive
+        expr: pg_replication_slots_active == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: postgresql
+        annotations:
+          summary: "PostgreSQL replication slot is inactive"
+          description: "Slot {{ $labels.slot_name }} is inactive on {{ $labels.instance }}"
