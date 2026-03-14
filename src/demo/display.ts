@@ -112,6 +112,24 @@ export function displayDiagnosis(diagnosis: DiagnosisResult): void {
   );
   console.log(chalk.dim(`     Scenario:    ${diagnosis.scenario}`));
   console.log(chalk.dim(`     Confidence:  ${(diagnosis.confidence * 100).toFixed(0)}%`));
+
+  // Show AI root cause if present
+  const rootCause = diagnosis.findings[0]?.data?.root_cause;
+  if (rootCause) {
+    console.log('');
+    console.log(chalk.cyan('     Root cause:  ') + chalk.white(String(rootCause)));
+  }
+
+  // Show AI recommendations if present
+  const recommendations = diagnosis.findings[0]?.data?.recommendations;
+  if (Array.isArray(recommendations) && recommendations.length > 0) {
+    console.log('');
+    console.log(chalk.cyan('     Recommendations:'));
+    for (const rec of recommendations) {
+      console.log(chalk.dim(`       - ${rec}`));
+    }
+  }
+
   console.log('');
   for (const finding of diagnosis.findings) {
     const sevColor =

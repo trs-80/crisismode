@@ -1,14 +1,64 @@
 # CrisisMode
 
-An open framework for building autonomous recovery agents that restore IT systems during severe incidents. Safety guarantees, forensic preservation, and human-in-the-loop coordination as first-class primitives.
+Runbooks tell humans what to do. CrisisMode agents *do it* — with safety guarantees that runbooks can't enforce. Every action is validated against a blast radius, every mutation is preceded by a state capture, every risky step requires approval, and every execution produces an immutable forensic record. AI-powered diagnosis identifies failure patterns that rule-based monitoring misses.
 
 **Website:** [crisismode.ai](https://crisismode.ai)
 
 ## What is this?
 
-CrisisMode is the tool an organization reaches for when normal operational tooling has failed or is insufficient. It provides a contract-driven framework where recovery agents execute validated plans against degraded infrastructure — with state capture, blast radius enforcement, and approval workflows built in.
+CrisisMode is the tool an organization reaches for when normal operational tooling has failed or is insufficient. Recovery agents connect to real infrastructure, use AI to diagnose what's wrong, build validated recovery plans, and execute them with human-in-the-loop safety — all while producing a complete forensic trail.
 
 The framework uses a **hub-and-spoke architecture**: spokes run close to target systems and handle execution (Layers 1-2), while the hub provides coordination, analytics, and management (Layers 3-4). Spokes operate autonomously when the hub is unreachable.
+
+<details>
+<summary><strong>See it in action</strong> — live mode diagnosing real PostgreSQL replication lag</summary>
+
+```
+  Connecting to PostgreSQL...
+  ✅ Primary connected — 3 active connections
+  ✅ Replication: 1 replica(s) streaming
+  ✅ Replica connected — recovery mode: true, lag: 636s
+
+  ── Live Replication Status ──
+  🔴 10.89.0.5/32 | streaming | lag: 41s | sent: 0/63704F0 | replay: 0/5EDE5F8
+
+  Phase 3: Diagnosis (Live — AI-Powered)
+  ──────────────────────────────────────
+  🤖 AI analyzing system state...
+     Status:      identified
+     Scenario:    replication_lag_cascade
+     Confidence:  94%
+     Root cause:  WAL replay paused on replica — sent LSN is advancing
+                  but replay LSN is static, indicating a deliberate pause
+                  or I/O bottleneck on the replica, not a network issue.
+
+  Phase 4: Plan Creation
+  ──────────────────────
+     #   Type                    Risk        Name
+     ────────────────────────────────────────────────────────────
+     1   diagnosis_action        —           Assess replication lag
+     2   human_notification      —           Notify on-call DBA
+     3   checkpoint              —           Pre-recovery state capture
+     4   system_action           elevated    Disconnect lagging replica
+     5   system_action           routine     Redirect read traffic
+     6   replanning_checkpoint   —           Assess progress
+     7   human_approval          —           Approve resynchronization
+     8   system_action           high        pg_basebackup + resync
+     9   conditional             —           Restore traffic or notify
+     10  human_notification      —           Recovery summary
+
+  Phase 7: Execution (Live — EXECUTE MODE)
+  ─────────────────────────────────────────
+  🔴 EXECUTE MODE — SQL mutations WILL be run against real PostgreSQL.
+
+     Step step-004 [system_action]
+     Disconnect lagging replica 10.89.0.5/32 from replication
+     ✓ Precondition: Replica 10.89.0.5/32 is currently connected
+     ✓ Success: WAL sender for 10.89.0.5/32 is no longer present
+     ● SUCCESS (6ms)
+```
+
+</details>
 
 ## Project Structure
 

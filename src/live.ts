@@ -129,7 +129,13 @@ async function runLive(): Promise<void> {
     await sleep(300);
 
     // ── Phase 3: Diagnosis ──
-    display.phase(3, 'Diagnosis (Live)');
+    const hasAiKey = !!process.env.ANTHROPIC_API_KEY;
+    display.phase(3, hasAiKey ? 'Diagnosis (Live — AI-Powered)' : 'Diagnosis (Live — Rule-Based)');
+    if (hasAiKey) {
+      console.log('  🤖 AI analyzing system state via Claude...');
+    } else {
+      console.log('  📋 Using rule-based diagnosis (set ANTHROPIC_API_KEY for AI diagnosis)');
+    }
     display.step(3, 'Agent querying real PostgreSQL for diagnosis');
 
     const diagnosis = await agent.diagnose(context);

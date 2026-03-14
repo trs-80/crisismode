@@ -8,6 +8,7 @@ import type { ReplicaStatus } from './backend.js';
 import { pgReplicationManifest } from './manifest.js';
 import type { PgBackend } from './backend.js';
 import { PgSimulator } from './simulator.js';
+import { aiDiagnose } from './ai-diagnosis.js';
 
 export class PgReplicationAgent implements RecoveryAgent {
   manifest = pgReplicationManifest;
@@ -22,6 +23,31 @@ export class PgReplicationAgent implements RecoveryAgent {
     const slots = await this.backend.queryReplicationSlots();
     const connCount = await this.backend.queryConnectionCount();
 
+    // Try AI-powered diagnosis first
+    const aiResult = await aiDiagnose({
+      replicas: replStatus,
+      slots,
+      connectionCount: connCount,
+    });
+
+    if (aiResult) {
+      // AI diagnosis succeeded — enrich with raw data for plan generation
+      const enrichedFindings = aiResult.findings.map((f) => ({
+        ...f,
+        data: { ...f.data, replicas: replStatus, slots, connectionCount: connCount },
+      }));
+      return { ...aiResult, findings: enrichedFindings };
+    }
+
+    // Fallback: rule-based diagnosis
+    return this.ruleBasedDiagnose(replStatus, slots, connCount);
+  }
+
+  private ruleBasedDiagnose(
+    replStatus: ReplicaStatus[],
+    slots: import('./backend.js').ReplicationSlot[],
+    connCount: number,
+  ): DiagnosisResult {
     const severelyLagging = replStatus.filter((r) => r.lag_seconds > 300);
     const moderatelyLagging = replStatus.filter((r) => r.lag_seconds > 30 && r.lag_seconds <= 300);
 
