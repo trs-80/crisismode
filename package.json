@@ -7,6 +7,7 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "live": "tsx src/live.ts",
     "typecheck": "tsc --noEmit",
     "prepare": "husky"
   },

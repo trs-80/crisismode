@@ -10,7 +10,7 @@ import { executeCapture, validateBlastRadius } from './safety.js';
 import { requestApproval, shouldAutoApprove } from './coordinator.js';
 import { isCatalogCovered } from './catalog.js';
 import { ForensicRecorder } from './forensics.js';
-import type { PgSimulator } from '../agent/pg-replication/simulator.js';
+import type { PgBackend } from '../agent/pg-replication/backend.js';
 
 export interface EngineCallbacks {
   onStepStart?: (step: RecoveryStep, index: number) => void;
@@ -31,7 +31,7 @@ export class ExecutionEngine {
   private recorder: ForensicRecorder;
   private coveredRiskLevels: RiskLevel[] = [];
   private callbacks: EngineCallbacks;
-  private simulator: PgSimulator;
+  private backend: PgBackend;
   private executionState: ExecutionState;
 
   constructor(
@@ -39,12 +39,12 @@ export class ExecutionEngine {
     private manifest: AgentManifest,
     private agent: RecoveryAgent,
     recorder: ForensicRecorder,
-    simulator: PgSimulator,
+    backend: PgBackend,
     callbacks: EngineCallbacks = {},
   ) {
     this.recorder = recorder;
     this.callbacks = callbacks;
-    this.simulator = simulator;
+    this.backend = backend;
     this.executionState = {
       completedSteps: [],
       currentStepIndex: 0,
@@ -134,14 +134,14 @@ export class ExecutionEngine {
     }
   }
 
-  private executeDiagnosisAction(
+  private async executeDiagnosisAction(
     step: RecoveryStep & { type: 'diagnosis_action' },
     startedAt: string,
     startTime: number,
-  ): StepResult {
-    // Simulate query execution
+  ): Promise<StepResult> {
+    // Execute the diagnosis query against the backend
     const output = step.command.statement
-      ? this.simulator.queryReplicationStatus()
+      ? await this.backend.queryReplicationStatus()
       : null;
 
     this.recorder.addLogEntry({
@@ -217,11 +217,11 @@ export class ExecutionEngine {
     };
   }
 
-  private executeSystemAction(
+  private async executeSystemAction(
     step: SystemActionStep,
     startedAt: string,
     startTime: number,
-  ): StepResult {
+  ): Promise<StepResult> {
     // Blast radius check
     const blastResult = validateBlastRadius(step, this.manifest);
     this.callbacks.onBlastRadiusCheck?.(step, blastResult.message);
@@ -252,7 +252,7 @@ export class ExecutionEngine {
     // Check preconditions
     if (step.preConditions) {
       for (const pre of step.preConditions) {
-        const passed = this.simulator.evaluateCheck(pre.check);
+        const passed = await this.backend.evaluateCheck(pre.check);
         this.callbacks.onPreConditionCheck?.(step, passed, pre.description);
         this.recorder.addLogEntry({
           type: 'precondition_check',
@@ -282,15 +282,15 @@ export class ExecutionEngine {
 
     // After step 4, transition simulator to recovering
     if (step.stepId === 'step-004') {
-      this.simulator.transition('recovering');
+      this.backend.transition('recovering');
     }
     // After step 8, transition simulator to recovered
     if (step.stepId === 'step-008') {
-      this.simulator.transition('recovered');
+      this.backend.transition('recovered');
     }
 
     // Check success criteria
-    const successPassed = this.simulator.evaluateCheck(step.successCriteria.check);
+    const successPassed = await this.backend.evaluateCheck(step.successCriteria.check);
     this.callbacks.onSuccessCheck?.(step, successPassed, step.successCriteria.description);
     this.recorder.addLogEntry({
       type: 'success_check',
@@ -437,12 +437,12 @@ export class ExecutionEngine {
     };
   }
 
-  private executeConditional(
+  private async executeConditional(
     step: RecoveryStep & { type: 'conditional' },
     startedAt: string,
     startTime: number,
-  ): StepResult {
-    const conditionMet = this.simulator.evaluateCheck(step.condition.check);
+  ): Promise<StepResult> {
+    const conditionMet = await this.backend.evaluateCheck(step.condition.check);
     this.callbacks.onConditionalEval?.(step, conditionMet);
 
     this.recorder.addLogEntry({
@@ -454,7 +454,7 @@ export class ExecutionEngine {
     let branchResult: StepResult;
     if (conditionMet) {
       this.callbacks.onStepStart?.(step.thenStep, -1);
-      branchResult = this.executeStep_sync(step.thenStep, startedAt, startTime);
+      branchResult = await this.executeBranchStep(step.thenStep, startedAt, startTime);
       this.callbacks.onStepComplete?.(step.thenStep, branchResult);
     } else {
       if (step.elseStep === 'skip') {
@@ -468,7 +468,7 @@ export class ExecutionEngine {
         };
       } else {
         this.callbacks.onStepStart?.(step.elseStep, -1);
-        branchResult = this.executeStep_sync(step.elseStep, startedAt, startTime);
+        branchResult = await this.executeBranchStep(step.elseStep, startedAt, startTime);
         this.callbacks.onStepComplete?.(step.elseStep, branchResult);
       }
     }
@@ -485,11 +485,11 @@ export class ExecutionEngine {
     };
   }
 
-  private executeStep_sync(
+  private async executeBranchStep(
     step: RecoveryStep,
     startedAt: string,
     startTime: number,
-  ): StepResult {
+  ): Promise<StepResult> {
     if (step.type === 'system_action') {
       return this.executeSystemAction(step, startedAt, startTime);
     }

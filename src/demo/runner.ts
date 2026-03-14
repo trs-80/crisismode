@@ -171,7 +171,7 @@ export async function runDemo(): Promise<void> {
     agent.manifest,
     agent,
     recorder,
-    agent.simulator,
+    agent.backend,
     callbacks,
   );
   engine.setCoveredRiskLevels(catalogMatch.coveredRiskLevels);

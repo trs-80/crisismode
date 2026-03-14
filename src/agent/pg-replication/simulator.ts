@@ -1,26 +1,8 @@
+import type { PgBackend, ReplicaStatus, ReplicationSlot } from './backend.js';
+
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
-export interface ReplicaStatus {
-  client_addr: string;
-  state: string;
-  sent_lsn: string;
-  write_lsn: string;
-  flush_lsn: string;
-  replay_lsn: string;
-  lag_seconds: number;
-}
-
-export interface ReplicationSlot {
-  slot_name: string;
-  plugin: string;
-  slot_type: string;
-  active: boolean;
-  restart_lsn: string;
-  confirmed_flush_lsn: string;
-  wal_status: string;
-}
-
-export class PgSimulator {
+export class PgSimulator implements PgBackend {
   private state: SimulatorState = 'degraded';
   private slotInvalid = true;
 
@@ -28,11 +10,11 @@ export class PgSimulator {
     return this.state;
   }
 
-  transition(to: SimulatorState): void {
-    this.state = to;
+  transition(to: string): void {
+    this.state = to as SimulatorState;
   }
 
-  queryReplicationStatus(): ReplicaStatus[] {
+  async queryReplicationStatus(): Promise<ReplicaStatus[]> {
     switch (this.state) {
       case 'degraded':
         return [
@@ -118,7 +100,7 @@ export class PgSimulator {
     }
   }
 
-  queryReplicationSlots(): ReplicationSlot[] {
+  async queryReplicationSlots(): Promise<ReplicationSlot[]> {
     if (this.slotInvalid && this.state !== 'degraded') {
       return [
         {
@@ -182,7 +164,7 @@ export class PgSimulator {
     ];
   }
 
-  queryConnectionCount(): number {
+  async queryConnectionCount(): Promise<number> {
     switch (this.state) {
       case 'degraded':
         return 247;
@@ -197,7 +179,7 @@ export class PgSimulator {
     this.slotInvalid = false;
   }
 
-  evaluateCheck(check: { type: string; statement?: string; expect: { operator: string; value: unknown } }): boolean {
+  async evaluateCheck(check: { type: string; statement?: string; operation?: string; parameters?: Record<string, unknown>; expect: { operator: string; value: unknown } }): Promise<boolean> {
     const stmt = check.statement ?? '';
 
     if (stmt.includes('pg_stat_replication') && stmt.includes("client_addr = '10.0.1.52'") && stmt.includes("state = 'streaming'")) {
@@ -220,6 +202,14 @@ export class PgSimulator {
     }
 
     return true;
+  }
+
+  async executeSQL(_statement: string): Promise<unknown> {
+    return { simulated: true };
+  }
+
+  async close(): Promise<void> {
+    // No-op for simulator
   }
 
   private compareValue(actual: unknown, operator: string, expected: unknown): boolean {

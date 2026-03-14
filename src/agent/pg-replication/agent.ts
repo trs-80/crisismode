@@ -5,16 +5,21 @@ import type { ExecutionState } from '../../types/execution-state.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import { pgReplicationManifest } from './manifest.js';
+import type { PgBackend } from './backend.js';
 import { PgSimulator } from './simulator.js';
 
 export class PgReplicationAgent implements RecoveryAgent {
   manifest = pgReplicationManifest;
-  simulator = new PgSimulator();
+  backend: PgBackend;
+
+  constructor(backend?: PgBackend) {
+    this.backend = backend ?? new PgSimulator();
+  }
 
   async diagnose(context: AgentContext): Promise<DiagnosisResult> {
-    const replStatus = this.simulator.queryReplicationStatus();
-    const slots = this.simulator.queryReplicationSlots();
-    const connCount = this.simulator.queryConnectionCount();
+    const replStatus = await this.backend.queryReplicationStatus();
+    const slots = await this.backend.queryReplicationSlots();
+    const connCount = await this.backend.queryConnectionCount();
 
     const severelyLagging = replStatus.filter((r) => r.lag_seconds > 300);
     const moderatelyLagging = replStatus.filter((r) => r.lag_seconds > 30 && r.lag_seconds <= 300);
@@ -499,13 +504,15 @@ export class PgReplicationAgent implements RecoveryAgent {
     _diagnosis: DiagnosisResult,
     _executionState: ExecutionState,
   ): Promise<ReplanResult> {
-    // Simulate discovering an invalid replication slot
-    this.simulator.transition('recovering');
-    const slots = this.simulator.queryReplicationSlots();
+    // Check for invalid replication slots
+    this.backend.transition('recovering');
+    const slots = await this.backend.queryReplicationSlots();
     const invalidSlot = slots.find((s) => s.wal_status === 'lost');
 
     if (invalidSlot) {
-      this.simulator.markSlotRecreated();
+      if (this.backend instanceof PgSimulator) {
+        (this.backend as PgSimulator).markSlotRecreated();
+      }
 
       const now = new Date().toISOString();
       const revisedSteps: RecoveryStep[] = [
