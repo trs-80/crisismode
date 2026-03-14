@@ -1,0 +1,79 @@
+# CrisisMode Spoke — Default Values
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/trs-80/crisismode-spoke
+  tag: ""  # defaults to Chart appVersion
+  pullPolicy: IfNotPresent
+
+# Hub connection
+hub:
+  endpoint: "https://hub.crisismode.ai"
+  # Bootstrap token — must be provided as a K8s Secret reference
+  bootstrapTokenSecret: ""
+  bootstrapTokenKey: "token"
+
+# Execution mode: "dry-run" or "execute"
+executionMode: "dry-run"
+
+# Webhook receiver (AlertManager sends alerts here)
+webhook:
+  port: 3000
+  service:
+    type: ClusterIP
+    port: 80
+
+# PostgreSQL target configuration
+postgresql:
+  # Primary connection
+  primary:
+    host: ""
+    port: 5432
+    database: "postgres"
+    # Secret containing 'username' and 'password' keys
+    credentialsSecret: ""
+  # Replica connection (optional)
+  replica:
+    host: ""
+    port: 5432
+    # Uses same credentials secret as primary by default
+    credentialsSecret: ""
+
+# Resource limits per the deployment spec (§3.1)
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "500Mi"
+    cpu: "500m"
+
+# Forensic queue storage (§9.5)
+forensicQueue:
+  enabled: true
+  storageClass: ""  # uses cluster default
+  size: "1Gi"
+
+# Service account and RBAC
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Target namespace RBAC — spoke gets scoped access to these namespaces
+targetNamespaces: []
+# - default
+# - production
+
+# Pod configuration
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Health check configuration
+health:
+  livenessPath: /health
+  readinessPath: /health
+  initialDelaySeconds: 10
+  periodSeconds: 30

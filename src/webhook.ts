@@ -16,10 +16,15 @@ import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
 import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
+import { HubClient } from './framework/hub-client.js';
 import type { AgentContext } from './types/agent-context.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const MODE: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
+const HUB_ENDPOINT = process.env.HUB_ENDPOINT || 'http://localhost:8080';
+
+// Hub client for forensic record submission
+const hubClient = new HubClient({ endpoint: HUB_ENDPOINT });
 
 // PostgreSQL connection config from environment
 const pgConfig = {
@@ -160,10 +165,18 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
     log(`  🚀 Executing plan in ${MODE} mode...`);
     const results = await engine.executePlan(plan, diagnosis);
 
-    // Write forensic record
+    // Write forensic record locally and submit to hub
     const outputPath = `output/forensic-${triggerId.replace(/[^a-zA-Z0-9-]/g, '_')}.json`;
     const record = recorder.writeToFile(outputPath);
     log(`  📋 Forensic record: ${outputPath}`);
+
+    try {
+      const hubResult = await hubClient.submitForensicRecord(record);
+      log(`  📤 Submitted to hub: ${hubResult.recordId}`);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      log(`  ⚠️  Hub submission failed (record saved locally): ${errMsg}`);
+    }
 
     const succeeded = results.filter((r) => r.status === 'success').length;
     const failed = results.filter((r) => r.status === 'failed').length;

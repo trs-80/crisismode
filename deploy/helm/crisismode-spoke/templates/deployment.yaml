@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-spoke
+  labels:
+    {{- include "crisismode-spoke.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "crisismode-spoke.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "crisismode-spoke.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "crisismode-spoke.serviceAccountName" . }}
+      containers:
+        - name: spoke
+          image: {{ include "crisismode-spoke.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - webhook
+            {{- if eq .Values.executionMode "execute" }}
+            - "--execute"
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.webhook.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.webhook.port | quote }}
+            - name: HUB_ENDPOINT
+              value: {{ .Values.hub.endpoint | quote }}
+            - name: PG_HOST
+              value: {{ .Values.postgresql.primary.host | quote }}
+            - name: PG_PORT
+              value: {{ .Values.postgresql.primary.port | quote }}
+            - name: PG_DATABASE
+              value: {{ .Values.postgresql.primary.database | quote }}
+            {{- if .Values.postgresql.replica.host }}
+            - name: PG_REPLICA_HOST
+              value: {{ .Values.postgresql.replica.host | quote }}
+            - name: PG_REPLICA_PORT
+              value: {{ .Values.postgresql.replica.port | quote }}
+            {{- end }}
+            {{- if .Values.postgresql.primary.credentialsSecret }}
+            - name: PG_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.primary.credentialsSecret }}
+                  key: username
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.primary.credentialsSecret }}
+                  key: password
+            {{- end }}
+            {{- if .Values.hub.bootstrapTokenSecret }}
+            - name: BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.hub.bootstrapTokenSecret }}
+                  key: {{ .Values.hub.bootstrapTokenKey }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.health.livenessPath }}
+              port: http
+            initialDelaySeconds: {{ .Values.health.initialDelaySeconds }}
+            periodSeconds: {{ .Values.health.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.health.readinessPath }}
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.forensicQueue.enabled }}
+          volumeMounts:
+            - name: forensic-queue
+              mountPath: /app/output
+          {{- end }}
+      {{- if .Values.forensicQueue.enabled }}
+      volumes:
+        - name: forensic-queue
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-forensic-queue
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: crisismode-spoke
+description: CrisisMode Recovery Agent Spoke — executes recovery plans close to target systems
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - crisis-recovery
+  - postgresql
+  - sre
+  - incident-response
+home: https://crisismode.ai
+sources:
+  - https://github.com/trs-80/crisismode
+maintainers:
+  - name: CrisisMode Team

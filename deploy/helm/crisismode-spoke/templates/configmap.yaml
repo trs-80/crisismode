@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-spoke-config
+  labels:
+    {{- include "crisismode-spoke.labels" . | nindent 4 }}
+data:
+  execution-mode: {{ .Values.executionMode | quote }}
+  hub-endpoint: {{ .Values.hub.endpoint | quote }}
+  webhook-port: {{ .Values.webhook.port | quote }}

@@ -1,0 +1,17 @@
+{{- if .Values.forensicQueue.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-forensic-queue
+  labels:
+    {{- include "crisismode-spoke.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.forensicQueue.storageClass }}
+  storageClassName: {{ .Values.forensicQueue.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.forensicQueue.size }}
+{{- end }}

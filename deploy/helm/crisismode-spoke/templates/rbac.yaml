@@ -1,0 +1,44 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-spoke
+  labels:
+    {{- include "crisismode-spoke.labels" . | nindent 4 }}
+rules:
+  # Minimum permissions for PostgreSQL agent operation (§3.1)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+{{- range .Values.targetNamespaces }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $.Release.Name }}-spoke
+  namespace: {{ . }}
+  labels:
+    {{- include "crisismode-spoke.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $.Release.Name }}-spoke
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "crisismode-spoke.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
+---
+{{- end }}
+{{- end }}
