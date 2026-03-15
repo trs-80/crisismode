@@ -184,7 +184,25 @@ export function validatePlan(
       : 'Missing rollback strategy',
   });
 
-  // Check 8: no nested conditionals
+  const systemActionSteps = collectSystemActions(plan.steps);
+
+  // Check 8: system actions declare affected components in blast radius
+  const missingBlastRadiusComponents = systemActionSteps
+    .filter((step) =>
+      step.blastRadius.directComponents.length === 0
+      && step.blastRadius.indirectComponents.length === 0,
+    )
+    .map((step) => step.stepId);
+  checks.push({
+    name: 'Blast radius declares affected components',
+    passed: missingBlastRadiusComponents.length === 0,
+    message:
+      missingBlastRadiusComponents.length === 0
+        ? 'All system actions declare at least one affected component in blast radius'
+        : `Blast radius missing affected components on steps: ${missingBlastRadiusComponents.join(', ')}`,
+  });
+
+  // Check 9: no nested conditionals
   // Note: TypeScript's NonConditionalStep type prevents nesting at compile time,
   // but we validate at runtime for plans from external sources
   const hasNestedConditional = (step: RecoveryStep): boolean => {
@@ -202,8 +220,7 @@ export function validatePlan(
       : 'Nested conditional steps detected (not permitted)',
   });
 
-  // Check 9: system actions declare required capabilities
-  const systemActionSteps = collectSystemActions(plan.steps);
+  // Check 10: system actions declare required capabilities
   const missingCapabilityDeclarations = systemActionSteps
     .filter((step) => step.requiredCapabilities.length === 0)
     .map((step) => step.stepId);
@@ -216,7 +233,7 @@ export function validatePlan(
         : `Missing capabilities on steps: ${missingCapabilityDeclarations.join(', ')}`,
   });
 
-  // Check 10: manifest capabilities are registered
+  // Check 11: manifest capabilities are registered
   const unknownManifestCapabilities = manifest.spec.executionContexts.flatMap((context) =>
     (context.capabilities ?? [])
       .filter((capability) => !isKnownCapability(capability))
@@ -231,7 +248,7 @@ export function validatePlan(
         : `Unknown manifest capabilities: ${unknownManifestCapabilities.join(', ')}`,
   });
 
-  // Check 11: step capabilities are registered
+  // Check 12: step capabilities are registered
   const unknownStepCapabilities = systemActionSteps.flatMap((step) =>
     step.requiredCapabilities
       .filter((capability) => !isKnownCapability(capability))
@@ -246,7 +263,7 @@ export function validatePlan(
         : `Unknown step capabilities: ${unknownStepCapabilities.join(', ')}`,
   });
 
-  // Check 12: required capabilities are declared on execution contexts for live execution
+  // Check 13: required capabilities are declared on execution contexts for live execution
   if (options.requireExecutableCapabilities) {
     const contextCapabilities = new Map(
       manifest.spec.executionContexts.map((context) => [context.name, new Set(context.capabilities ?? [])]),
@@ -263,11 +280,11 @@ export function validatePlan(
       message:
         unresolvedCapabilities.length === 0
           ? 'All required capabilities resolve to the declared execution contexts'
-          : `Unresolved live capabilities: ${unresolvedCapabilities.join(', ')}`,
+        : `Unresolved live capabilities: ${unresolvedCapabilities.join(', ')}`,
     });
   }
 
-  // Check 13: provider resolution for live execution
+  // Check 14: provider resolution for live execution
   if (options.backend && options.executionMode === 'execute') {
     const backend = options.backend;
     const providerResolutions = systemActionSteps.map((step) =>

@@ -211,6 +211,37 @@ describe('validatePlan', () => {
     expect(result.checks.find((c) => c.name === 'Rollback strategy declared')?.passed).toBe(false);
   });
 
+  it('fails when a system action declares no affected components in blast radius', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'human_notification',
+        name: 'Notify',
+        recipients: [{ role: 'on_call_dba', urgency: 'high' }],
+        message: { summary: 'Test', detail: 'Test', actionRequired: false },
+        channel: 'auto',
+      },
+      {
+        stepId: 'step-002',
+        type: 'system_action',
+        name: 'Undeclared blast radius action',
+        executionContext: 'postgresql_write',
+        target: 'pg-primary',
+        riskLevel: 'routine',
+        requiredCapabilities: ['db.query.write'],
+        command: { type: 'sql', statement: 'SELECT 1;' },
+        statePreservation: { before: [], after: [] },
+        successCriteria: { description: 'Done', check: { type: 'sql', expect: { operator: 'eq', value: 1 } } },
+        blastRadius: { directComponents: [], indirectComponents: [], maxImpact: 'low', cascadeRisk: 'low' },
+        timeout: 'PT30S',
+      },
+    ];
+
+    const result = validatePlan(makePlan({}, steps), manifest);
+    expect(result.checks.find((c) => c.name === 'Blast radius declares affected components')?.passed).toBe(false);
+    expect(result.valid).toBe(false);
+  });
+
   it('fails when a plan contains nested conditionals from an external source', () => {
     const nestedConditional = {
       stepId: 'step-001',
