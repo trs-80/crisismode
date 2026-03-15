@@ -85,15 +85,29 @@ function loadConfigFile(filePath: string): SiteConfig {
   const config = parsed as Record<string, unknown>;
 
   if (config.apiVersion !== 'crisismode/v1') {
-    throw new Error(`Unsupported apiVersion: ${String(config.apiVersion)} — expected crisismode/v1`);
+    throw new Error(
+      `Unsupported apiVersion: ${String(config.apiVersion)} — expected crisismode/v1.\n` +
+      `  Suggestion: Set apiVersion to "crisismode/v1" in your config file.\n` +
+      `  Run "pnpm run init" to generate a valid template.`,
+    );
   }
 
   if (config.kind !== 'SiteConfig') {
-    throw new Error(`Unsupported kind: ${String(config.kind)} — expected SiteConfig`);
+    throw new Error(
+      `Unsupported kind: ${String(config.kind)} — expected SiteConfig.\n` +
+      `  Suggestion: Set kind to "SiteConfig" in your config file.`,
+    );
   }
 
   if (!Array.isArray(config.targets) || config.targets.length === 0) {
-    throw new Error('Config must define at least one target');
+    throw new Error(
+      'Config must define at least one target.\n' +
+      '  Suggestion: Add a target block. Example:\n' +
+      '    targets:\n' +
+      '      - name: my-postgres\n' +
+      '        kind: postgresql\n' +
+      '        primary: { host: localhost, port: 5432 }',
+    );
   }
 
   for (const target of config.targets as Record<string, unknown>[]) {
@@ -105,14 +119,31 @@ function loadConfigFile(filePath: string): SiteConfig {
 
 function validateTarget(target: Record<string, unknown>): void {
   if (!target.name || typeof target.name !== 'string') {
-    throw new Error('Each target must have a "name" string');
+    throw new Error(
+      'Each target must have a "name" string.\n' +
+      '  Example: name: my-postgres',
+    );
   }
   if (!target.kind || typeof target.kind !== 'string') {
-    throw new Error(`Target "${target.name}" must have a "kind" string`);
+    throw new Error(
+      `Target "${target.name}" must have a "kind" string (e.g. "postgresql", "redis").\n` +
+      `  Supported kinds are determined by registered agents.`,
+    );
   }
   const primary = target.primary as Record<string, unknown> | undefined;
   if (!primary || typeof primary.host !== 'string' || typeof primary.port !== 'number') {
-    throw new Error(`Target "${target.name}" must have a primary with host (string) and port (number)`);
+    throw new Error(
+      `Target "${target.name}" must have a primary with host (string) and port (number).\n` +
+      `  Example: primary: { host: localhost, port: 5432 }`,
+    );
+  }
+
+  // Validate version format if provided
+  if (target.version !== undefined && typeof target.version !== 'string') {
+    throw new Error(
+      `Target "${target.name}" version must be a string (e.g. "16.2", "7.0.0").\n` +
+      `  Tip: Quote the version in YAML to prevent it being parsed as a number.`,
+    );
   }
 }
 

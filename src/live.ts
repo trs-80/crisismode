@@ -13,13 +13,16 @@
  *   pnpm run live -- --health-only                 # direct health probe only
  */
 
+import { createInterface } from 'node:readline';
 import { assembleContext } from './framework/context.js';
 import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
 import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
+import { explainPlan } from './framework/ai-explainer.js';
 import { loadConfig, parseCliFlags } from './config/loader.js';
+import { validateCredentials } from './config/credentials.js';
 import { AgentRegistry } from './config/agent-registry.js';
 import type { AgentContext } from './types/agent-context.js';
 import type { HumanApprovalStep } from './types/step-types.js';
@@ -32,6 +35,29 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Prompt the user for confirmation before executing mutations.
+ * Returns true if the user confirms, false otherwise.
+ */
+async function confirmExecution(targetName: string, targetKind: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    console.log('');
+    console.log('  ┌─────────────────────────────────────────────────────┐');
+    console.log('  │  WARNING: EXECUTE MODE                              │');
+    console.log('  │                                                     │');
+    console.log(`  │  Target: ${targetName} (${targetKind})`);
+    console.log('  │  This will run mutations against real infrastructure│');
+    console.log('  │  including SQL writes, service restarts, etc.       │');
+    console.log('  └─────────────────────────────────────────────────────┘');
+    console.log('');
+    rl.question('  Type "yes" to confirm execute mode: ', (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase() === 'yes');
+    });
+  });
+}
+
 async function runLive(): Promise<void> {
   const execMode: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
   const healthOnly = process.argv.includes('--health-only');
@@ -39,12 +65,33 @@ async function runLive(): Promise<void> {
 
   // Load config (file or env-var fallback)
   const { config, source, filePath } = loadConfig({ configPath });
+
+  // Validate credential env vars at load time
+  for (const target of config.targets) {
+    const warnings = validateCredentials(target.credentials);
+    for (const w of warnings) {
+      console.warn(`  Warning: Target "${target.name}" — ${w.message}`);
+    }
+  }
+
   const registry = new AgentRegistry(config);
 
   // Resolve the target to run against
   const { agent, backend, target } = targetName
     ? await registry.createForTarget(targetName)
     : await registry.createFirst();
+
+  // Attempt to discover target version if not specified in config
+  await AgentRegistry.discoverVersion({ agent, backend, target });
+
+  // Confirm before execute mode — prevent accidental mutations
+  if (execMode === 'execute') {
+    const confirmed = await confirmExecution(target.name, target.kind);
+    if (!confirmed) {
+      console.log('  Aborted. Run without --execute for dry-run mode.');
+      return;
+    }
+  }
 
   // Cast for PG-specific connectivity display (only used for postgresql targets)
   const pgClient = target.kind === 'postgresql' ? backend as PgLiveClient : null;
@@ -61,6 +108,9 @@ async function runLive(): Promise<void> {
   }
   if (target.primary.database) {
     console.log(`  │  Database: ${target.primary.database}`);
+  }
+  if (target.version) {
+    console.log(`  │  Version:  ${target.version}`);
   }
   console.log('  └─────────────────────────────────────────────┘');
   console.log('');
@@ -190,6 +240,10 @@ async function runLive(): Promise<void> {
     display.phase(5, 'Plan Creation');
     const plan = await agent.plan(context, diagnosis);
     display.displayPlanTable(plan);
+
+    // AI plan explanation (falls back to structural summary if no API key)
+    const explanation = await explainPlan(plan, diagnosis);
+    display.displayPlanExplanation(explanation);
 
     // ── Phase 6: Validation ──
     display.phase(6, 'Validation');

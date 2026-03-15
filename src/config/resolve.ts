@@ -17,6 +17,7 @@ export function resolveTarget(target: TargetConfig): ResolvedTarget {
     name: target.name,
     kind: target.kind,
     agent: target.agent,
+    version: target.version,
     primary: target.primary,
     replicas: target.replicas ?? [],
     credentials: resolveCredentials(target.credentials),

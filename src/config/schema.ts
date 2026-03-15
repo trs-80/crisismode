@@ -48,6 +48,8 @@ export interface TargetConfig {
   kind: string;
   /** Optional: pin this target to a specific agent by name (e.g. 'postgresql-replication-recovery') */
   agent?: string;
+  /** Optional: target system version (e.g. '16.2'). Can be auto-discovered by backends that support it. */
+  version?: string;
   primary: HostConfig;
   replicas?: HostConfig[];
   credentials?: CredentialRef;
@@ -93,6 +95,8 @@ export interface ResolvedTarget {
   name: string;
   kind: string;
   agent?: string;
+  /** Target system version — from config or auto-discovered. */
+  version?: string;
   primary: HostConfig;
   replicas: HostConfig[];
   credentials: ResolvedCredentials;

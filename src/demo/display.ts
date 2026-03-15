@@ -12,6 +12,7 @@ import type { CatalogEntry } from '../types/catalog-entry.js';
 import type { ForensicRecord } from '../types/forensic-record.js';
 import type { HealthAssessment, OperatorSummary } from '../types/health.js';
 import type { StepResult } from '../types/execution-state.js';
+import type { PlanExplanation } from '../framework/ai-explainer.js';
 
 const DIVIDER = chalk.dim('─'.repeat(72));
 const DOUBLE_DIVIDER = chalk.dim('═'.repeat(72));
@@ -229,6 +230,28 @@ function riskBadge(risk: string): string {
       return chalk.bgRed.white(risk.padEnd(12));
     default:
       return risk.padEnd(12);
+  }
+}
+
+export function displayPlanExplanation(explanation: PlanExplanation): void {
+  const sourceLabel = explanation.source === 'ai' ? 'AI-Generated' : 'Structural';
+  console.log(chalk.cyan(`     Plan Explanation (${sourceLabel}):`));
+  console.log(chalk.white(`     ${explanation.summary}`));
+  console.log('');
+
+  for (const se of explanation.stepExplanations) {
+    if (se.explanation) {
+      console.log(chalk.dim(`     ${se.stepId}: ${se.explanation}`));
+    }
+  }
+  console.log('');
+
+  if (explanation.risks.length > 0) {
+    console.log(chalk.yellow('     Key risks:'));
+    for (const risk of explanation.risks) {
+      console.log(chalk.yellow(`       - ${risk}`));
+    }
+    console.log('');
   }
 }
 

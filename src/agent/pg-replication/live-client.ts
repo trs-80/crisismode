@@ -199,6 +199,11 @@ export class PgLiveClient implements PgBackend {
     ];
   }
 
+  async discoverVersion(): Promise<string> {
+    const result = await this.primaryPool.query<{ server_version: string }>('SHOW server_version');
+    return result.rows[0].server_version;
+  }
+
   async close(): Promise<void> {
     await this.primaryPool.end();
     if (this.replicaPool) {

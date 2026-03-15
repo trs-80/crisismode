@@ -13,5 +13,11 @@ export interface ExecutionBackend {
   evaluateCheck(check: CheckExpression): Promise<boolean>;
   listCapabilityProviders?(): CapabilityProviderDescriptor[];
   transition?(to: string): void;
+  /**
+   * Optional: discover the target system's version at runtime.
+   * E.g. PostgreSQL: `SHOW server_version`, Redis: `INFO server`.
+   * Used to auto-populate version when the config omits it.
+   */
+  discoverVersion?(): Promise<string>;
   close(): Promise<void>;
 }
