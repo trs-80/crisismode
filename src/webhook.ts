@@ -22,6 +22,7 @@ import { HubClient } from './framework/hub-client.js';
 import { loadConfig, parseCliFlags } from './config/loader.js';
 import { AgentRegistry } from './config/agent-registry.js';
 import { resolveCredentials } from './config/credentials.js';
+import { getFiringAlerts, validateAlertPayload, type AlertManagerAlert, type AlertManagerPayload } from './webhook-utils.js';
 import type { AgentContext } from './types/agent-context.js';
 
 const MODE: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
@@ -43,19 +44,6 @@ const hubClient = new HubClient({ endpoint: HUB_ENDPOINT });
 
 // Track active recoveries to prevent duplicate runs
 const activeRecoveries = new Set<string>();
-
-interface AlertManagerPayload {
-  version: string;
-  status: string;
-  alerts: Array<{
-    status: string;
-    labels: Record<string, string>;
-    annotations: Record<string, string>;
-    startsAt: string;
-    endsAt: string;
-    generatorURL?: string;
-  }>;
-}
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -80,34 +68,59 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString();
 }
 
-function validateAlertPayload(body: unknown): body is AlertManagerPayload {
-  if (typeof body !== 'object' || body === null) return false;
-  const obj = body as Record<string, unknown>;
-  if (typeof obj.version !== 'string' && typeof obj.status !== 'string') return false;
-  if (!Array.isArray(obj.alerts)) return false;
-  return true;
-}
-
 function isAuthenticated(req: IncomingMessage): boolean {
   if (!WEBHOOK_SECRET) return true; // No secret configured — allow all (dev mode)
   const authHeader = req.headers.authorization;
   return authHeader === `Bearer ${WEBHOOK_SECRET}`;
 }
 
-async function handleAlert(payload: AlertManagerPayload): Promise<{
+async function handleAlerts(payload: AlertManagerPayload): Promise<{
   triggerId: string;
   outcome: string;
   steps: number;
+  results?: Array<{
+    triggerId: string;
+    outcome: string;
+    steps: number;
+    error?: string;
+  }>;
   error?: string;
 }> {
-  // Find the first firing alert that matches a registered agent
-  const firingAlerts = payload.alerts.filter((a) => a.status === 'firing');
+  const firingAlerts = getFiringAlerts(payload);
 
   if (firingAlerts.length === 0) {
     return { triggerId: 'none', outcome: 'ignored', steps: 0 };
   }
 
-  const alert = firingAlerts[0];
+  const results = [];
+  for (const alert of firingAlerts) {
+    results.push(await handleAlert(alert));
+  }
+
+  if (results.length === 1) {
+    return results[0];
+  }
+
+  const totalSteps = results.reduce((sum, result) => sum + result.steps, 0);
+  const anyError = results.some((result) => result.outcome === 'error' || result.outcome === 'validation_failed');
+  const anyPartial = results.some(
+    (result) => result.outcome === 'partial_success' || result.outcome === 'deduplicated',
+  );
+
+  return {
+    triggerId: 'batch',
+    outcome: anyError ? 'partial_success' : anyPartial ? 'partial_success' : 'success',
+    steps: totalSteps,
+    results,
+  };
+}
+
+async function handleAlert(alert: AlertManagerAlert): Promise<{
+  triggerId: string;
+  outcome: string;
+  steps: number;
+  error?: string;
+}> {
   const triggerId = `${alert.labels.alertname}-${alert.startsAt}`;
 
   // Deduplicate
@@ -295,7 +308,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
         return;
       }
 
-      const result = await handleAlert(payload);
+      const result = await handleAlerts(payload);
       json(res, 200, result);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);

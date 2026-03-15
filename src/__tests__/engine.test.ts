@@ -381,6 +381,34 @@ describe('ExecutionEngine', () => {
     expect(results.at(-1)?.step.type).toBe('human_approval');
   });
 
+  it('halts the run when a human approver skips the plan at an approval gate', async () => {
+    const { simulator, agent, context, recorder } = setup();
+    const diagnosis = await agent.diagnose(context);
+    const plan = await agent.plan(context, diagnosis);
+    recorder.setDiagnosis(diagnosis);
+    recorder.addPlan(plan);
+
+    vi.mocked(shouldAutoApprove).mockReturnValue(false);
+    vi.mocked(requestApproval).mockResolvedValue('skipped');
+
+    const engine = new ExecutionEngine(
+      context,
+      agent.manifest,
+      agent,
+      recorder,
+      simulator,
+      {},
+      'dry-run',
+    );
+    engine.setCoveredRiskLevels([]);
+
+    const results = await engine.executePlan(plan, diagnosis);
+    const approval = results.find((result) => result.step.type === 'human_approval');
+    expect(vi.mocked(requestApproval)).toHaveBeenCalledTimes(1);
+    expect(approval?.status).toBe('skipped');
+    expect(results.at(-1)?.step.type).toBe('human_approval');
+  });
+
   it('marks a conditional step as skipped when the false branch is skip and continues execution', async () => {
     const { agent, context, recorder } = setup();
     const diagnosis = await agent.diagnose(context);
@@ -750,5 +778,36 @@ describe('ExecutionEngine', () => {
         reason: "no provider is registered for capability 'traffic.backend.detach'",
       },
     ]);
+  });
+
+  it('fails system actions whose targets are not represented in manifest, trigger, topology, or blast radius', async () => {
+    const { simulator, agent, context, recorder } = setup();
+    const diagnosis = await agent.diagnose(context);
+    const plan = await agent.plan(context, diagnosis);
+    recorder.setDiagnosis(diagnosis);
+    recorder.addPlan(plan);
+
+    const invalidStep = plan.steps.find((step) => step.stepId === 'step-004');
+    if (!invalidStep || invalidStep.type !== 'system_action') {
+      throw new Error('expected step-004 system_action in PostgreSQL recovery plan');
+    }
+    invalidStep.target = 'mystery-target';
+
+    const engine = new ExecutionEngine(
+      context,
+      agent.manifest,
+      agent,
+      recorder,
+      simulator,
+      {},
+      'dry-run',
+    );
+    engine.setCoveredRiskLevels(['routine', 'elevated']);
+
+    const results = await engine.executePlan(plan, diagnosis);
+    const failed = results.find((result) => result.stepId === 'step-004');
+    expect(failed?.status).toBe('failed');
+    expect(failed?.error).toContain('Blast radius validation failed');
+    expect(failed?.error).toContain('mystery-target');
   });
 });

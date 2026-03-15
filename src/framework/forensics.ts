@@ -40,7 +40,7 @@ export class ForensicRecorder {
   addCapture(capture: CaptureResult): void {
     this.captures.push({
       name: capture.name,
-      captureType: 'sql_query',
+      captureType: capture.captureType,
       status: capture.status,
       reason: capture.reason,
       timestamp: capture.timestamp,
@@ -74,8 +74,11 @@ export class ForensicRecorder {
     const wasAborted = this.stepResults.some(
       (r) => r.status === 'failed' && r.error?.includes('aborted'),
     );
+    const wasSkippedAtApprovalGate = this.stepResults.some(
+      (r) => r.status === 'skipped' && r.step.type === 'human_approval',
+    );
     let outcome: ForensicRecord['summary']['outcome'];
-    if (wasAborted) {
+    if (wasAborted || wasSkippedAtApprovalGate) {
       outcome = 'aborted';
     } else if (failedSteps > 0 && completedSteps === 0) {
       outcome = 'failed';

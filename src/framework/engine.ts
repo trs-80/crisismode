@@ -82,11 +82,13 @@ export class ExecutionEngine {
 
       this.callbacks.onStepComplete?.(step, result);
 
-      if (result.status === 'failed') {
+      if (result.status === 'failed' || (step.type === 'human_approval' && result.status === 'skipped')) {
         this.recorder.addLogEntry({
-          type: 'step_failed',
+          type: result.status === 'failed' ? 'step_failed' : 'info',
           stepId: step.stepId,
-          message: `Step failed: ${result.error}`,
+          message: result.status === 'failed'
+            ? `Step failed: ${result.error}`
+            : 'Execution halted after approval step was skipped',
         });
         break;
       }
@@ -229,7 +231,7 @@ export class ExecutionEngine {
     startTime: number,
   ): Promise<StepResult> {
     // Blast radius check
-    const blastResult = validateBlastRadius(step, this.manifest);
+    const blastResult = validateBlastRadius(step, this.manifest, this.context);
     this.callbacks.onBlastRadiusCheck?.(step, blastResult.message);
     if (!blastResult.valid) {
       this.recorder.addLogEntry({
