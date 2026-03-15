@@ -1,6 +1,6 @@
 {
   "name": "crisismode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Recovery Agent Contract Framework - Interactive CLI Demo",
   "type": "module",
   "scripts": {
