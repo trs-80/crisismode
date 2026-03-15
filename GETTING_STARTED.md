@@ -141,7 +141,17 @@ agent/
 
 **PostgreSQL Replication** (`pg-replication/`) — the MVP agent. Has a full live client that queries real `pg_stat_replication`.
 
-**Redis Memory** (`redis/`) — second agent proving framework breadth. Simulator complete, live client not yet built.
+**Redis Memory** (`redis/`) — cache recovery agent. Simulator complete, live client not yet built.
+
+**etcd Recovery** (`etcd/`) — consensus cluster recovery. Handles leader election loops, NOSPACE alarms, member failures. Simulator complete.
+
+**Kafka Recovery** (`kafka/`) — broker recovery agent. Handles under-replicated partitions, leader imbalance, consumer lag cascades. Simulator complete.
+
+**Kubernetes Recovery** (`kubernetes/`) — cluster recovery agent. Handles node failures, pod crash loops, stuck deployments, PVC issues. Simulator complete.
+
+**Ceph Storage** (`ceph/`) — distributed storage recovery. Handles OSD failures, degraded placement groups, pool near-full conditions. Simulator complete.
+
+**Flink Stream Processing** (`flink/`) — stream job recovery. Handles checkpoint failure cascades, savepoint corruption, backpressure. Simulator complete.
 
 ### Type System (`src/types/`)
 
@@ -160,7 +170,9 @@ All contract types are defined here. Key types:
 2. Create `src/agent/<system>/simulator.ts` — implement the interface with canned data
 3. Create `src/agent/<system>/manifest.ts` — declare what your agent targets and its risk profile
 4. Create `src/agent/<system>/agent.ts` — implement `RecoveryAgent` (diagnose, plan, replan)
-5. Wire it into the webhook receiver if you want AlertManager integration
+5. Create `src/agent/<system>/registration.ts` — lazy factory for the agent registry
+6. Register your agent in `src/config/builtin-agents.ts`
+7. Add capabilities to `src/framework/capability-registry.ts` if your agent uses new capability domains
 
 The framework handles validation, approval workflows, forensic recording, and hub communication — your agent only needs to diagnose and produce plans.
 
