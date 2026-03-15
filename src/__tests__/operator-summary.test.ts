@@ -172,4 +172,51 @@ describe('buildOperatorSummary', () => {
     expect(summary.mutationsPerformed).toBe(true);
     expect(summary.actionRequired).toBe('none');
   });
+
+  it('reports partial_mutations_performed when execute mode changed state but health remains unhealthy', () => {
+    const results: StepResult[] = [
+      {
+        stepId: 'step-004',
+        step: {
+          stepId: 'step-004',
+          type: 'system_action',
+          name: 'Disconnect lagging replica',
+          executionContext: 'postgresql_write',
+          target: 'pg-primary',
+          riskLevel: 'elevated',
+          requiredCapabilities: ['db.replica.disconnect'],
+          command: { type: 'sql', statement: 'SELECT 1;' },
+          statePreservation: { before: [], after: [] },
+          successCriteria: {
+            description: 'Replica disconnected',
+            check: { type: 'sql', expect: { operator: 'eq', value: 1 } },
+          },
+          blastRadius: {
+            directComponents: ['pg-primary'],
+            indirectComponents: [],
+            maxImpact: 'low',
+            cascadeRisk: 'low',
+          },
+          timeout: 'PT30S',
+        },
+        status: 'success',
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: 100,
+      },
+    ];
+
+    const summary = buildOperatorSummary({
+      health: makeHealthAssessment(),
+      mode: 'execute',
+      currentValidation: makeValidationResult(true, []),
+      executeValidation: makeValidationResult(true, []),
+      results,
+    });
+
+    expect(summary.automationStatus).toBe('partial_mutations_performed');
+    expect(summary.mutationsPerformed).toBe(true);
+    expect(summary.actionRequired).toBe('manual_intervention_required');
+    expect(summary.summary).toContain('performed some mutations');
+  });
 });

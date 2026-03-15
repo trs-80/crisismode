@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
 // Mock the Anthropic SDK so agent.ts can be imported without the dependency
 vi.mock('@anthropic-ai/sdk', () => ({ default: class {} }));
 
 // Mock the coordinator so human_approval steps don't block on stdin
 vi.mock('../framework/coordinator.js', () => ({
-  requestApproval: async () => 'approved',
-  shouldAutoApprove: () => true,
+  requestApproval: vi.fn(async () => 'approved'),
+  shouldAutoApprove: vi.fn(() => true),
 }));
 import { ExecutionEngine } from '../framework/engine.js';
 import { PgReplicationAgent } from '../agent/pg-replication/agent.js';
 import { PgSimulator } from '../agent/pg-replication/simulator.js';
 import { RedisMemoryAgent } from '../agent/redis/agent.js';
 import { RedisSimulator } from '../agent/redis/simulator.js';
+import { requestApproval, shouldAutoApprove } from '../framework/coordinator.js';
 import { ForensicRecorder } from '../framework/forensics.js';
 import { assembleContext } from '../framework/context.js';
 import type { AgentContext } from '../types/agent-context.js';
@@ -61,6 +62,13 @@ function setupRedis() {
 
   return { simulator, agent, context, recorder };
 }
+
+afterEach(() => {
+  vi.mocked(requestApproval).mockReset();
+  vi.mocked(requestApproval).mockResolvedValue('approved');
+  vi.mocked(shouldAutoApprove).mockReset();
+  vi.mocked(shouldAutoApprove).mockReturnValue(true);
+});
 
 describe('ExecutionEngine', () => {
   it('executes a full plan in dry-run mode', async () => {
@@ -344,6 +352,120 @@ describe('ExecutionEngine', () => {
     expect(results.at(-1)?.stepId).toBe('step-006');
   });
 
+  it('halts the run when a human approver rejects the plan', async () => {
+    const { simulator, agent, context, recorder } = setup();
+    const diagnosis = await agent.diagnose(context);
+    const plan = await agent.plan(context, diagnosis);
+    recorder.setDiagnosis(diagnosis);
+    recorder.addPlan(plan);
+
+    vi.mocked(shouldAutoApprove).mockReturnValue(false);
+    vi.mocked(requestApproval).mockResolvedValue('rejected');
+
+    const engine = new ExecutionEngine(
+      context,
+      agent.manifest,
+      agent,
+      recorder,
+      simulator,
+      {},
+      'dry-run',
+    );
+    engine.setCoveredRiskLevels([]);
+
+    const results = await engine.executePlan(plan, diagnosis);
+    const approval = results.find((result) => result.step.type === 'human_approval');
+    expect(vi.mocked(requestApproval)).toHaveBeenCalledTimes(1);
+    expect(approval?.status).toBe('failed');
+    expect(approval?.error).toContain('Human rejected the step');
+    expect(results.at(-1)?.step.type).toBe('human_approval');
+  });
+
+  it('marks a conditional step as skipped when the false branch is skip and continues execution', async () => {
+    const { agent, context, recorder } = setup();
+    const diagnosis = await agent.diagnose(context);
+    recorder.setDiagnosis(diagnosis);
+
+    const executeCommand = vi.fn(async () => ({ ok: true }));
+    const backend: ExecutionBackend = {
+      executeCommand,
+      evaluateCheck: async () => false,
+      close: async () => {},
+    };
+    const plan: RecoveryPlan = {
+      apiVersion: 'v0.2.1',
+      kind: 'RecoveryPlan',
+      metadata: {
+        planId: 'conditional-skip',
+        agentName: agent.manifest.metadata.name,
+        agentVersion: agent.manifest.metadata.version,
+        scenario: diagnosis.scenario ?? 'replication_lag_cascade',
+        createdAt: new Date().toISOString(),
+        estimatedDuration: 'PT1M',
+        summary: 'Skip an optional branch and continue',
+        supersedes: null,
+      },
+      impact: {
+        affectedSystems: [],
+        affectedServices: [],
+        estimatedUserImpact: 'none',
+        dataLossRisk: 'none',
+      },
+      steps: [
+        {
+          stepId: 'step-001',
+          type: 'conditional',
+          name: 'Skip optional action',
+          condition: {
+            description: 'Optional action is still required',
+            check: {
+              type: 'sql',
+              statement: 'SELECT 0;',
+              expect: { operator: 'eq', value: 1 },
+            },
+          },
+          thenStep: {
+            stepId: 'step-001a',
+            type: 'human_notification',
+            name: 'Optional notify',
+            recipients: [{ role: 'on_call_dba', urgency: 'medium' }],
+            message: { summary: 'Optional path', detail: 'Executed optional path', actionRequired: false },
+            channel: 'auto',
+          },
+          elseStep: 'skip',
+        },
+        {
+          stepId: 'step-002',
+          type: 'human_notification',
+          name: 'Follow-up notify',
+          recipients: [{ role: 'on_call_dba', urgency: 'high' }],
+          message: { summary: 'Follow-up', detail: 'Workflow continued', actionRequired: false },
+          channel: 'auto',
+        },
+      ],
+      rollbackStrategy: {
+        type: 'stepwise',
+        description: 'No rollback required for notifications.',
+      },
+    };
+
+    const engine = new ExecutionEngine(
+      context,
+      agent.manifest,
+      agent,
+      recorder,
+      backend,
+      {},
+      'dry-run',
+    );
+
+    const results = await engine.executePlan(plan, diagnosis);
+    expect(results).toHaveLength(2);
+    expect(results[0].status).toBe('skipped');
+    expect(results[1].status).toBe('success');
+    expect(executeCommand).not.toHaveBeenCalled();
+  });
+
   it('executes structured commands in execute mode via the backend contract', async () => {
     const { agent, context, recorder } = setup();
     const diagnosis = await agent.diagnose(context);
@@ -530,6 +652,97 @@ describe('ExecutionEngine', () => {
     expect(executeCommand).not.toHaveBeenCalled();
     expect(results[0].status).toBe('failed');
     expect(results[0].error).toContain('Provider resolution failed');
+    expect(results[0].providerResolution).toEqual([
+      {
+        capability: 'traffic.backend.detach',
+        resolved: false,
+        reason: "no provider is registered for capability 'traffic.backend.detach'",
+      },
+    ]);
+  });
+
+  it('allows dry-run execution to proceed even when live providers are unresolved', async () => {
+    const { agent, context, recorder } = setup();
+    const diagnosis = await agent.diagnose(context);
+    const executeCommand = vi.fn(async () => ({ ok: true }));
+    const backend: ExecutionBackend = {
+      executeCommand,
+      evaluateCheck: async () => true,
+      close: async () => {},
+      transition: () => {},
+      listCapabilityProviders: () => [],
+    };
+    const structuredStep: SystemActionStep = {
+      stepId: 'step-001',
+      type: 'system_action',
+      name: 'Reload load balancer config',
+      executionContext: 'linux_process',
+      target: 'load-balancer',
+      riskLevel: 'routine',
+      requiredCapabilities: ['traffic.backend.detach'],
+      command: {
+        type: 'structured_command',
+        operation: 'config_reload',
+        parameters: { service: 'load-balancer' },
+      },
+      statePreservation: { before: [], after: [] },
+      successCriteria: {
+        description: 'Service remains healthy',
+        check: {
+          type: 'structured_command',
+          operation: 'service_status',
+          parameters: { service: 'load-balancer' },
+          expect: { operator: 'eq', value: 'running' },
+        },
+      },
+      blastRadius: {
+        directComponents: ['load-balancer'],
+        indirectComponents: [],
+        maxImpact: 'config_reload',
+        cascadeRisk: 'none',
+      },
+      timeout: 'PT30S',
+    };
+    const plan: RecoveryPlan = {
+      apiVersion: 'v0.2.1',
+      kind: 'RecoveryPlan',
+      metadata: {
+        planId: 'structured-command-dry-run-unresolved-provider',
+        agentName: agent.manifest.metadata.name,
+        agentVersion: agent.manifest.metadata.version,
+        scenario: diagnosis.scenario ?? 'replication_lag_cascade',
+        createdAt: new Date().toISOString(),
+        estimatedDuration: 'PT1M',
+        summary: 'Allow unresolved providers in dry-run mode',
+        supersedes: null,
+      },
+      impact: {
+        affectedSystems: [],
+        affectedServices: [],
+        estimatedUserImpact: 'none',
+        dataLossRisk: 'none',
+      },
+      steps: [structuredStep],
+      rollbackStrategy: {
+        type: 'stepwise',
+        description: 'Restore the previous config if needed.',
+      },
+    };
+
+    const engine = new ExecutionEngine(
+      context,
+      agent.manifest,
+      agent,
+      recorder,
+      backend,
+      {},
+      'dry-run',
+    );
+
+    const results = await engine.executePlan(plan, diagnosis);
+    expect(executeCommand).not.toHaveBeenCalled();
+    expect(results[0].status).toBe('success');
+    expect(results[0].output).toEqual({ dryRun: true });
     expect(results[0].providerResolution).toEqual([
       {
         capability: 'traffic.backend.detach',

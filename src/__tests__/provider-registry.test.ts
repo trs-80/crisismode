@@ -6,7 +6,9 @@ import { redisMemoryManifest } from '../agent/redis/manifest.js';
 import { PgSimulator } from '../agent/pg-replication/simulator.js';
 import { PgLiveClient } from '../agent/pg-replication/live-client.js';
 import { RedisSimulator } from '../agent/redis/simulator.js';
+import type { ExecutionBackend } from '../framework/backend.js';
 import type { SystemActionStep } from '../types/step-types.js';
+import type { CapabilityProviderDescriptor } from '../types/plugin.js';
 
 describe('resolveStepProviders', () => {
   it('resolves PostgreSQL SQL capabilities through the simulator provider', () => {
@@ -171,6 +173,120 @@ describe('resolveStepProviders', () => {
       capability: 'cache.client.disconnect',
       resolved: true,
       providerId: 'redis-simulator-admin',
+    });
+  });
+
+  it('reports unresolved capabilities when the only provider lacks execute-mode support', () => {
+    const step: SystemActionStep = {
+      stepId: 'step-005',
+      type: 'system_action',
+      name: 'Detach replica from read traffic',
+      executionContext: 'linux_process',
+      target: 'load-balancer',
+      riskLevel: 'routine',
+      requiredCapabilities: ['traffic.backend.detach'],
+      command: {
+        type: 'structured_command',
+        operation: 'config_reload',
+        parameters: { service: 'load-balancer' },
+      },
+      statePreservation: { before: [], after: [] },
+      successCriteria: {
+        description: 'Backend no longer serves traffic',
+        check: { type: 'structured_command', expect: { operator: 'eq', value: 'running' } },
+      },
+      blastRadius: {
+        directComponents: ['load-balancer'],
+        indirectComponents: [],
+        maxImpact: 'low',
+        cascadeRisk: 'low',
+      },
+      timeout: 'PT30S',
+    };
+
+    const backend: ExecutionBackend = {
+      executeCommand: async () => ({}),
+      evaluateCheck: async () => true,
+      close: async () => {},
+      listCapabilityProviders: (): CapabilityProviderDescriptor[] => [
+        {
+          id: 'dry-run-only-balancer',
+          kind: 'capability_provider' as const,
+          name: 'Dry-run-only Balancer Provider',
+          maturity: 'dry_run_only' as const,
+          capabilities: ['traffic.backend.detach'],
+          executionContexts: ['linux_process'],
+          targetKinds: ['linux'],
+          commandTypes: ['structured_command'],
+          supportsDryRun: true,
+          supportsExecute: false,
+        },
+      ],
+    };
+
+    const resolution = resolveStepProviders(step, pgReplicationManifest, backend, 'execute');
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.capabilities[0]).toEqual({
+      capability: 'traffic.backend.detach',
+      resolved: false,
+      reason: "registered providers for 'traffic.backend.detach' do not support execute mode",
+    });
+  });
+
+  it('reports unresolved capabilities when the provider supports the wrong command type', () => {
+    const step: SystemActionStep = {
+      stepId: 'step-006',
+      type: 'system_action',
+      name: 'Detach replica from read traffic',
+      executionContext: 'linux_process',
+      target: 'load-balancer',
+      riskLevel: 'routine',
+      requiredCapabilities: ['traffic.backend.detach'],
+      command: {
+        type: 'structured_command',
+        operation: 'config_reload',
+        parameters: { service: 'load-balancer' },
+      },
+      statePreservation: { before: [], after: [] },
+      successCriteria: {
+        description: 'Backend no longer serves traffic',
+        check: { type: 'structured_command', expect: { operator: 'eq', value: 'running' } },
+      },
+      blastRadius: {
+        directComponents: ['load-balancer'],
+        indirectComponents: [],
+        maxImpact: 'low',
+        cascadeRisk: 'low',
+      },
+      timeout: 'PT30S',
+    };
+
+    const backend: ExecutionBackend = {
+      executeCommand: async () => ({}),
+      evaluateCheck: async () => true,
+      close: async () => {},
+      listCapabilityProviders: (): CapabilityProviderDescriptor[] => [
+        {
+          id: 'sql-only-balancer',
+          kind: 'capability_provider' as const,
+          name: 'SQL-only Balancer Provider',
+          maturity: 'live_validated' as const,
+          capabilities: ['traffic.backend.detach'],
+          executionContexts: ['linux_process'],
+          targetKinds: ['linux'],
+          commandTypes: ['sql'],
+          supportsDryRun: true,
+          supportsExecute: true,
+        },
+      ],
+    };
+
+    const resolution = resolveStepProviders(step, pgReplicationManifest, backend, 'execute');
+    expect(resolution.resolved).toBe(false);
+    expect(resolution.capabilities[0]).toEqual({
+      capability: 'traffic.backend.detach',
+      resolved: false,
+      reason: "no execute provider for 'traffic.backend.detach' supports command type 'structured_command'",
     });
   });
 });
