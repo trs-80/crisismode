@@ -12,8 +12,18 @@
 import type { AgentRegistration } from './agent-registration.js';
 import { pgReplicationRegistration } from '../agent/pg-replication/registration.js';
 import { redisMemoryRegistration } from '../agent/redis/registration.js';
+import { etcdRecoveryRegistration } from '../agent/etcd/registration.js';
+import { kafkaRecoveryRegistration } from '../agent/kafka/registration.js';
+import { k8sRecoveryRegistration } from '../agent/kubernetes/registration.js';
+import { cephStorageRegistration } from '../agent/ceph/registration.js';
+import { flinkRecoveryRegistration } from '../agent/flink/registration.js';
 
 export const builtinAgents: AgentRegistration[] = [
   pgReplicationRegistration,
   redisMemoryRegistration,
+  etcdRecoveryRegistration,
+  kafkaRecoveryRegistration,
+  k8sRecoveryRegistration,
+  cephStorageRegistration,
+  flinkRecoveryRegistration,
 ];
