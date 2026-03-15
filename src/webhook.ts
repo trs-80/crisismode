@@ -15,6 +15,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { PgReplicationAgent } from './agent/pg-replication/agent.js';
 import { PgLiveClient } from './agent/pg-replication/live-client.js';
 import { assembleContext } from './framework/context.js';
+import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
@@ -143,6 +144,13 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
 
     const agent = new PgReplicationAgent(liveClient);
     const context = assembleContext(trigger, agent.manifest);
+    const initialHealth = await agent.assessHealth(context);
+    log(`  🩺 Health: ${initialHealth.status} (${(initialHealth.confidence * 100).toFixed(0)}% confidence)`);
+    log(`  🩺 Summary: ${initialHealth.summary}`);
+    if (initialHealth.status === 'healthy') {
+      log('  ✅ Direct health probe indicates the system is healthy. Skipping recovery for this alert.');
+      return { triggerId, outcome: 'healthy_no_action', steps: 0 };
+    }
 
     // Diagnose
     log('  🔍 Running diagnosis...');
@@ -154,9 +162,33 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
     log(`  📝 Plan: ${plan.steps.length} steps — ${plan.metadata.summary}`);
 
     // Validate
-    const validation = validatePlan(plan, agent.manifest);
+    const validation = validatePlan(plan, agent.manifest, {
+      backend: liveClient,
+      executionMode: MODE,
+      requireExecutableCapabilities: MODE === 'execute',
+    });
+    const executeReadinessValidation = validatePlan(plan, agent.manifest, {
+      backend: liveClient,
+      executionMode: 'execute',
+      requireExecutableCapabilities: true,
+    });
+    const providerResolutionCheck = validation.checks.find(
+      (check) => check.name === 'Provider resolution for live execution',
+    );
+    if (providerResolutionCheck) {
+      log(`  🔌 ${providerResolutionCheck.message}`);
+    }
     if (!validation.valid) {
       log(`  ❌ Plan validation failed`);
+      const blockedHealth = await agent.assessHealth(context);
+      const blockedSummary = buildOperatorSummary({
+        health: blockedHealth,
+        mode: MODE,
+        currentValidation: validation,
+        executeValidation: executeReadinessValidation,
+      });
+      log(`  🧭 Operator summary: ${blockedSummary.summary}`);
+      log(`  🧭 Next step: ${blockedSummary.recommendedNextStep}`);
       return { triggerId, outcome: 'validation_failed', steps: 0, error: 'Plan validation failed' };
     }
 
@@ -191,6 +223,16 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
 
     log(`  🚀 Executing plan in ${MODE} mode...`);
     const results = await engine.executePlan(plan, diagnosis);
+    const finalHealth = await agent.assessHealth(context);
+    const finalSummary = buildOperatorSummary({
+      health: finalHealth,
+      mode: MODE,
+      currentValidation: validation,
+      executeValidation: executeReadinessValidation,
+      results,
+    });
+    log(`  🧭 Operator summary: ${finalSummary.summary}`);
+    log(`  🧭 Next step: ${finalSummary.recommendedNextStep}`);
 
     // Write forensic record locally and submit to hub
     const outputPath = `output/forensic-${triggerId.replace(/[^a-zA-Z0-9-]/g, '_')}.json`;

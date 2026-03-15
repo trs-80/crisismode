@@ -116,9 +116,11 @@ Requires the test environment running (see below):
 # Dry-run — reads from real PG, mutations are logged but not executed
 pnpm run live
 
-# Execute mode — actually runs recovery SQL against PostgreSQL
+# Execute mode — actually runs supported recovery commands against PostgreSQL
 pnpm run live -- --execute
 ```
+
+Today the PostgreSQL live client executes SQL-backed steps against PostgreSQL directly. Plan steps that depend on external `structured_command` handlers, such as load balancer changes or `pg_basebackup` orchestration, are surfaced as unsupported in live mode until a real handler is implemented.
 
 ### Webhook receiver (AlertManager integration)
 
@@ -191,6 +193,8 @@ interface RecoveryAgent {
 
 Follow the backend pattern: create a `Backend` interface, a `Simulator` for testing, and a `LiveClient` for real infrastructure. See `src/agent/pg-replication/` for the reference implementation.
 
+At the framework boundary, the execution engine depends on a shared `ExecutionBackend` contract (`src/framework/backend.ts`) with `executeCommand()` and `evaluateCheck()` hooks. Agent-specific backends such as `PgBackend` and `RedisBackend` extend that shared contract with system-specific diagnosis methods.
+
 ## Kubernetes Deployment
 
 ```bash
@@ -219,7 +223,7 @@ Alert Source (Prometheus) → Spoke Webhook Receiver
 
 **Execution modes:**
 - `dry-run` (default) — reads from real systems, logs mutations without executing
-- `execute` — runs all operations including SQL mutations
+- `execute` — runs supported live commands through the active backend and fails unsupported commands explicitly
 
 **Safety layers:** manifest validation, blast radius checks, precondition evaluation, success criteria, approval workflows, forensic recording.
 
@@ -227,6 +231,7 @@ Alert Source (Prometheus) → Spoke Webhook Receiver
 
 - [Recovery Agent Contract](specs/foundational/recovery-agent-contract.md) — the authoritative agent interface definition
 - [Deployment & Operations](specs/deployment/operations.md) — hub-and-spoke architecture, integration patterns, operational management
+- [Plugin Platform Architecture Guide](specs/architecture/plugin-platform.md) — how the repo evolves from bespoke agents to a scalable plugin ecosystem
 
 ## Development
 

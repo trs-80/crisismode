@@ -6,6 +6,8 @@
  * Both the simulator and live client implement this.
  */
 
+import type { ExecutionBackend } from '../../framework/backend.js';
+
 export interface RedisInfo {
   role: 'master' | 'slave';
   connectedSlaves: number;
@@ -35,7 +37,7 @@ export interface RedisSlowlogEntry {
   command: string;
 }
 
-export interface RedisBackend {
+export interface RedisBackend extends ExecutionBackend {
   /** Get server INFO (memory, connections, replication) */
   getInfo(): Promise<RedisInfo>;
 
@@ -51,16 +53,6 @@ export interface RedisBackend {
   /** Get current memory fragmentation ratio */
   getFragmentationRatio(): Promise<number>;
 
-  /** Execute a Redis command */
-  executeCommand(command: string, args: string[]): Promise<unknown>;
-
-  /** Evaluate a check expression */
-  evaluateCheck(check: {
-    type: string;
-    statement?: string;
-    expect: { operator: string; value: unknown };
-  }): Promise<boolean>;
-
-  /** Clean up connections */
-  close(): Promise<void>;
+  /** Optional simulator-only state transitions */
+  transition?(to: string): void;
 }

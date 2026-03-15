@@ -8,12 +8,14 @@
  * Usage:
  *   pnpm run live              # dry-run mode (default)
  *   pnpm run live --execute    # live execution with mutations
+ *   pnpm run live -- --health-only  # direct health probe only
  *   PG_HOST=10.0.0.1 pnpm run live  # custom host
  */
 
 import { PgReplicationAgent } from './agent/pg-replication/agent.js';
 import { PgLiveClient } from './agent/pg-replication/live-client.js';
 import { assembleContext } from './framework/context.js';
+import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
@@ -30,6 +32,7 @@ function sleep(ms: number): Promise<void> {
 
 async function runLive(): Promise<void> {
   const execMode: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
+  const healthOnly = process.argv.includes('--health-only');
   const pgHost = process.env.PG_HOST || 'localhost';
   const pgPort = parseInt(process.env.PG_PORT || '5432', 10);
   const pgReplicaPort = parseInt(process.env.PG_REPLICA_PORT || '5433', 10);
@@ -107,18 +110,6 @@ async function runLive(): Promise<void> {
     };
     display.displayTrigger(trigger);
 
-    if (maxLag <= 10) {
-      console.log('');
-      console.log('  ℹ️  Replication lag is healthy (<10s). No recovery needed.');
-      console.log('  💡 To create a test failure, run:');
-      console.log('     ./test/failures/inject-replication-lag.sh');
-      console.log('');
-      console.log('  Then re-run: pnpm run live');
-      return;
-    }
-
-    await sleep(300);
-
     // ── Phase 2: Agent + Context ──
     display.phase(2, 'Agent Selection & Context');
 
@@ -131,50 +122,100 @@ async function runLive(): Promise<void> {
     );
     await sleep(300);
 
-    // ── Phase 3: Diagnosis ──
+    // ── Phase 3: Health Assessment ──
+    display.phase(3, healthOnly ? 'Health Assessment (Live — Standalone)' : 'Health Assessment (Live)');
+    display.step(3, 'Agent probing live PostgreSQL health directly');
+    const initialHealth = await agent.assessHealth(context);
+    display.displayHealthAssessment(initialHealth);
+
+    if (healthOnly || initialHealth.status === 'healthy') {
+      if (initialHealth.status === 'healthy' && !healthOnly) {
+        display.success('Direct health probe indicates the system is healthy. No recovery action is required.');
+        display.warning('The triggering alert may be stale or delayed relative to current system state.');
+      }
+
+      display.phase(4, 'Operator Summary');
+      display.displayOperatorSummary(buildOperatorSummary({
+        health: initialHealth,
+        mode: execMode,
+        healthCheckOnly: healthOnly,
+      }));
+
+      if (!healthOnly && initialHealth.status === 'healthy') {
+        console.log('  💡 To create a test failure, run:');
+        console.log('     ./test/failures/inject-replication-lag.sh');
+        console.log('');
+        console.log('  Then re-run: pnpm run live');
+      }
+      return;
+    }
+
+    await sleep(300);
+
+    // ── Phase 4: Diagnosis ──
     const hasAiKey = !!process.env.ANTHROPIC_API_KEY;
-    display.phase(3, hasAiKey ? 'Diagnosis (Live — AI-Powered)' : 'Diagnosis (Live — Rule-Based)');
+    display.phase(4, hasAiKey ? 'Diagnosis (Live — AI-Powered)' : 'Diagnosis (Live — Rule-Based)');
     if (hasAiKey) {
       console.log('  🤖 AI analyzing system state via Claude...');
     } else {
       console.log('  📋 Using rule-based diagnosis (set ANTHROPIC_API_KEY for AI diagnosis)');
     }
-    display.step(3, 'Agent querying real PostgreSQL for diagnosis');
+    display.step(4, 'Agent querying real PostgreSQL for diagnosis');
 
     const diagnosis = await agent.diagnose(context);
     display.displayDiagnosis(diagnosis);
     display.success(`Diagnosis: ${diagnosis.scenario} (${(diagnosis.confidence * 100).toFixed(0)}% confidence)`);
     await sleep(300);
 
-    // ── Phase 4: Plan ──
-    display.phase(4, 'Plan Creation');
+    // ── Phase 5: Plan ──
+    display.phase(5, 'Plan Creation');
     const plan = await agent.plan(context, diagnosis);
     display.displayPlanTable(plan);
 
-    // ── Phase 5: Validation ──
-    display.phase(5, 'Validation');
-    const validation = validatePlan(plan, agent.manifest);
+    // ── Phase 6: Validation ──
+    display.phase(6, 'Validation');
+    const validation = validatePlan(plan, agent.manifest, {
+      backend: liveClient,
+      executionMode: execMode,
+      requireExecutableCapabilities: execMode === 'execute',
+    });
+    const executeReadinessValidation = validatePlan(plan, agent.manifest, {
+      backend: liveClient,
+      executionMode: 'execute',
+      requireExecutableCapabilities: true,
+    });
     display.displayValidation(validation);
+    if (execMode === 'dry-run' && !executeReadinessValidation.valid) {
+      display.warning('Dry-run can continue, but execute mode is currently blocked by live capability/provider readiness.');
+    }
     if (!validation.valid) {
+      const blockedHealth = await agent.assessHealth(context);
+      display.phase(7, 'Operator Summary');
+      display.displayOperatorSummary(buildOperatorSummary({
+        health: blockedHealth,
+        mode: execMode,
+        currentValidation: validation,
+        executeValidation: executeReadinessValidation,
+      }));
       display.error('Plan validation failed');
       return;
     }
     display.success('Plan validated');
 
-    // ── Phase 6: Catalog Match ──
-    display.phase(6, 'Catalog Match');
+    // ── Phase 7: Catalog Match ──
+    display.phase(7, 'Catalog Match');
     const catalogMatch = matchCatalog(plan);
     display.displayCatalogMatch(catalogMatch);
     await sleep(300);
 
-    // ── Phase 7: Execution ──
+    // ── Phase 8: Execution ──
     if (execMode === 'execute') {
-      display.phase(7, 'Execution (Live — EXECUTE MODE)');
+      display.phase(8, 'Execution (Live — EXECUTE MODE)');
       console.log('');
       console.log('  🔴 EXECUTE MODE — SQL mutations WILL be run against real PostgreSQL.');
       console.log('');
     } else {
-      display.phase(7, 'Execution (Live — DRY-RUN)');
+      display.phase(8, 'Execution (Live — DRY-RUN)');
       console.log('');
       console.log('  🟡 DRY-RUN — Diagnosis and checks run against real PG.');
       console.log('     System actions are logged but NOT executed.');
@@ -222,10 +263,21 @@ async function runLive(): Promise<void> {
     );
     engine.setCoveredRiskLevels(catalogMatch.coveredRiskLevels);
 
-    await engine.executePlan(plan, diagnosis);
+    const results = await engine.executePlan(plan, diagnosis);
 
-    // ── Phase 8: Forensics ──
-    display.phase(8, 'Forensic Record');
+    // ── Phase 9: Operator Summary ──
+    display.phase(9, 'Operator Summary');
+    const finalHealth = await agent.assessHealth(context);
+    display.displayOperatorSummary(buildOperatorSummary({
+      health: finalHealth,
+      mode: execMode,
+      currentValidation: validation,
+      executeValidation: executeReadinessValidation,
+      results,
+    }));
+
+    // ── Phase 10: Forensics ──
+    display.phase(10, 'Forensic Record');
     const record = recorder.writeToFile(FORENSIC_OUTPUT_PATH);
     display.displayForensicSummary(record);
     display.displayComplete(FORENSIC_OUTPUT_PATH);

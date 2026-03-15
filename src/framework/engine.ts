@@ -13,7 +13,8 @@ import { executeCapture, validateBlastRadius } from './safety.js';
 import { requestApproval, shouldAutoApprove } from './coordinator.js';
 import { isCatalogCovered } from './catalog.js';
 import { ForensicRecorder } from './forensics.js';
-import type { PgBackend } from '../agent/pg-replication/backend.js';
+import type { ExecutionBackend } from './backend.js';
+import { resolveStepProviders } from './provider-registry.js';
 
 export interface EngineCallbacks {
   onStepStart?: (step: RecoveryStep, index: number) => void;
@@ -36,7 +37,7 @@ export class ExecutionEngine {
   private recorder: ForensicRecorder;
   private coveredRiskLevels: RiskLevel[] = [];
   private callbacks: EngineCallbacks;
-  private backend: PgBackend;
+  private backend: ExecutionBackend;
   private executionState: ExecutionState;
   private mode: ExecutionMode;
 
@@ -45,7 +46,7 @@ export class ExecutionEngine {
     private manifest: AgentManifest,
     private agent: RecoveryAgent,
     recorder: ForensicRecorder,
-    backend: PgBackend,
+    backend: ExecutionBackend,
     callbacks: EngineCallbacks = {},
     mode: ExecutionMode = 'dry-run',
   ) {
@@ -147,10 +148,7 @@ export class ExecutionEngine {
     startedAt: string,
     startTime: number,
   ): Promise<StepResult> {
-    // Execute the diagnosis query against the backend
-    const output = step.command.statement
-      ? await this.backend.queryReplicationStatus()
-      : null;
+    const output = await this.backend.executeCommand(step.command);
 
     this.recorder.addLogEntry({
       type: 'step_complete',
@@ -233,6 +231,45 @@ export class ExecutionEngine {
     // Blast radius check
     const blastResult = validateBlastRadius(step, this.manifest);
     this.callbacks.onBlastRadiusCheck?.(step, blastResult.message);
+    if (!blastResult.valid) {
+      this.recorder.addLogEntry({
+        type: 'step_failed',
+        stepId: step.stepId,
+        message: `Blast radius validation failed: ${blastResult.message}`,
+      });
+      return {
+        stepId: step.stepId,
+        step,
+        status: 'failed',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        error: `Blast radius validation failed: ${blastResult.message}`,
+      };
+    }
+
+    const providerResolution = resolveStepProviders(step, this.manifest, this.backend, this.mode);
+    this.recorder.addLogEntry({
+      type: providerResolution.resolved ? 'info' : 'step_failed',
+      stepId: step.stepId,
+      message: `Provider resolution: ${providerResolution.summary}`,
+      data: {
+        providers: providerResolution.providers,
+        capabilities: providerResolution.capabilities,
+      },
+    });
+    if (this.mode === 'execute' && !providerResolution.resolved) {
+      return {
+        stepId: step.stepId,
+        step,
+        status: 'failed',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        error: `Provider resolution failed: ${providerResolution.summary}`,
+        providerResolution: providerResolution.capabilities,
+      };
+    }
 
     // Execute before captures
     const beforeCaptures = step.statePreservation.before.map((capture) => {
@@ -254,6 +291,7 @@ export class ExecutionEngine {
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - startTime,
         error: 'Required before capture failed',
+        providerResolution: providerResolution.capabilities,
       };
     }
 
@@ -276,6 +314,7 @@ export class ExecutionEngine {
             completedAt: new Date().toISOString(),
             durationMs: Date.now() - startTime,
             error: `Precondition failed: ${pre.description}`,
+            providerResolution: providerResolution.capabilities,
           };
         }
       }
@@ -284,10 +323,10 @@ export class ExecutionEngine {
     // Execute or log the command based on mode
     const cmdDesc = `${step.command.type} ${step.command.operation || step.command.statement || ''}`.trim();
 
-    if (this.mode === 'execute' && step.command.statement && step.command.type === 'sql') {
-      // Live execution: run the SQL
+    let output: unknown;
+    if (this.mode === 'execute') {
       try {
-        await this.backend.executeSQL(step.command.statement);
+        output = await this.backend.executeCommand(step.command);
         this.recorder.addLogEntry({
           type: 'step_complete',
           stepId: step.stepId,
@@ -308,27 +347,35 @@ export class ExecutionEngine {
           completedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime,
           error: `Command execution failed: ${errMsg}`,
+          providerResolution: providerResolution.capabilities,
         };
       }
-    } else if (this.mode === 'dry-run') {
+    } else {
       this.recorder.addLogEntry({
         type: 'step_complete',
         stepId: step.stepId,
         message: `[DRY-RUN] Would execute: ${cmdDesc}`,
       });
       this.callbacks.onCapture?.(`[DRY-RUN] ${step.name}`, 'skipped');
-    } else {
-      // Structured commands (non-SQL) — log in both modes
-      this.recorder.addLogEntry({
-        type: 'step_complete',
+
+      if (step.stateTransition) {
+        this.backend.transition?.(step.stateTransition);
+      }
+
+      return {
         stepId: step.stepId,
-        message: `Executed command: ${cmdDesc}`,
-      });
+        step,
+        status: 'success',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        output: { dryRun: true },
+        providerResolution: providerResolution.capabilities,
+      };
     }
 
-    // State transitions declared by the step (simulator uses these; live client no-ops)
     if (step.stateTransition) {
-      this.backend.transition(step.stateTransition);
+      this.backend.transition?.(step.stateTransition);
     }
 
     // Check success criteria
@@ -354,6 +401,8 @@ export class ExecutionEngine {
       startedAt,
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - startTime,
+      output,
+      providerResolution: providerResolution.capabilities,
       error: successPassed ? undefined : `Success criteria failed: ${step.successCriteria.description}`,
     };
   }
@@ -462,11 +511,31 @@ export class ExecutionEngine {
         this.recorder.addStepResult(result);
         this.executionState.completedSteps.push(result);
         this.callbacks.onStepComplete?.(revisedStep, result);
+        if (result.status === 'failed') {
+          return {
+            stepId: step.stepId,
+            step,
+            status: 'failed',
+            startedAt,
+            completedAt: new Date().toISOString(),
+            durationMs: Date.now() - startTime,
+            error: `Revised plan failed at step ${revisedStep.stepId}: ${result.error ?? 'unknown error'}`,
+          };
+        }
       }
     } else if (replanResult.action === 'continue') {
       this.callbacks.onReplanResult?.('continue', 'Current plan remains valid');
     } else {
       this.callbacks.onReplanResult?.('abort', replanResult.reason);
+      return {
+        stepId: step.stepId,
+        step,
+        status: 'failed',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        error: `Replan aborted execution: ${replanResult.reason}`,
+      };
     }
 
     return {

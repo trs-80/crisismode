@@ -14,6 +14,12 @@ export const pgReplicationManifest: AgentManifest = {
     authors: ['SRE Team <sre@example.com>'],
     license: 'Apache-2.0',
     tags: ['postgresql', 'replication', 'database', 'stateful'],
+    plugin: {
+      id: 'postgresql.domain-pack',
+      kind: 'domain_pack',
+      maturity: 'live_validated',
+      compatibilityMode: 'recovery_agent',
+    },
   },
   spec: {
     targetSystems: [
@@ -51,12 +57,21 @@ export const pgReplicationManifest: AgentManifest = {
         type: 'sql',
         privilege: 'read',
         target: 'postgresql',
+        capabilities: ['db.query.read'],
       },
       {
         name: 'postgresql_write',
         type: 'sql',
         privilege: 'write',
         target: 'postgresql',
+        capabilities: [
+          'db.query.read',
+          'db.query.write',
+          'db.replica.disconnect',
+          'db.replica.reseed',
+          'db.replication_slot.drop',
+          'db.replication_slot.create',
+        ],
       },
       {
         name: 'linux_process',
@@ -64,6 +79,7 @@ export const pgReplicationManifest: AgentManifest = {
         privilege: 'process_management',
         target: 'linux',
         allowedOperations: ['service_restart', 'process_signal', 'config_reload'],
+        capabilities: ['traffic.backend.detach', 'traffic.backend.attach'],
       },
     ],
     observabilityDependencies: {

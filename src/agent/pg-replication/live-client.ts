@@ -11,6 +11,8 @@
 
 import pg, { type Pool as PoolType } from 'pg';
 import type { PgBackend, ReplicaStatus, ReplicationSlot } from './backend.js';
+import type { CheckExpression, Command } from '../../types/common.js';
+import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 
 const { Pool } = pg;
 
@@ -71,7 +73,7 @@ export class PgLiveClient implements PgBackend {
   async queryReplicationStatus(): Promise<ReplicaStatus[]> {
     const result = await this.primaryPool.query<ReplicationRow>(`
       SELECT
-        client_addr::text,
+        host(client_addr) AS client_addr,
         state,
         sent_lsn::text,
         write_lsn::text,
@@ -131,22 +133,13 @@ export class PgLiveClient implements PgBackend {
     return result.rows[0].count;
   }
 
-  async evaluateCheck(check: {
-    type: string;
-    statement?: string;
-    operation?: string;
-    parameters?: Record<string, unknown>;
-    expect: { operator: string; value: unknown };
-  }): Promise<boolean> {
-    // For structured_command checks (non-SQL), return true as a pass-through.
-    // These represent checks against non-database systems (HAProxy, etc.)
-    // that we can't evaluate against PostgreSQL.
+  async evaluateCheck(check: CheckExpression): Promise<boolean> {
     if (check.type === 'structured_command') {
-      return true;
+      return false;
     }
 
     if (!check.statement) {
-      return true;
+      return false;
     }
 
     try {
@@ -165,16 +158,45 @@ export class PgLiveClient implements PgBackend {
     }
   }
 
-  async executeSQL(statement: string): Promise<unknown> {
-    const result = await this.primaryPool.query(statement);
-    return {
-      rowCount: result.rowCount,
-      rows: result.rows,
-    };
+  async executeCommand(command: Command): Promise<unknown> {
+    if (command.type === 'sql' && command.statement) {
+      const result = await this.primaryPool.query(command.statement);
+      return {
+        rowCount: result.rowCount,
+        rows: result.rows,
+      };
+    }
+
+    throw new Error(
+      `Unsupported PostgreSQL live command: ${command.type}${command.operation ? `:${command.operation}` : ''}`,
+    );
   }
 
   transition(_to: string): void {
     // No-op for live client — state transitions happen via actual SQL execution.
+  }
+
+  listCapabilityProviders(): CapabilityProviderDescriptor[] {
+    return [
+      {
+        id: 'postgresql-live-sql',
+        kind: 'capability_provider',
+        name: 'PostgreSQL Live SQL Provider',
+        maturity: 'live_validated',
+        capabilities: [
+          'db.query.read',
+          'db.query.write',
+          'db.replica.disconnect',
+          'db.replication_slot.drop',
+          'db.replication_slot.create',
+        ],
+        executionContexts: ['postgresql_read', 'postgresql_write'],
+        targetKinds: ['postgresql'],
+        commandTypes: ['sql'],
+        supportsDryRun: true,
+        supportsExecute: true,
+      },
+    ];
   }
 
   async close(): Promise<void> {
