@@ -120,7 +120,7 @@ export class ExecutionEngine {
         case 'system_action':
           return this.executeSystemAction(step, startedAt, startTime);
         case 'human_approval':
-          return await this.executeApproval(step, startedAt, startTime);
+          return await this.executeApproval(step, plan, startedAt, startTime);
         case 'replanning_checkpoint':
           return await this.executeReplanningCheckpoint(step, plan, diagnosis, startedAt, startTime);
         case 'conditional':
@@ -409,16 +409,21 @@ export class ExecutionEngine {
 
   private async executeApproval(
     step: RecoveryStep & { type: 'human_approval' },
+    plan: RecoveryPlan,
     startedAt: string,
     startTime: number,
   ): Promise<StepResult> {
-    const effectiveTrust =
-      this.context.trustScenarioOverrides['replication_lag_cascade'] || this.context.trustLevel;
+    // Derive the effective risk level from the plan's system actions
+    const planRiskLevel = this.derivePlanMaxRiskLevel(plan);
 
-    const catalogCovered = isCatalogCovered('high', this.coveredRiskLevels);
+    // Look up trust override for the current plan's scenario, not a hardcoded one
+    const effectiveTrust =
+      this.context.trustScenarioOverrides[plan.metadata.scenario] || this.context.trustLevel;
+
+    const catalogCovered = isCatalogCovered(planRiskLevel, this.coveredRiskLevels);
 
     const autoApprove = shouldAutoApprove(
-      'high',
+      planRiskLevel,
       effectiveTrust,
       catalogCovered,
       this.context.organizationalPolicies.requireApprovalForAllElevated,
@@ -621,10 +626,86 @@ export class ExecutionEngine {
     originalPlan: RecoveryPlan,
     revisedPlan: RecoveryPlan,
   ): boolean {
-    // Simplified fast replan check
-    // 1. No new execution contexts
-    // 2. No higher risk levels
-    // 3. Same target systems
-    return true; // In the demo, fast replan always passes
+    const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
+
+    // Collect execution contexts from a plan's steps
+    const collectContexts = (steps: RecoveryStep[]): Set<string> => {
+      const contexts = new Set<string>();
+      for (const step of steps) {
+        if (step.type === 'system_action' || step.type === 'diagnosis_action') {
+          contexts.add(step.executionContext);
+        }
+        if (step.type === 'conditional') {
+          if (step.thenStep.type === 'system_action' || step.thenStep.type === 'diagnosis_action') {
+            contexts.add(step.thenStep.executionContext);
+          }
+          if (step.elseStep !== 'skip' && (step.elseStep.type === 'system_action' || step.elseStep.type === 'diagnosis_action')) {
+            contexts.add(step.elseStep.executionContext);
+          }
+        }
+      }
+      return contexts;
+    };
+
+    // Collect max risk level from a plan's steps
+    const getMaxRisk = (steps: RecoveryStep[]): number => {
+      let max = 0;
+      for (const step of steps) {
+        if (step.type === 'system_action') {
+          max = Math.max(max, RISK_ORDER.indexOf(step.riskLevel));
+        }
+        if (step.type === 'conditional') {
+          if (step.thenStep.type === 'system_action') {
+            max = Math.max(max, RISK_ORDER.indexOf(step.thenStep.riskLevel));
+          }
+          if (step.elseStep !== 'skip' && step.elseStep.type === 'system_action') {
+            max = Math.max(max, RISK_ORDER.indexOf(step.elseStep.riskLevel));
+          }
+        }
+      }
+      return max;
+    };
+
+    // Collect target systems from a plan's affected systems
+    const getTargets = (plan: RecoveryPlan): Set<string> =>
+      new Set(plan.impact.affectedSystems.map((s) => s.identifier));
+
+    // Condition 1: No new execution contexts
+    const originalContexts = collectContexts(originalPlan.steps);
+    const revisedContexts = collectContexts(revisedPlan.steps);
+    for (const ctx of revisedContexts) {
+      if (!originalContexts.has(ctx)) return false;
+    }
+
+    // Condition 2: No higher risk levels
+    if (getMaxRisk(revisedPlan.steps) > getMaxRisk(originalPlan.steps)) return false;
+
+    // Condition 3: Same target systems
+    const originalTargets = getTargets(originalPlan);
+    const revisedTargets = getTargets(revisedPlan);
+    for (const target of revisedTargets) {
+      if (!originalTargets.has(target)) return false;
+    }
+
+    return true;
+  }
+
+  private derivePlanMaxRiskLevel(plan: RecoveryPlan): RiskLevel {
+    const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
+    let maxIdx = 0;
+    for (const step of plan.steps) {
+      if (step.type === 'system_action') {
+        maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.riskLevel));
+      }
+      if (step.type === 'conditional') {
+        if (step.thenStep.type === 'system_action') {
+          maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.thenStep.riskLevel));
+        }
+        if (step.elseStep !== 'skip' && step.elseStep.type === 'system_action') {
+          maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.elseStep.riskLevel));
+        }
+      }
+    }
+    return RISK_ORDER[maxIdx];
   }
 }

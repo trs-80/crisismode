@@ -70,6 +70,21 @@ export class ForensicRecorder {
 
     const allCapturesSuccess = capturesSkipped === 0 && this.captures.every((c) => c.status === 'captured');
 
+    // Determine outcome based on step results
+    const wasAborted = this.stepResults.some(
+      (r) => r.status === 'failed' && r.error?.includes('aborted'),
+    );
+    let outcome: ForensicRecord['summary']['outcome'];
+    if (wasAborted) {
+      outcome = 'aborted';
+    } else if (failedSteps > 0 && completedSteps === 0) {
+      outcome = 'failed';
+    } else if (failedSteps > 0) {
+      outcome = 'partial_success';
+    } else {
+      outcome = 'success';
+    }
+
     return {
       recordId: `fr-${Date.now()}`,
       createdAt: new Date(this.startTime).toISOString(),
@@ -92,7 +107,7 @@ export class ForensicRecorder {
         capturesSkipped,
         catalogMatchUsed: this.catalogMatchUsed,
         replanCount: this.replanCount,
-        outcome: failedSteps > 0 ? 'partial_success' : 'success',
+        outcome,
       },
     };
   }

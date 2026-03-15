@@ -17,6 +17,17 @@ export function executeCapture(capture: CaptureDirective): CaptureResult {
   // Simulate capture execution based on cost/policy
   const timestamp = new Date().toISOString();
 
+  // Deferred captures are queued for execution after the action or after
+  // system health improves — not executed inline during plan execution
+  if (capture.capturePolicy === 'deferred') {
+    return {
+      name: capture.name,
+      status: 'skipped',
+      reason: 'Deferred capture — queued for post-action or post-recovery execution',
+      timestamp,
+    };
+  }
+
   if (capture.captureCost === 'expensive') {
     if (capture.capturePolicy === 'best_effort') {
       return {

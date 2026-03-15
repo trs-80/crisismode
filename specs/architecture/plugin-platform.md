@@ -193,6 +193,8 @@ This split prevents several common failure modes:
 
 The contracts below are intentionally illustrative. They define the minimum concepts the implementation should grow toward without freezing every field up front.
 
+> **Implementation status:** Phase 1 of the migration (Section 10) is complete. The current codebase implements a subset of these contracts using pragmatic types optimized for the current `RecoveryAgent`-based architecture. The subsections below note implementation status and any divergences between the illustrative contracts and the implemented types. Contracts marked **[Implemented]** have corresponding types in `src/types/plugin.ts`. Contracts marked **[Future]** are design targets for Phase 2+.
+
 ### 5.1 `IncidentContext`
 
 Purpose: the normalized bundle of trigger, topology, policy, reachability, evidence references, and provider availability used during diagnosis and planning.
@@ -220,6 +222,8 @@ interface IncidentContext {
 }
 ```
 
+**Status: [Future]** — The current architecture uses `AgentContext` (defined in the foundational spec) for this role. `IncidentContext` is a Phase 2+ migration target that consolidates trigger, topology, policy, and evidence into a single normalized bundle.
+
 ### 5.2 `ResourceRef`
 
 Purpose: canonical identity for a target touched by diagnosis, validation, or execution.
@@ -235,6 +239,8 @@ interface ResourceRef {
 }
 ```
 
+**Status: [Future]** — The current architecture uses bare `string` identifiers for targets and components. `ResourceRef` is a Phase 2+ migration target.
+
 ### 5.3 `CapabilityRef`
 
 Purpose: normalized description of an action or check required by a plan step.
@@ -247,6 +253,21 @@ interface CapabilityRef {
   parameters?: Record<string, unknown>;
 }
 ```
+
+**Status: [Future]** — This is a runtime invocation reference. The current implementation uses `CapabilityDefinition` (a registry entry) instead:
+
+```ts
+// Implemented in src/types/plugin.ts
+interface CapabilityDefinition {
+  id: string;
+  actionKind: 'read' | 'mutate' | 'check' | 'capture';
+  description: string;
+  targetKinds: string[];
+  manualFallback?: string;
+}
+```
+
+`CapabilityDefinition` is a registry entry that describes what a capability is, while `CapabilityRef` is a runtime reference used to invoke it. Both are needed: `CapabilityDefinition` exists today for registry and validation; `CapabilityRef` will be introduced when capability providers implement the `execute()` interface.
 
 Examples:
 
@@ -270,6 +291,8 @@ interface EvidenceRef {
 }
 ```
 
+**Status: [Future]** — Evidence is currently embedded directly in `DiagnosisFinding.data`. The `EvidenceRef` type will be introduced alongside `EvidenceProvider` in Phase 4.
+
 ### 5.5 `SafetyEnvelope`
 
 Purpose: the safety metadata that accompanies an executable action regardless of product.
@@ -289,11 +312,14 @@ interface SafetyEnvelope {
 }
 ```
 
+**Status: [Future]** — These fields currently exist as individual properties on `SystemActionStep` (`riskLevel`, `blastRadius`, `preConditions`, `successCriteria`, `statePreservation`, `rollback`). The consolidated `SafetyEnvelope` type is a Phase 3+ refactoring target.
+
 ### 5.6 `PluginManifest`
 
 Purpose: minimal metadata shared by all plugin classes.
 
 ```ts
+// Illustrative target contract
 interface PluginManifest {
   id: string;
   kind: 'signal_adapter' | 'domain_pack' | 'scenario_module' | 'capability_provider' | 'evidence_provider';
@@ -304,6 +330,20 @@ interface PluginManifest {
   supportsSimulation: boolean;
 }
 ```
+
+**Status: [Implemented — reduced]** — The current implementation uses `PluginMetadata`, a lightweight subset embedded in `AgentManifest.metadata.plugin`:
+
+```ts
+// Implemented in src/types/plugin.ts
+interface PluginMetadata {
+  id: string;
+  kind: PluginKind;
+  maturity: PluginMaturity;
+  compatibilityMode?: 'recovery_agent';
+}
+```
+
+Fields `version`, `owner`, `supportsDryRun`, and `supportsSimulation` are deferred to Phase 2 when plugins become independently versioned and distributable packages. `compatibilityMode` was added to bridge the current `RecoveryAgent` architecture with the future plugin model.
 
 ### 5.7 `ScenarioModule`
 
@@ -320,6 +360,8 @@ interface ScenarioModule {
 }
 ```
 
+**Status: [Future]** — Phase 3. Current scenario logic is embedded in `RecoveryAgent` implementations (e.g., `src/agent/pg-replication/agent.ts`).
+
 ### 5.8 `CapabilityProvider`
 
 Purpose: safe execution and dry-run support for one or more capabilities.
@@ -333,6 +375,26 @@ interface CapabilityProvider {
   execute(capability: CapabilityRef, ctx: IncidentContext): Promise<unknown>;
 }
 ```
+
+**Status: [Future]** — Phase 2. The current implementation uses a descriptor-based approach instead of a method-based interface:
+
+```ts
+// Implemented in src/types/plugin.ts
+interface CapabilityProviderDescriptor {
+  id: string;
+  kind: 'capability_provider';
+  name: string;
+  maturity: PluginMaturity;
+  capabilities: string[];
+  executionContexts: string[];
+  targetKinds: string[];
+  commandTypes: Command['type'][];
+  supportsDryRun: boolean;
+  supportsExecute: boolean;
+}
+```
+
+`CapabilityProviderDescriptor` is a static metadata declaration used by the provider registry (`src/framework/provider-registry.ts`) for resolution. The runtime `CapabilityProvider` interface with `supports()`, `dryRun()`, and `execute()` methods will be introduced in Phase 2 when providers become independently loadable plugins.
 
 ### 5.9 `SignalAdapter`
 
@@ -350,6 +412,8 @@ interface SignalAdapter {
 }
 ```
 
+**Status: [Future]** — Phase 4. Alert normalization currently exists in the webhook receiver (`src/webhook.ts`) as direct code.
+
 ### 5.10 `EvidenceProvider`
 
 Purpose: retrieve evidence snapshots or enrich context without becoming an execution provider.
@@ -361,6 +425,8 @@ interface EvidenceProvider {
   collect(ref: EvidenceRef, ctx: IncidentContext): Promise<unknown>;
 }
 ```
+
+**Status: [Future]** — Phase 4. Evidence collection is currently embedded in agent diagnosis methods.
 
 ### 5.11 `ProviderResolutionResult`
 
@@ -376,6 +442,20 @@ interface ProviderResolutionResult {
 }
 ```
 
+**Status: [Implemented — reduced]** — The current implementation uses `CapabilityProviderResolution`:
+
+```ts
+// Implemented in src/types/plugin.ts
+interface CapabilityProviderResolution {
+  capability: string;
+  resolved: boolean;
+  providerId?: string;
+  reason?: string;
+}
+```
+
+The `blockingPolicy` field from the illustrative contract is deferred to Phase 2 when policy-based provider blocking is implemented.
+
 ### 5.12 `ScenarioContractTest`
 
 Purpose: fixture-driven expectation that a scenario module behaves safely and predictably.
@@ -389,6 +469,8 @@ interface ScenarioContractTest {
   requiredCapabilities: string[];
 }
 ```
+
+**Status: [Future]** — Phase 3. Current testing uses standard unit tests against simulator backends.
 
 ---
 
@@ -600,6 +682,13 @@ This guide does not invalidate the current code layout. It maps current structur
 | `manifest.ts` | Early form of plugin metadata |
 | `backend.ts` / simulator / live client | Early capability-provider-compatible execution implementations |
 | `ExecutionEngine` | Kernel execution and orchestration layer |
+| `src/framework/provider-registry.ts` | Kernel provider resolution layer (Phase 2 partially complete) |
+| `src/framework/capability-registry.ts` | Kernel capability vocabulary registry (Phase 1 complete) |
+| `src/types/plugin.ts` | Early plugin type definitions (`PluginMetadata`, `CapabilityDefinition`, `CapabilityProviderDescriptor`, `CapabilityProviderResolution`) |
+| `src/config/agent-registry.ts` | Agent selection with version-aware matching (precursor to domain pack routing) |
+| `src/framework/operator-summary.ts` | Kernel operator-facing health and readiness system |
+| `src/framework/ai-diagnosis.ts` | Framework AI diagnosis toolkit (reusable across agents) |
+| `src/framework/ai-explainer.ts` | Framework AI plan explanation service |
 
 ### 9.2 Example mapping for existing implementations
 

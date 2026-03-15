@@ -117,6 +117,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/types/plugin.ts` | Plugin ecosystem types (capability providers, domain packs, etc.) |
 | `specs/deployment/operations.md` | Hub-and-spoke deployment architecture |
 | `specs/architecture/plugin-platform.md` | Plugin platform architecture guide |
+| `specs/architecture/operator-health-and-ai-services.md` | Operator summary, AI services, and site config spec |
 
 ## Commit Conventions
 
