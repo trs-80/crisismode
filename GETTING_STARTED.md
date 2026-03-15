@@ -113,12 +113,17 @@ pnpm run webhook --execute      # execute mode
 | File | Purpose |
 |---|---|
 | `engine.ts` | Executes recovery plans step-by-step. Handles dry-run vs execute mode. |
+| `backend.ts` | ExecutionBackend contract — shared interface for all execution backends |
 | `safety.ts` | State capture, blast radius validation |
 | `coordinator.ts` | Human approval logic (auto-approve decisions based on trust + catalog) |
 | `validator.ts` | Validates plans against agent manifests |
 | `catalog.ts` | Pre-authorized action catalog matching |
 | `forensics.ts` | Forensic record assembly and persistence |
 | `hub-client.ts` | Spoke ↔ hub communication (bootstrap, heartbeat, forensics, policies) |
+| `capability-registry.ts` | Global registry of standard recovery capabilities |
+| `provider-registry.ts` | Resolves capability providers for plan steps |
+| `operator-summary.ts` | Builds operator-facing health and readiness summaries |
+| `index.ts` | Barrel export for all framework modules |
 
 ### Agents (`src/agent/`)
 
@@ -146,6 +151,8 @@ All contract types are defined here. Key types:
 - `AgentManifest` — agent capabilities declaration
 - `ForensicRecord` — immutable audit trail
 - `AgentContext` — trigger, topology, trust levels, policies
+- `HealthAssessment` / `OperatorSummary` — health assessment and operator-facing readiness types
+- `PluginKind` / `CapabilityProviderDescriptor` — plugin ecosystem types for capability providers
 
 ## Building a New Agent
 
@@ -200,6 +207,8 @@ pnpm dev                              # Demo mode (simulated)
 pnpm run live                         # Live mode against test PG (dry-run)
 pnpm run live -- --execute            # Live mode with mutations
 pnpm run webhook                      # Start webhook receiver
+pnpm test                             # Run unit tests (vitest)
+pnpm run test:watch                   # Run tests in watch mode
 pnpm run typecheck                    # TypeScript check
 pnpm run build                        # Compile to dist/
 ./test/podman/scripts/start.sh        # Start test environment
