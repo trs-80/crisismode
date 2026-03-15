@@ -2,26 +2,28 @@
 // Copyright 2026 CrisisMode Contributors
 
 /**
- * Live mode entry point — runs the PgReplicationAgent against real PostgreSQL
- * containers in the podman test environment.
+ * Live mode entry point — runs recovery agents against real infrastructure.
+ * Uses crisismode.yaml for target configuration, with env-var fallback.
  *
  * Usage:
- *   pnpm run live              # dry-run mode (default)
- *   pnpm run live --execute    # live execution with mutations
- *   pnpm run live -- --health-only  # direct health probe only
- *   PG_HOST=10.0.0.1 pnpm run live  # custom host
+ *   pnpm run live                                  # dry-run, first target
+ *   pnpm run live -- --execute                     # live execution with mutations
+ *   pnpm run live -- --config crisismode.yaml      # explicit config path
+ *   pnpm run live -- --target main-postgres        # specific named target
+ *   pnpm run live -- --health-only                 # direct health probe only
  */
 
-import { PgReplicationAgent } from './agent/pg-replication/agent.js';
-import { PgLiveClient } from './agent/pg-replication/live-client.js';
 import { assembleContext } from './framework/context.js';
 import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
 import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
+import { loadConfig, parseCliFlags } from './config/loader.js';
+import { AgentRegistry } from './config/agent-registry.js';
 import type { AgentContext } from './types/agent-context.js';
 import type { HumanApprovalStep } from './types/step-types.js';
+import type { PgLiveClient } from './agent/pg-replication/live-client.js';
 import * as display from './demo/display.js';
 
 const FORENSIC_OUTPUT_PATH = 'output/forensic-record-live.json';
@@ -33,59 +35,72 @@ function sleep(ms: number): Promise<void> {
 async function runLive(): Promise<void> {
   const execMode: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
   const healthOnly = process.argv.includes('--health-only');
-  const pgHost = process.env.PG_HOST || 'localhost';
-  const pgPort = parseInt(process.env.PG_PORT || '5432', 10);
-  const pgReplicaPort = parseInt(process.env.PG_REPLICA_PORT || '5433', 10);
-  const pgUser = process.env.PG_USER || 'crisismode';
-  const pgPassword = process.env.PG_PASSWORD || 'crisismode';
-  const pgDatabase = process.env.PG_DATABASE || 'crisismode';
+  const { configPath, targetName } = parseCliFlags(process.argv);
+
+  // Load config (file or env-var fallback)
+  const { config, source, filePath } = loadConfig({ configPath });
+  const registry = new AgentRegistry(config);
+
+  // Resolve the target to run against
+  const { agent, backend, target } = targetName
+    ? await registry.createForTarget(targetName)
+    : await registry.createFirst();
+
+  // Cast for PG-specific connectivity display (only used for postgresql targets)
+  const pgClient = target.kind === 'postgresql' ? backend as PgLiveClient : null;
 
   display.banner();
   console.log('');
+  console.log(`  Config: ${source === 'file' ? filePath : 'env-var fallback (no crisismode.yaml found)'}`);
   console.log('  ┌─────────────────────────────────────────────┐');
-  console.log('  │  🔴 LIVE MODE — Real PostgreSQL Connections  │');
+  console.log(`  │  🔴 LIVE MODE — ${target.kind} target: ${target.name}`);
   console.log('  │                                              │');
-  console.log(`  │  Primary:  ${pgHost}:${pgPort}                     │`);
-  console.log(`  │  Replica:  ${pgHost}:${pgReplicaPort}                     │`);
-  console.log(`  │  Database: ${pgDatabase}                       │`);
+  console.log(`  │  Primary:  ${target.primary.host}:${target.primary.port}`);
+  if (target.replicas.length > 0) {
+    console.log(`  │  Replica:  ${target.replicas[0].host}:${target.replicas[0].port}`);
+  }
+  if (target.primary.database) {
+    console.log(`  │  Database: ${target.primary.database}`);
+  }
   console.log('  └─────────────────────────────────────────────┘');
   console.log('');
 
-  // Create live PostgreSQL backend
-  const liveClient = new PgLiveClient(
-    { host: pgHost, port: pgPort, user: pgUser, password: pgPassword, database: pgDatabase },
-    { host: pgHost, port: pgReplicaPort, user: pgUser, password: pgPassword, database: pgDatabase },
-  );
-
   try {
-    // Quick connectivity check
-    console.log('  Connecting to PostgreSQL...');
-    const replStatus = await liveClient.queryReplicationStatus();
-    const replicaStatus = await liveClient.queryReplicaStatus();
-    const connCount = await liveClient.queryConnectionCount();
-    const slots = await liveClient.queryReplicationSlots();
+    // Quick connectivity check (PG-specific display)
+    let replStatus: Awaited<ReturnType<PgLiveClient['queryReplicationStatus']>> = [];
+    let replicaStatus: Awaited<ReturnType<PgLiveClient['queryReplicaStatus']>> = null;
 
-    console.log(`  ✅ Primary connected — ${connCount} active connections`);
-    console.log(`  ✅ Replication: ${replStatus.length} replica(s) streaming`);
-    if (replicaStatus) {
-      console.log(`  ✅ Replica connected — recovery mode: ${replicaStatus.isInRecovery}, lag: ${replicaStatus.lagSeconds}s`);
-    }
-    console.log(`  ✅ Slots: ${slots.length} replication slot(s)`);
-    console.log('');
+    if (pgClient) {
+      console.log('  Connecting to PostgreSQL...');
+      replStatus = await pgClient.queryReplicationStatus();
+      replicaStatus = await pgClient.queryReplicaStatus();
+      const connCount = await pgClient.queryConnectionCount();
+      const slots = await pgClient.queryReplicationSlots();
 
-    // Show live replication data
-    console.log('  ── Live Replication Status ──');
-    for (const r of replStatus) {
-      const lagColor = r.lag_seconds > 30 ? '🔴' : r.lag_seconds > 10 ? '🟡' : '🟢';
-      console.log(`  ${lagColor} ${r.client_addr} | ${r.state} | lag: ${r.lag_seconds}s | sent: ${r.sent_lsn} | replay: ${r.replay_lsn}`);
-    }
-    console.log('');
+      console.log(`  ✅ Primary connected — ${connCount} active connections`);
+      console.log(`  ✅ Replication: ${replStatus.length} replica(s) streaming`);
+      if (replicaStatus) {
+        console.log(`  ✅ Replica connected — recovery mode: ${replicaStatus.isInRecovery}, lag: ${replicaStatus.lagSeconds}s`);
+      }
+      console.log(`  ✅ Slots: ${slots.length} replication slot(s)`);
+      console.log('');
 
-    for (const s of slots) {
-      const statusIcon = s.active ? '🟢' : '🔴';
-      console.log(`  ${statusIcon} Slot: ${s.slot_name} | type: ${s.slot_type} | active: ${s.active} | wal: ${s.wal_status}`);
+      // Show live replication data
+      console.log('  ── Live Replication Status ──');
+      for (const r of replStatus) {
+        const lagColor = r.lag_seconds > 30 ? '🔴' : r.lag_seconds > 10 ? '🟡' : '🟢';
+        console.log(`  ${lagColor} ${r.client_addr} | ${r.state} | lag: ${r.lag_seconds}s | sent: ${r.sent_lsn} | replay: ${r.replay_lsn}`);
+      }
+      console.log('');
+
+      for (const s of slots) {
+        const statusIcon = s.active ? '🟢' : '🔴';
+        console.log(`  ${statusIcon} Slot: ${s.slot_name} | type: ${s.slot_type} | active: ${s.active} | wal: ${s.wal_status}`);
+      }
+      console.log('');
+    } else {
+      console.log(`  Connecting to ${target.kind} target "${target.name}"...`);
     }
-    console.log('');
 
     await sleep(500);
 
@@ -93,16 +108,21 @@ async function runLive(): Promise<void> {
     display.phase(1, 'Trigger (Live)');
     display.step(1, 'Simulating Prometheus alert from live data');
 
-    // Build trigger from live data — use the worst lag from either perspective
+    // Build trigger from live data
     const primaryViewLag = replStatus.reduce((max, r) => Math.max(max, r.lag_seconds), 0);
     const replicaViewLag = replicaStatus?.lagSeconds ?? 0;
     const maxLag = Math.max(primaryViewLag, replicaViewLag);
+    const alertname = target.kind === 'postgresql'
+      ? 'PostgresReplicationLagCritical'
+      : target.kind === 'redis'
+        ? 'RedisMemoryPressureCritical'
+        : `${target.kind}HealthDegraded`;
     const trigger: AgentContext['trigger'] = {
       type: 'alert',
       source: 'prometheus',
       payload: {
-        alertname: 'PostgresReplicationLagCritical',
-        instance: `${pgHost}:${pgPort}`,
+        alertname,
+        instance: `${target.primary.host}:${target.primary.port}`,
         severity: maxLag > 30 ? 'critical' : maxLag > 10 ? 'warning' : 'info',
         lag_seconds: maxLag,
       },
@@ -113,7 +133,6 @@ async function runLive(): Promise<void> {
     // ── Phase 2: Agent + Context ──
     display.phase(2, 'Agent Selection & Context');
 
-    const agent = new PgReplicationAgent(liveClient);
     const context = assembleContext(trigger, agent.manifest);
     display.displayManifest(
       agent.manifest.metadata.name,
@@ -175,12 +194,12 @@ async function runLive(): Promise<void> {
     // ── Phase 6: Validation ──
     display.phase(6, 'Validation');
     const validation = validatePlan(plan, agent.manifest, {
-      backend: liveClient,
+      backend,
       executionMode: execMode,
       requireExecutableCapabilities: execMode === 'execute',
     });
     const executeReadinessValidation = validatePlan(plan, agent.manifest, {
-      backend: liveClient,
+      backend,
       executionMode: 'execute',
       requireExecutableCapabilities: true,
     });
@@ -257,7 +276,7 @@ async function runLive(): Promise<void> {
       agent.manifest,
       agent,
       recorder,
-      liveClient,
+      backend,
       callbacks,
       execMode,
     );
@@ -283,7 +302,7 @@ async function runLive(): Promise<void> {
     display.displayComplete(FORENSIC_OUTPUT_PATH);
 
   } finally {
-    await liveClient.close();
+    await backend.close();
   }
 }
 

@@ -6,14 +6,12 @@
  * the recovery agent pipeline.
  *
  * Usage:
- *   pnpm run webhook                          # dry-run mode (default)
- *   pnpm run webhook --execute                # live execution mode
- *   PORT=3000 pnpm run webhook                # custom port
+ *   pnpm run webhook                                  # dry-run mode (default)
+ *   pnpm run webhook -- --execute                     # live execution mode
+ *   pnpm run webhook -- --config crisismode.yaml      # explicit config path
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { PgReplicationAgent } from './agent/pg-replication/agent.js';
-import { PgLiveClient } from './agent/pg-replication/live-client.js';
 import { assembleContext } from './framework/context.js';
 import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
@@ -21,30 +19,27 @@ import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
 import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
 import { HubClient } from './framework/hub-client.js';
+import { loadConfig, parseCliFlags } from './config/loader.js';
+import { AgentRegistry } from './config/agent-registry.js';
+import { resolveCredentials } from './config/credentials.js';
 import type { AgentContext } from './types/agent-context.js';
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
 const MODE: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
-const HUB_ENDPOINT = process.env.HUB_ENDPOINT || 'http://localhost:8080';
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
+const { configPath } = parseCliFlags(process.argv);
 const MAX_BODY_BYTES = 1_048_576; // 1 MiB
+
+// Load site config
+const { config, source, filePath } = loadConfig({ configPath });
+const registry = new AgentRegistry(config);
+
+const PORT = config.webhook?.port ?? parseInt(process.env.PORT || '3000', 10);
+const WEBHOOK_SECRET = config.webhook?.secret
+  ? resolveCredentials(config.webhook.secret).token ?? ''
+  : process.env.WEBHOOK_SECRET ?? '';
+const HUB_ENDPOINT = config.hub?.endpoint ?? process.env.HUB_ENDPOINT ?? 'http://localhost:8080';
 
 // Hub client for forensic record submission
 const hubClient = new HubClient({ endpoint: HUB_ENDPOINT });
-
-// PostgreSQL connection config from environment
-const pgConfig = {
-  host: process.env.PG_HOST || 'localhost',
-  port: parseInt(process.env.PG_PORT || '5432', 10),
-  user: process.env.PG_USER || 'crisismode',
-  password: process.env.PG_PASSWORD || 'crisismode',
-  database: process.env.PG_DATABASE || 'crisismode',
-};
-
-const pgReplicaConfig = {
-  ...pgConfig,
-  port: parseInt(process.env.PG_REPLICA_PORT || '5433', 10),
-};
 
 // Track active recoveries to prevent duplicate runs
 const activeRecoveries = new Set<string>();
@@ -105,10 +100,8 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
   steps: number;
   error?: string;
 }> {
-  // Find the first firing PostgreSQL replication alert
-  const firingAlerts = payload.alerts.filter(
-    (a) => a.status === 'firing' && a.labels.alertname?.includes('PostgresReplication'),
-  );
+  // Find the first firing alert that matches a registered agent
+  const firingAlerts = payload.alerts.filter((a) => a.status === 'firing');
 
   if (firingAlerts.length === 0) {
     return { triggerId: 'none', outcome: 'ignored', steps: 0 };
@@ -123,10 +116,17 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
     return { triggerId, outcome: 'deduplicated', steps: 0 };
   }
 
-  activeRecoveries.add(triggerId);
-  log(`  🔥 Alert: ${alert.labels.alertname} — ${alert.annotations.summary || 'no summary'}`);
+  // Dispatch to the right agent via registry
+  const instance = await registry.dispatchAlert(alert.labels);
+  if (!instance) {
+    log(`  ⏭️  No agent matches alert: ${alert.labels.alertname}`);
+    return { triggerId, outcome: 'no_matching_agent', steps: 0 };
+  }
 
-  const liveClient = new PgLiveClient(pgConfig, pgReplicaConfig);
+  activeRecoveries.add(triggerId);
+  log(`  🔥 Alert: ${alert.labels.alertname} → agent: ${instance.agent.manifest.metadata.name}`);
+
+  const { agent, backend, target } = instance;
 
   try {
     // Build trigger from AlertManager payload
@@ -135,14 +135,13 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
       source: 'prometheus',
       payload: {
         alertname: alert.labels.alertname,
-        instance: alert.labels.instance || `${pgConfig.host}:${pgConfig.port}`,
+        instance: alert.labels.instance || `${target.primary.host}:${target.primary.port}`,
         severity: alert.labels.severity || 'critical',
         ...alert.labels,
       },
       receivedAt: new Date().toISOString(),
     };
 
-    const agent = new PgReplicationAgent(liveClient);
     const context = assembleContext(trigger, agent.manifest);
     const initialHealth = await agent.assessHealth(context);
     log(`  🩺 Health: ${initialHealth.status} (${(initialHealth.confidence * 100).toFixed(0)}% confidence)`);
@@ -163,12 +162,12 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
 
     // Validate
     const validation = validatePlan(plan, agent.manifest, {
-      backend: liveClient,
+      backend,
       executionMode: MODE,
       requireExecutableCapabilities: MODE === 'execute',
     });
     const executeReadinessValidation = validatePlan(plan, agent.manifest, {
-      backend: liveClient,
+      backend,
       executionMode: 'execute',
       requireExecutableCapabilities: true,
     });
@@ -215,7 +214,7 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
       agent.manifest,
       agent,
       recorder,
-      liveClient,
+      backend,
       callbacks,
       MODE,
     );
@@ -261,7 +260,7 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
     log(`  ❌ Recovery failed: ${errMsg}`);
     return { triggerId, outcome: 'error', steps: 0, error: errMsg };
   } finally {
-    await liveClient.close();
+    await backend.close();
     activeRecoveries.delete(triggerId);
   }
 }
@@ -335,6 +334,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  CrisisMode Spoke — Webhook Receiver');
   console.log('');
+  console.log(`  Config:   ${source === 'file' ? filePath : 'env-var fallback'}`);
+  console.log(`  Targets:  ${config.targets.map((t) => `${t.name} (${t.kind})`).join(', ')}`);
   console.log(`  Mode:     ${MODE === 'execute' ? '🔴 EXECUTE (mutations enabled)' : '🟡 DRY-RUN (read-only)'}`);
   console.log(`  Port:     ${PORT}`);
   console.log(`  Endpoint: http://localhost:${PORT}/api/v1/alerts`);

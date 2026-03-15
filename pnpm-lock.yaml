@@ -14,6 +14,9 @@ importers:
       pg:
         specifier: ^8.16.3
         version: 8.20.0
+      yaml:
+        specifier: ^2.8.2
+        version: 2.8.2
     devDependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.78.0

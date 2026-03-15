@@ -8,10 +8,11 @@ build/
 out/
 output/
 
-# Environment files
+# Environment and site config
 .env
 .env.local
 .env.*.local
+crisismode.yaml
 
 # OS files
 .DS_Store
@@ -20,6 +21,7 @@ Thumbs.db
 # Editor/IDE
 .idea/
 .vscode/
+.claude/settings.local.json
 *.swp
 *.swo
 *~
