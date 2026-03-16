@@ -1,5 +1,11 @@
 # CrisisMode
 
+[![CI](https://github.com/trs-80/crisismode/actions/workflows/ci.yml/badge.svg)](https://github.com/trs-80/crisismode/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/trs-80/crisismode/graph/badge.svg)](https://codecov.io/gh/trs-80/crisismode)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node](https://img.shields.io/badge/Node-%3E%3D18-green?logo=node.js&logoColor=white)](https://nodejs.org/)
+
 Runbooks tell humans what to do. CrisisMode agents *do it* — with safety guarantees that runbooks can't enforce. Every action is validated against a blast radius, every mutation is preceded by a state capture, every risky step requires approval, and every execution produces an immutable forensic record. AI-powered diagnosis identifies failure patterns that rule-based monitoring misses.
 
 **Website:** [crisismode.ai](https://crisismode.ai)
