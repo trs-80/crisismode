@@ -1,10 +1,10 @@
 # Recovery Agent Contract Specification
 
-**Version:** 0.2.1-draft  
-**Status:** Draft — Pre-Implementation Final  
-**Date:** 2026-03-12  
-**Authors:** [Your Name]  
-**Supersedes:** 0.2.0-draft
+**Version:** 0.3.0-draft
+**Status:** Draft — Post-Implementation Reconciliation
+**Date:** 2026-03-15
+**Authors:** [Your Name]
+**Supersedes:** 0.2.1-draft
 
 ---
 
@@ -232,7 +232,13 @@ Every agent MUST provide a manifest that declares its identity, capabilities, an
     "description": "Recovers PostgreSQL streaming replication failures including lag cascades, slot overflow, and replica divergence.",
     "authors": ["SRE Team <sre@example.com>"],
     "license": "Apache-2.0",
-    "tags": ["postgresql", "replication", "database", "stateful"]
+    "tags": ["postgresql", "replication", "database", "stateful"],
+    "plugin": {
+      "id": "postgresql.domain-pack",
+      "kind": "domain_pack",
+      "maturity": "live_validated",
+      "compatibilityMode": "recovery_agent"
+    }
   },
   "spec": {
     "targetSystems": [
@@ -269,13 +275,15 @@ Every agent MUST provide a manifest that declares its identity, capabilities, an
         "name": "postgresql_read",
         "type": "sql",
         "privilege": "read",
-        "target": "postgresql"
+        "target": "postgresql",
+        "capabilities": ["db.query.read", "db.replication.status"]
       },
       {
         "name": "postgresql_write",
         "type": "sql",
         "privilege": "write",
-        "target": "postgresql"
+        "target": "postgresql",
+        "capabilities": ["db.query.read", "db.query.write", "db.replica.disconnect", "db.replication.slot.manage"]
       },
       {
         "name": "linux_process",
@@ -312,6 +320,8 @@ Every agent MUST provide a manifest that declares its identity, capabilities, an
 - `spec.executionContexts` MUST enumerate every execution context the agent requires, with type, privilege, and target declared. See Section 15 for the execution context model. The framework MUST NOT grant contexts not listed in the manifest.
 - `spec.failureScenarios` MUST enumerate the failure scenarios the agent handles. Trust is tracked per scenario (Section 13).
 - `spec.riskProfile.maxRiskLevel` MUST be one of: `routine`, `elevated`, `high`, or `critical`. The framework MUST reject plans containing steps that exceed this declared maximum.
+- `metadata.plugin` MUST provide plugin identity metadata including `id`, `kind`, `maturity`, and optionally `compatibilityMode`. See the Plugin Platform Architecture Guide for the full taxonomy.
+- `spec.executionContexts[].capabilities` is OPTIONAL. When present, it declares the standard capability identifiers (from the capability registry) that this context can provide. The framework uses these for provider resolution during plan validation.
 
 ---
 
@@ -333,6 +343,8 @@ Every agent MUST provide a manifest that declares its identity, capabilities, an
 | `completed` | Execution finished successfully or with controlled rollback. |
 | `failed` | Agent encountered an unrecoverable error. |
 | `suspended` | Framework paused the agent due to a policy or trust violation. |
+
+> **Implementation note [Phase 1]:** The agent lifecycle state machine is defined here as the authoritative behavioral model. Phase 1 implementations are NOT REQUIRED to track or expose agent state as a runtime value. The framework MUST enforce the behavioral constraints implied by the state machine (e.g., agents cannot mutate during `diagnosing`), but it MAY do so through interface design rather than explicit state tracking. Full state machine tracking with runtime-inspectable state is a [Phase 2] requirement.
 
 ### 5.2 State Transitions
 
@@ -364,6 +376,21 @@ suspended → registered                  Administrator reinstates agent
 
 A conforming agent MUST implement the following interface:
 
+#### 5.3.0 `assessHealth(context: AgentContext) → HealthAssessment`
+
+Called by the framework to obtain a lightweight, non-mutating health assessment of the agent's target system. This method enables the operator summary system (see companion specification) and proactive health monitoring without triggering full diagnosis or planning.
+
+The `HealthAssessment` MUST include:
+
+- `status`: One of `healthy`, `recovering`, `unhealthy`, or `unknown`.
+- `confidence`: A float between 0.0 and 1.0.
+- `summary`: Human-readable one-line summary.
+- `observedAt`: ISO 8601 timestamp.
+- `signals`: Array of `HealthSignal` observations (source, status, detail, timestamp).
+- `recommendedActions`: Array of human-readable recommended next steps.
+
+The framework MAY call `assessHealth()` independently of the full recovery lifecycle — for example, to populate dashboards or evaluate readiness before triggering a full recovery run. Agents MUST implement this method. The method MUST NOT perform mutating actions.
+
 #### 5.3.1 `diagnose(context: AgentContext) → DiagnosisResult`
 
 Called when the agent is invoked. The agent MUST perform read-only investigation using the provided context. The agent MUST NOT perform any mutating actions during `diagnose()`.
@@ -376,9 +403,9 @@ The `DiagnosisResult` MUST include:
 - `findings`: Structured description of observations.
 - `diagnosticPlanNeeded`: Boolean indicating whether the agent needs to execute investigative mutations before planning. If `true`, the framework transitions to `diagnostic_planning`.
 
-#### 5.3.2 `createDiagnosticPlan(context: AgentContext, diagnosis: DiagnosisResult) → RecoveryPlan`
+#### 5.3.2 `createDiagnosticPlan(context: AgentContext, diagnosis: DiagnosisResult) → RecoveryPlan` [Phase 2]
 
-OPTIONAL. Called when the agent needs to perform investigative mutations during diagnosis. Returns a Recovery Plan that MUST contain only `routine`-risk steps. The framework executes this plan with the same safety guarantees as a full recovery plan (state capture, audit logging), but with an expedited approval path: at `copilot` trust level and above, `routine`-risk diagnostic actions execute without approval. At `observe` trust level, approval is still required.
+OPTIONAL. Reserved for Phase 2. Called when the agent needs to perform investigative mutations during diagnosis. Returns a Recovery Plan that MUST contain only `routine`-risk steps. The framework executes this plan with the same safety guarantees as a full recovery plan (state capture, audit logging), but with an expedited approval path: at `copilot` trust level and above, `routine`-risk diagnostic actions execute without approval. At `observe` trust level, approval is still required.
 
 After the diagnostic plan executes, the framework re-invokes `diagnose()` with an updated context that includes the diagnostic plan's results.
 
@@ -397,6 +424,10 @@ Called at `replanning_checkpoint` steps during execution. The agent receives the
 #### 5.3.5 `revisePlan(context: AgentContext, diagnosis: DiagnosisResult, feedback: PlanFeedback) → RecoveryPlan`
 
 Called if a previously submitted plan was rejected during validation. `PlanFeedback` contains rejection reasons. The agent SHOULD attempt to produce a revised plan. The agent MAY return an error if revision is not possible.
+
+`PlanFeedback` is defined as:
+
+- `reasons`: Array of strings describing why the plan was rejected.
 
 ---
 
@@ -489,6 +520,7 @@ A mutating action against a target system.
   "executionContext": "postgresql_write",
   "target": "pg-primary-us-east-1",
   "riskLevel": "elevated",
+  "requiredCapabilities": ["db.replica.disconnect"],
   "command": {
     "type": "sql",
     "subtype": "dml",
@@ -564,6 +596,9 @@ A mutating action against a target system.
 - `successCriteria` MUST be provided.
 - `blastRadius` MUST be declared. See Section 14 for the three-tier model.
 - `timeout` MUST be provided.
+- `requiredCapabilities` MUST list the standard capability identifiers required for this step. The framework uses these for provider resolution and validation. Each capability MUST be registered in the capability registry.
+
+> **Simulator support:** Steps MAY include an optional `stateTransition` field (string) used by simulator backends to advance simulated system state during dry-run execution. This field has no effect in live execution mode and is not validated by the framework. It exists to support realistic dry-run demonstrations without requiring live infrastructure.
 
 ### 7.2 `diagnosis_action`
 
@@ -1242,7 +1277,8 @@ Every execution context declared in the manifest MUST specify:
   "type": "sql",
   "privilege": "write",
   "target": "postgresql",
-  "allowedOperations": ["select", "insert", "update", "delete", "function_call"]
+  "allowedOperations": ["select", "insert", "update", "delete", "function_call"],
+  "capabilities": ["db.query.read", "db.query.write", "db.replica.disconnect"]
 }
 ```
 
@@ -1251,6 +1287,7 @@ Every execution context declared in the manifest MUST specify:
 - `privilege`: Scope. Meaning is type-dependent.
 - `target`: Technology this context connects to.
 - `allowedOperations`: Permitted operation categories. Framework MUST reject commands outside these.
+- `capabilities`: OPTIONAL. Standard capability identifiers this context provides. Used by the provider registry for resolving which providers can satisfy plan steps. When omitted, provider resolution falls back to manifest-level declarations.
 
 ### 15.2 Command Types
 
@@ -1535,7 +1572,7 @@ Manifest declares minimum framework version. Framework rejects incompatible agen
 A conforming agent MUST:
 
 1. Provide a valid Agent Manifest per Section 4.
-2. Implement `diagnose()` and `plan()` per Section 5.3.
+2. Implement `assessHealth()`, `diagnose()`, and `plan()` per Section 5.3.
 3. Implement `replan()` if plans contain `replanning_checkpoint` steps.
 4. Produce valid Recovery Plans per Sections 6 and 7.
 5. Assign risk levels conservatively per Section 8.
@@ -1637,6 +1674,10 @@ Lightweight runtime on target node without central connectivity. Separate specif
 
 `for_each_component` for multi-target recovery. Requires plan composition (Phase 2).
 
+### 23.9 Agent Lifecycle State Machine Runtime [Phase 2]
+
+Full runtime tracking and inspection of the agent lifecycle state machine defined in Section 5.1. Phase 1 implementations enforce state machine constraints through interface design. Phase 2 adds explicit state tracking, state transition events, and runtime-inspectable agent state for operational dashboards and diagnostics.
+
 ---
 
 ## Appendix A: Schema References
@@ -1729,6 +1770,7 @@ The forensic record shows: primary approval attempt failed (Slack timeout, Pager
 | 0.1.0-draft | 2026-03-11 | Initial draft. |
 | 0.2.0-draft | 2026-03-12 | Major revision. Added: layered degradation, replanning, pre-authorized catalogs, cost-aware preservation, three-tier blast radius, execution context contract, diagnostic plans, conditional steps, advisory topology, scenario-scoped trust, explicit phasing. |
 | 0.2.1-draft | 2026-03-12 | Pre-implementation refinements. Moved Tier 2 blast radius validation into Layer 2 (Safety). Added out-of-band fallback approval mechanism (Section 10.5). Expanded `conditional` step to support `elseStep` for binary decisions. Added `fastReplan` mode to replanning checkpoints. Added `requireApprovalForAllElevated` organizational policy with configurable safety-speed spectrum (Section 8.3-8.4). Added fallback channel security requirements (Section 22.7). Updated examples throughout Appendix B to demonstrate new capabilities. |
+| 0.3.0-draft | 2026-03-15 | Post-implementation reconciliation. Added: `assessHealth()` required agent method (Section 5.3.0), `plugin` metadata on manifests (Section 4.1-4.2), `capabilities` on execution contexts (Section 15.1), `requiredCapabilities` on system_action steps (Section 7.1), `stateTransition` simulator support (Section 7.1.1). Clarified: agent lifecycle state machine is behavioral spec not runtime requirement in Phase 1 (Section 5.1), `createDiagnosticPlan` is Phase 2 (Section 5.3.2), `PlanFeedback` type definition (Section 5.3.5). Updated conformance requirements (Section 21.1). |
 
 ---
 

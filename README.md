@@ -76,6 +76,11 @@ src/
     interface.ts                    # RecoveryAgent contract interface
     pg-replication/                 # PostgreSQL replication recovery agent
     redis/                          # Redis memory pressure recovery agent
+    etcd/                           # etcd consensus recovery agent
+    kafka/                          # Kafka broker recovery agent
+    kubernetes/                     # Kubernetes cluster recovery agent
+    ceph/                           # Ceph storage recovery agent
+    flink/                          # Flink stream processing recovery agent
   demo/                             # Interactive CLI demo (simulator mode)
   live.ts                           # Live mode — runs against real infrastructure
   webhook.ts                        # Webhook receiver for AlertManager integration
@@ -116,9 +121,11 @@ Requires the test environment running (see below):
 # Dry-run — reads from real PG, mutations are logged but not executed
 pnpm run live
 
-# Execute mode — actually runs recovery SQL against PostgreSQL
+# Execute mode — actually runs supported recovery commands against PostgreSQL
 pnpm run live -- --execute
 ```
+
+Today the PostgreSQL live client executes SQL-backed steps against PostgreSQL directly. Plan steps that depend on external `structured_command` handlers, such as load balancer changes or `pg_basebackup` orchestration, are surfaced as unsupported in live mode until a real handler is implemented.
 
 ### Webhook receiver (AlertManager integration)
 
@@ -175,6 +182,11 @@ Requires [Podman](https://podman.io/):
 |---|---|---|---|
 | **PostgreSQL Replication** | PostgreSQL >=14 | Replication lag cascade, slot overflow, replica divergence, WAL sender timeout | Live — tested against real PG |
 | **Redis Memory** | Redis >=6 | Memory pressure, client exhaustion, slow query storms | Simulator complete |
+| **etcd Recovery** | etcd >=3.4 | Leader election loop, member thrashing, snapshot corruption, disk latency | Simulator complete |
+| **Kafka Recovery** | Kafka >=3.0 | Under-replicated partitions, leader imbalance, consumer lag cascade, ISR shrink | Simulator complete |
+| **Kubernetes Recovery** | K8s >=1.27 | Node not ready cascade, pod crashloop cascade, stuck reconciliation, PVC terminating | Simulator complete |
+| **Ceph Storage** | Ceph >=17 (Quincy) | OSD down cascade, degraded PGs, slow OSD ops, pool near-full | Simulator complete |
+| **Flink Stream Processing** | Flink >=1.16 | Checkpoint failure cascade, savepoint corruption, TaskManager loss, backpressure | Simulator complete |
 
 ### Building a new agent
 
@@ -190,6 +202,8 @@ interface RecoveryAgent {
 ```
 
 Follow the backend pattern: create a `Backend` interface, a `Simulator` for testing, and a `LiveClient` for real infrastructure. See `src/agent/pg-replication/` for the reference implementation.
+
+At the framework boundary, the execution engine depends on a shared `ExecutionBackend` contract (`src/framework/backend.ts`) with `executeCommand()` and `evaluateCheck()` hooks. Agent-specific backends such as `PgBackend` and `RedisBackend` extend that shared contract with system-specific diagnosis methods.
 
 ## Kubernetes Deployment
 
@@ -219,7 +233,7 @@ Alert Source (Prometheus) → Spoke Webhook Receiver
 
 **Execution modes:**
 - `dry-run` (default) — reads from real systems, logs mutations without executing
-- `execute` — runs all operations including SQL mutations
+- `execute` — runs supported live commands through the active backend and fails unsupported commands explicitly
 
 **Safety layers:** manifest validation, blast radius checks, precondition evaluation, success criteria, approval workflows, forensic recording.
 
@@ -227,6 +241,7 @@ Alert Source (Prometheus) → Spoke Webhook Receiver
 
 - [Recovery Agent Contract](specs/foundational/recovery-agent-contract.md) — the authoritative agent interface definition
 - [Deployment & Operations](specs/deployment/operations.md) — hub-and-spoke architecture, integration patterns, operational management
+- [Plugin Platform Architecture Guide](specs/architecture/plugin-platform.md) — how the repo evolves from bespoke agents to a scalable plugin ecosystem
 
 ## Development
 

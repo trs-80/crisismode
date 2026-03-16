@@ -113,12 +113,17 @@ pnpm run webhook --execute      # execute mode
 | File | Purpose |
 |---|---|
 | `engine.ts` | Executes recovery plans step-by-step. Handles dry-run vs execute mode. |
+| `backend.ts` | ExecutionBackend contract — shared interface for all execution backends |
 | `safety.ts` | State capture, blast radius validation |
 | `coordinator.ts` | Human approval logic (auto-approve decisions based on trust + catalog) |
 | `validator.ts` | Validates plans against agent manifests |
 | `catalog.ts` | Pre-authorized action catalog matching |
 | `forensics.ts` | Forensic record assembly and persistence |
 | `hub-client.ts` | Spoke ↔ hub communication (bootstrap, heartbeat, forensics, policies) |
+| `capability-registry.ts` | Global registry of standard recovery capabilities |
+| `provider-registry.ts` | Resolves capability providers for plan steps |
+| `operator-summary.ts` | Builds operator-facing health and readiness summaries |
+| `index.ts` | Barrel export for all framework modules |
 
 ### Agents (`src/agent/`)
 
@@ -136,7 +141,17 @@ agent/
 
 **PostgreSQL Replication** (`pg-replication/`) — the MVP agent. Has a full live client that queries real `pg_stat_replication`.
 
-**Redis Memory** (`redis/`) — second agent proving framework breadth. Simulator complete, live client not yet built.
+**Redis Memory** (`redis/`) — cache recovery agent. Simulator complete, live client not yet built.
+
+**etcd Recovery** (`etcd/`) — consensus cluster recovery. Handles leader election loops, NOSPACE alarms, member failures. Simulator complete.
+
+**Kafka Recovery** (`kafka/`) — broker recovery agent. Handles under-replicated partitions, leader imbalance, consumer lag cascades. Simulator complete.
+
+**Kubernetes Recovery** (`kubernetes/`) — cluster recovery agent. Handles node failures, pod crash loops, stuck deployments, PVC issues. Simulator complete.
+
+**Ceph Storage** (`ceph/`) — distributed storage recovery. Handles OSD failures, degraded placement groups, pool near-full conditions. Simulator complete.
+
+**Flink Stream Processing** (`flink/`) — stream job recovery. Handles checkpoint failure cascades, savepoint corruption, backpressure. Simulator complete.
 
 ### Type System (`src/types/`)
 
@@ -146,6 +161,8 @@ All contract types are defined here. Key types:
 - `AgentManifest` — agent capabilities declaration
 - `ForensicRecord` — immutable audit trail
 - `AgentContext` — trigger, topology, trust levels, policies
+- `HealthAssessment` / `OperatorSummary` — health assessment and operator-facing readiness types
+- `PluginKind` / `CapabilityProviderDescriptor` — plugin ecosystem types for capability providers
 
 ## Building a New Agent
 
@@ -153,7 +170,9 @@ All contract types are defined here. Key types:
 2. Create `src/agent/<system>/simulator.ts` — implement the interface with canned data
 3. Create `src/agent/<system>/manifest.ts` — declare what your agent targets and its risk profile
 4. Create `src/agent/<system>/agent.ts` — implement `RecoveryAgent` (diagnose, plan, replan)
-5. Wire it into the webhook receiver if you want AlertManager integration
+5. Create `src/agent/<system>/registration.ts` — lazy factory for the agent registry
+6. Register your agent in `src/config/builtin-agents.ts`
+7. Add capabilities to `src/framework/capability-registry.ts` if your agent uses new capability domains
 
 The framework handles validation, approval workflows, forensic recording, and hub communication — your agent only needs to diagnose and produce plans.
 
@@ -200,6 +219,8 @@ pnpm dev                              # Demo mode (simulated)
 pnpm run live                         # Live mode against test PG (dry-run)
 pnpm run live -- --execute            # Live mode with mutations
 pnpm run webhook                      # Start webhook receiver
+pnpm test                             # Run unit tests (vitest)
+pnpm run test:watch                   # Run tests in watch mode
 pnpm run typecheck                    # TypeScript check
 pnpm run build                        # Compile to dist/
 ./test/podman/scripts/start.sh        # Start test environment

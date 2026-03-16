@@ -23,6 +23,31 @@ function makeContext(agent: PgReplicationAgent): AgentContext {
 }
 
 describe('PgReplicationAgent', () => {
+  describe('assessHealth', () => {
+    it('reports unhealthy when replica lag is above the healthy threshold', async () => {
+      const agent = new PgReplicationAgent(new PgSimulator());
+      const context = makeContext(agent);
+      const health = await agent.assessHealth(context);
+
+      expect(health.status).toBe('unhealthy');
+      expect(health.summary).toContain('unhealthy');
+      expect(health.signals.find((signal) => signal.source === 'pg_stat_replication')?.status).toBe('critical');
+    });
+
+    it('reports healthy after the simulator transitions to recovered state', async () => {
+      const simulator = new PgSimulator();
+      simulator.transition('recovered');
+      simulator.markSlotRecreated();
+
+      const agent = new PgReplicationAgent(simulator);
+      const context = makeContext(agent);
+      const health = await agent.assessHealth(context);
+
+      expect(health.status).toBe('healthy');
+      expect(health.recommendedActions[0]).toContain('No action required');
+    });
+  });
+
   describe('diagnose', () => {
     it('returns identified status with findings', async () => {
       const agent = new PgReplicationAgent(new PgSimulator());
@@ -87,6 +112,21 @@ describe('PgReplicationAgent', () => {
       }
     });
 
+    it('declares required capabilities on all system actions', async () => {
+      const agent = new PgReplicationAgent(new PgSimulator());
+      const context = makeContext(agent);
+      const diagnosis = await agent.diagnose(context);
+      const plan = await agent.plan(context, diagnosis);
+
+      const systemActions = plan.steps.filter((step) => step.type === 'system_action');
+      expect(systemActions.length).toBeGreaterThan(0);
+      for (const step of systemActions) {
+        if (step.type === 'system_action') {
+          expect(step.requiredCapabilities.length).toBeGreaterThan(0);
+        }
+      }
+    });
+
     it('rejects invalid IP addresses', async () => {
       const simulator = new PgSimulator();
       // Override to return a malicious IP
@@ -102,6 +142,29 @@ describe('PgReplicationAgent', () => {
       const diagnosis = await agent.diagnose(context);
 
       await expect(agent.plan(context, diagnosis)).rejects.toThrow('Invalid IPv4 address');
+    });
+
+    it('normalizes CIDR-suffixed replica addresses returned by PostgreSQL inet fields', async () => {
+      const simulator = new PgSimulator();
+      const origQuery = simulator.queryReplicationStatus.bind(simulator);
+      simulator.queryReplicationStatus = async () => {
+        const results = await origQuery();
+        results[2].client_addr = '10.89.0.5/32';
+        results[2].lag_seconds = 342;
+        return results;
+      };
+
+      const agent = new PgReplicationAgent(simulator);
+      const context = makeContext(agent);
+      const diagnosis = await agent.diagnose(context);
+      const plan = await agent.plan(context, diagnosis);
+
+      expect(plan.metadata.summary).toContain('10.89.0.5');
+      const disconnectStep = plan.steps.find((step) => step.stepId === 'step-004');
+      expect(disconnectStep).toBeDefined();
+      if (disconnectStep?.type === 'system_action' && disconnectStep.command.type === 'sql') {
+        expect(disconnectStep.command.statement).toContain("client_addr = '10.89.0.5'");
+      }
     });
   });
 

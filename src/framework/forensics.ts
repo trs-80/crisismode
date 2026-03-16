@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ForensicRecord, ExecutionLogEntry } from '../types/forensic-record.js';
 import type { AgentContext } from '../types/agent-context.js';
@@ -40,7 +40,7 @@ export class ForensicRecorder {
   addCapture(capture: CaptureResult): void {
     this.captures.push({
       name: capture.name,
-      captureType: 'sql_query',
+      captureType: capture.captureType,
       status: capture.status,
       reason: capture.reason,
       timestamp: capture.timestamp,
@@ -70,6 +70,24 @@ export class ForensicRecorder {
 
     const allCapturesSuccess = capturesSkipped === 0 && this.captures.every((c) => c.status === 'captured');
 
+    // Determine outcome based on step results
+    const wasAborted = this.stepResults.some(
+      (r) => r.status === 'failed' && r.error?.includes('aborted'),
+    );
+    const wasSkippedAtApprovalGate = this.stepResults.some(
+      (r) => r.status === 'skipped' && r.step.type === 'human_approval',
+    );
+    let outcome: ForensicRecord['summary']['outcome'];
+    if (wasAborted || wasSkippedAtApprovalGate) {
+      outcome = 'aborted';
+    } else if (failedSteps > 0 && completedSteps === 0) {
+      outcome = 'failed';
+    } else if (failedSteps > 0) {
+      outcome = 'partial_success';
+    } else {
+      outcome = 'success';
+    }
+
     return {
       recordId: `fr-${Date.now()}`,
       createdAt: new Date(this.startTime).toISOString(),
@@ -92,7 +110,7 @@ export class ForensicRecorder {
         capturesSkipped,
         catalogMatchUsed: this.catalogMatchUsed,
         replanCount: this.replanCount,
-        outcome: failedSteps > 0 ? 'partial_success' : 'success',
+        outcome,
       },
     };
   }
@@ -102,5 +120,58 @@ export class ForensicRecorder {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify(record, null, 2), 'utf-8');
     return record;
+  }
+}
+
+/**
+ * Crash-safe forensic recorder that writes entries to an append-only JSONL file.
+ *
+ * Each graph node's forensic log entries are flushed to disk immediately,
+ * so on crash recovery the log is reconstructable from the local JSONL store
+ * combined with the graph checkpoint.
+ */
+export class StreamingForensicRecorder extends ForensicRecorder {
+  private logPath: string;
+
+  constructor(logPath: string) {
+    super();
+    this.logPath = logPath;
+    mkdirSync(dirname(logPath), { recursive: true });
+    // Initialize empty file
+    writeFileSync(logPath, '', 'utf-8');
+  }
+
+  override addLogEntry(entry: Omit<ExecutionLogEntry, 'timestamp'>): void {
+    super.addLogEntry(entry);
+    const timestamped = { ...entry, timestamp: new Date().toISOString() };
+    appendFileSync(this.logPath, JSON.stringify(timestamped) + '\n', 'utf-8');
+  }
+
+  override addStepResult(result: StepResult): void {
+    super.addStepResult(result);
+    const logLine = {
+      type: 'step_result' as const,
+      stepId: result.stepId,
+      status: result.status,
+      durationMs: result.durationMs,
+      error: result.error,
+      timestamp: new Date().toISOString(),
+    };
+    appendFileSync(this.logPath, JSON.stringify(logLine) + '\n', 'utf-8');
+  }
+
+  /**
+   * Read all forensic entries from the JSONL file.
+   * Used for crash recovery — reconstructs the log from what was persisted.
+   */
+  readPersistedEntries(): Array<Record<string, unknown>> {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const content = readFileSync(this.logPath, 'utf-8').trim();
+    if (!content) return [];
+    return content.split('\n').map((line) => JSON.parse(line));
+  }
+
+  getLogPath(): string {
+    return this.logPath;
   }
 }

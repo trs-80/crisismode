@@ -13,9 +13,13 @@ CrisisMode is an AI crisis recovery framework with a hub-and-spoke architecture.
 - **Layer 3 (Coordination)** + **Layer 4 (Enrichment)** — run in the hub
 
 ### Key abstractions
-- **RecoveryAgent** (`src/agent/interface.ts`) — the contract every agent implements: `diagnose()`, `plan()`, `replan()`
-- **PgBackend / RedisBackend** — backend interfaces that abstract over simulators and live clients
+- **RecoveryAgent** (`src/agent/interface.ts`) — the contract every agent implements: `assessHealth()`, `diagnose()`, `plan()`, `replan()`
+- **ExecutionBackend** (`src/framework/backend.ts`) — shared contract for execution backends (`executeCommand()`, `evaluateCheck()`, optional `listCapabilityProviders()`)
+- **PgBackend / RedisBackend / EtcdBackend / KafkaBackend / K8sBackend / CephBackend / FlinkBackend** — agent-specific backend interfaces that extend ExecutionBackend with system-specific diagnosis methods
 - **ExecutionEngine** (`src/framework/engine.ts`) — executes plans step-by-step with safety checks
+- **ProviderRegistry** (`src/framework/provider-registry.ts`) — resolves which capability providers can handle each step
+- **CapabilityRegistry** (`src/framework/capability-registry.ts`) — global registry of standard recovery capabilities (e.g., `db.query.read`, `db.replica.disconnect`)
+- **OperatorSummary** (`src/framework/operator-summary.ts`) — builds human-readable health and readiness summaries for operators
 - **ForensicRecorder** — immutable audit trail for every execution
 
 ### Execution modes
@@ -84,8 +88,16 @@ These are enforced by the validator (`src/framework/validator.ts`).
 - `pnpm run live -- --execute` — execute mode (will mutate real PG)
 - `pnpm run webhook` — start webhook receiver for AlertManager
 
+### Unit tests
+- `pnpm test` — runs vitest unit tests (`src/__tests__/*.test.ts`)
+- `pnpm run test:watch` — runs vitest in watch mode
+- Configuration in `vitest.config.ts`
+
 ### Type checking
 - `pnpm run typecheck` — runs `tsc --noEmit`
+
+### CI
+- GitHub Actions (`.github/workflows/ci.yml`) — runs typecheck, unit tests, and gitleaks on push to main and PRs
 
 ## Key Files
 
@@ -96,8 +108,22 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
 | `src/agent/pg-replication/` | Reference agent implementation (PostgreSQL) |
+| `src/agent/redis/` | Redis memory pressure recovery agent |
+| `src/agent/etcd/` | etcd consensus recovery agent |
+| `src/agent/kafka/` | Kafka broker recovery agent |
+| `src/agent/kubernetes/` | Kubernetes cluster recovery agent |
+| `src/agent/ceph/` | Ceph storage recovery agent |
+| `src/agent/flink/` | Flink stream processing recovery agent |
 | `specs/foundational/recovery-agent-contract.md` | The authoritative specification |
+| `src/framework/backend.ts` | ExecutionBackend contract — shared interface for all backends |
+| `src/framework/provider-registry.ts` | Resolves capability providers for plan steps |
+| `src/framework/capability-registry.ts` | Global registry of standard recovery capabilities |
+| `src/framework/operator-summary.ts` | Builds operator-facing health and readiness summaries |
+| `src/types/health.ts` | Health assessment and operator summary types |
+| `src/types/plugin.ts` | Plugin ecosystem types (capability providers, domain packs, etc.) |
 | `specs/deployment/operations.md` | Hub-and-spoke deployment architecture |
+| `specs/architecture/plugin-platform.md` | Plugin platform architecture guide |
+| `specs/architecture/operator-health-and-ai-services.md` | Operator summary, AI services, and site config spec |
 
 ## Commit Conventions
 

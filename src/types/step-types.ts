@@ -25,6 +25,7 @@ export interface SystemActionStep {
   executionContext: string;
   target: string;
   riskLevel: RiskLevel;
+  requiredCapabilities: string[];
   command: Command;
   preConditions?: PreCondition[];
   statePreservation: StatePreservation;

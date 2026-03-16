@@ -6,6 +6,7 @@ import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { ExecutionState } from '../types/execution-state.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { AgentManifest } from '../types/manifest.js';
+import type { HealthAssessment } from '../types/health.js';
 
 export type ReplanResult =
   | { action: 'continue' }
@@ -14,6 +15,7 @@ export type ReplanResult =
 
 export interface RecoveryAgent {
   manifest: AgentManifest;
+  assessHealth(context: AgentContext): Promise<HealthAssessment>;
   diagnose(context: AgentContext): Promise<DiagnosisResult>;
   plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan>;
   replan(

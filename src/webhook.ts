@@ -6,60 +6,44 @@
  * the recovery agent pipeline.
  *
  * Usage:
- *   pnpm run webhook                          # dry-run mode (default)
- *   pnpm run webhook --execute                # live execution mode
- *   PORT=3000 pnpm run webhook                # custom port
+ *   pnpm run webhook                                  # dry-run mode (default)
+ *   pnpm run webhook -- --execute                     # live execution mode
+ *   pnpm run webhook -- --config crisismode.yaml      # explicit config path
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { PgReplicationAgent } from './agent/pg-replication/agent.js';
-import { PgLiveClient } from './agent/pg-replication/live-client.js';
 import { assembleContext } from './framework/context.js';
+import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
 import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
 import { HubClient } from './framework/hub-client.js';
+import { loadConfig, parseCliFlags } from './config/loader.js';
+import { AgentRegistry } from './config/agent-registry.js';
+import { resolveCredentials } from './config/credentials.js';
+import { getFiringAlerts, validateAlertPayload, type AlertManagerAlert, type AlertManagerPayload } from './webhook-utils.js';
 import type { AgentContext } from './types/agent-context.js';
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
 const MODE: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
-const HUB_ENDPOINT = process.env.HUB_ENDPOINT || 'http://localhost:8080';
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
+const { configPath } = parseCliFlags(process.argv);
 const MAX_BODY_BYTES = 1_048_576; // 1 MiB
+
+// Load site config
+const { config, source, filePath } = loadConfig({ configPath });
+const registry = new AgentRegistry(config);
+
+const PORT = config.webhook?.port ?? parseInt(process.env.PORT || '3000', 10);
+const WEBHOOK_SECRET = config.webhook?.secret
+  ? resolveCredentials(config.webhook.secret).token ?? ''
+  : process.env.WEBHOOK_SECRET ?? '';
+const HUB_ENDPOINT = config.hub?.endpoint ?? process.env.HUB_ENDPOINT ?? 'http://localhost:8080';
 
 // Hub client for forensic record submission
 const hubClient = new HubClient({ endpoint: HUB_ENDPOINT });
 
-// PostgreSQL connection config from environment
-const pgConfig = {
-  host: process.env.PG_HOST || 'localhost',
-  port: parseInt(process.env.PG_PORT || '5432', 10),
-  user: process.env.PG_USER || 'crisismode',
-  password: process.env.PG_PASSWORD || 'crisismode',
-  database: process.env.PG_DATABASE || 'crisismode',
-};
-
-const pgReplicaConfig = {
-  ...pgConfig,
-  port: parseInt(process.env.PG_REPLICA_PORT || '5433', 10),
-};
-
 // Track active recoveries to prevent duplicate runs
 const activeRecoveries = new Set<string>();
-
-interface AlertManagerPayload {
-  version: string;
-  status: string;
-  alerts: Array<{
-    status: string;
-    labels: Record<string, string>;
-    annotations: Record<string, string>;
-    startsAt: string;
-    endsAt: string;
-    generatorURL?: string;
-  }>;
-}
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -84,36 +68,59 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString();
 }
 
-function validateAlertPayload(body: unknown): body is AlertManagerPayload {
-  if (typeof body !== 'object' || body === null) return false;
-  const obj = body as Record<string, unknown>;
-  if (typeof obj.version !== 'string' && typeof obj.status !== 'string') return false;
-  if (!Array.isArray(obj.alerts)) return false;
-  return true;
-}
-
 function isAuthenticated(req: IncomingMessage): boolean {
   if (!WEBHOOK_SECRET) return true; // No secret configured — allow all (dev mode)
   const authHeader = req.headers.authorization;
   return authHeader === `Bearer ${WEBHOOK_SECRET}`;
 }
 
-async function handleAlert(payload: AlertManagerPayload): Promise<{
+async function handleAlerts(payload: AlertManagerPayload): Promise<{
   triggerId: string;
   outcome: string;
   steps: number;
+  results?: Array<{
+    triggerId: string;
+    outcome: string;
+    steps: number;
+    error?: string;
+  }>;
   error?: string;
 }> {
-  // Find the first firing PostgreSQL replication alert
-  const firingAlerts = payload.alerts.filter(
-    (a) => a.status === 'firing' && a.labels.alertname?.includes('PostgresReplication'),
-  );
+  const firingAlerts = getFiringAlerts(payload);
 
   if (firingAlerts.length === 0) {
     return { triggerId: 'none', outcome: 'ignored', steps: 0 };
   }
 
-  const alert = firingAlerts[0];
+  const results = [];
+  for (const alert of firingAlerts) {
+    results.push(await handleAlert(alert));
+  }
+
+  if (results.length === 1) {
+    return results[0];
+  }
+
+  const totalSteps = results.reduce((sum, result) => sum + result.steps, 0);
+  const anyError = results.some((result) => result.outcome === 'error' || result.outcome === 'validation_failed');
+  const anyPartial = results.some(
+    (result) => result.outcome === 'partial_success' || result.outcome === 'deduplicated',
+  );
+
+  return {
+    triggerId: 'batch',
+    outcome: anyError ? 'partial_success' : anyPartial ? 'partial_success' : 'success',
+    steps: totalSteps,
+    results,
+  };
+}
+
+async function handleAlert(alert: AlertManagerAlert): Promise<{
+  triggerId: string;
+  outcome: string;
+  steps: number;
+  error?: string;
+}> {
   const triggerId = `${alert.labels.alertname}-${alert.startsAt}`;
 
   // Deduplicate
@@ -122,10 +129,17 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
     return { triggerId, outcome: 'deduplicated', steps: 0 };
   }
 
-  activeRecoveries.add(triggerId);
-  log(`  🔥 Alert: ${alert.labels.alertname} — ${alert.annotations.summary || 'no summary'}`);
+  // Dispatch to the right agent via registry
+  const instance = await registry.dispatchAlert(alert.labels);
+  if (!instance) {
+    log(`  ⏭️  No agent matches alert: ${alert.labels.alertname}`);
+    return { triggerId, outcome: 'no_matching_agent', steps: 0 };
+  }
 
-  const liveClient = new PgLiveClient(pgConfig, pgReplicaConfig);
+  activeRecoveries.add(triggerId);
+  log(`  🔥 Alert: ${alert.labels.alertname} → agent: ${instance.agent.manifest.metadata.name}`);
+
+  const { agent, backend, target } = instance;
 
   try {
     // Build trigger from AlertManager payload
@@ -134,15 +148,21 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
       source: 'prometheus',
       payload: {
         alertname: alert.labels.alertname,
-        instance: alert.labels.instance || `${pgConfig.host}:${pgConfig.port}`,
+        instance: alert.labels.instance || `${target.primary.host}:${target.primary.port}`,
         severity: alert.labels.severity || 'critical',
         ...alert.labels,
       },
       receivedAt: new Date().toISOString(),
     };
 
-    const agent = new PgReplicationAgent(liveClient);
     const context = assembleContext(trigger, agent.manifest);
+    const initialHealth = await agent.assessHealth(context);
+    log(`  🩺 Health: ${initialHealth.status} (${(initialHealth.confidence * 100).toFixed(0)}% confidence)`);
+    log(`  🩺 Summary: ${initialHealth.summary}`);
+    if (initialHealth.status === 'healthy') {
+      log('  ✅ Direct health probe indicates the system is healthy. Skipping recovery for this alert.');
+      return { triggerId, outcome: 'healthy_no_action', steps: 0 };
+    }
 
     // Diagnose
     log('  🔍 Running diagnosis...');
@@ -154,9 +174,33 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
     log(`  📝 Plan: ${plan.steps.length} steps — ${plan.metadata.summary}`);
 
     // Validate
-    const validation = validatePlan(plan, agent.manifest);
+    const validation = validatePlan(plan, agent.manifest, {
+      backend,
+      executionMode: MODE,
+      requireExecutableCapabilities: MODE === 'execute',
+    });
+    const executeReadinessValidation = validatePlan(plan, agent.manifest, {
+      backend,
+      executionMode: 'execute',
+      requireExecutableCapabilities: true,
+    });
+    const providerResolutionCheck = validation.checks.find(
+      (check) => check.name === 'Provider resolution for live execution',
+    );
+    if (providerResolutionCheck) {
+      log(`  🔌 ${providerResolutionCheck.message}`);
+    }
     if (!validation.valid) {
       log(`  ❌ Plan validation failed`);
+      const blockedHealth = await agent.assessHealth(context);
+      const blockedSummary = buildOperatorSummary({
+        health: blockedHealth,
+        mode: MODE,
+        currentValidation: validation,
+        executeValidation: executeReadinessValidation,
+      });
+      log(`  🧭 Operator summary: ${blockedSummary.summary}`);
+      log(`  🧭 Next step: ${blockedSummary.recommendedNextStep}`);
       return { triggerId, outcome: 'validation_failed', steps: 0, error: 'Plan validation failed' };
     }
 
@@ -183,7 +227,7 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
       agent.manifest,
       agent,
       recorder,
-      liveClient,
+      backend,
       callbacks,
       MODE,
     );
@@ -191,6 +235,16 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
 
     log(`  🚀 Executing plan in ${MODE} mode...`);
     const results = await engine.executePlan(plan, diagnosis);
+    const finalHealth = await agent.assessHealth(context);
+    const finalSummary = buildOperatorSummary({
+      health: finalHealth,
+      mode: MODE,
+      currentValidation: validation,
+      executeValidation: executeReadinessValidation,
+      results,
+    });
+    log(`  🧭 Operator summary: ${finalSummary.summary}`);
+    log(`  🧭 Next step: ${finalSummary.recommendedNextStep}`);
 
     // Write forensic record locally and submit to hub
     const outputPath = `output/forensic-${triggerId.replace(/[^a-zA-Z0-9-]/g, '_')}.json`;
@@ -219,7 +273,7 @@ async function handleAlert(payload: AlertManagerPayload): Promise<{
     log(`  ❌ Recovery failed: ${errMsg}`);
     return { triggerId, outcome: 'error', steps: 0, error: errMsg };
   } finally {
-    await liveClient.close();
+    await backend.close();
     activeRecoveries.delete(triggerId);
   }
 }
@@ -254,7 +308,7 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
         return;
       }
 
-      const result = await handleAlert(payload);
+      const result = await handleAlerts(payload);
       json(res, 200, result);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -293,6 +347,8 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  CrisisMode Spoke — Webhook Receiver');
   console.log('');
+  console.log(`  Config:   ${source === 'file' ? filePath : 'env-var fallback'}`);
+  console.log(`  Targets:  ${config.targets.map((t) => `${t.name} (${t.kind})`).join(', ')}`);
   console.log(`  Mode:     ${MODE === 'execute' ? '🔴 EXECUTE (mutations enabled)' : '🟡 DRY-RUN (read-only)'}`);
   console.log(`  Port:     ${PORT}`);
   console.log(`  Endpoint: http://localhost:${PORT}/api/v1/alerts`);

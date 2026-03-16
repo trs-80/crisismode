@@ -2,11 +2,13 @@
 // Copyright 2026 CrisisMode Contributors
 
 export * from './common.js';
+export * from './plugin.js';
 export * from './manifest.js';
 export * from './step-types.js';
 export * from './recovery-plan.js';
 export * from './agent-context.js';
 export * from './diagnosis-result.js';
 export * from './execution-state.js';
+export * from './health.js';
 export * from './catalog-entry.js';
 export * from './forensic-record.js';

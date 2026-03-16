@@ -14,6 +14,12 @@ export const redisMemoryManifest: AgentManifest = {
     authors: ['SRE Team <sre@example.com>'],
     license: 'Apache-2.0',
     tags: ['redis', 'memory', 'cache', 'stateful'],
+    plugin: {
+      id: 'redis.domain-pack',
+      kind: 'domain_pack',
+      maturity: 'simulator_only',
+      compatibilityMode: 'recovery_agent',
+    },
   },
   spec: {
     targetSystems: [
@@ -51,6 +57,11 @@ export const redisMemoryManifest: AgentManifest = {
         privilege: 'admin',
         target: 'redis',
         allowedOperations: ['CONFIG', 'CLIENT', 'MEMORY', 'SLOWLOG', 'INFO', 'SCAN'],
+        capabilities: [
+          'cache.client.disconnect',
+          'cache.expiry.trigger',
+          'cache.config.set',
+        ],
       },
     ],
     observabilityDependencies: {

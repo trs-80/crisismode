@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
+import type { ExecutionBackend } from '../../framework/backend.js';
+
 /**
  * PgBackend — the interface that both the simulator and the live client implement.
  *
- * The engine and agent depend on this interface, not on a concrete implementation.
- * This allows swapping between simulated execution (demo, tests) and real
- * PostgreSQL connections without changing any framework or agent code.
+ * The engine depends on the generic ExecutionBackend contract, while the agent
+ * adds PostgreSQL-specific diagnosis methods on top.
  */
 
 export interface ReplicaStatus {
@@ -29,7 +30,7 @@ export interface ReplicationSlot {
   wal_status: string;
 }
 
-export interface PgBackend {
+export interface PgBackend extends ExecutionBackend {
   /** Query pg_stat_replication on the primary */
   queryReplicationStatus(): Promise<ReplicaStatus[]>;
 
@@ -39,21 +40,6 @@ export interface PgBackend {
   /** Query active connection count from pg_stat_activity */
   queryConnectionCount(): Promise<number>;
 
-  /** Evaluate a check expression (precondition or success criteria) */
-  evaluateCheck(check: {
-    type: string;
-    statement?: string;
-    operation?: string;
-    parameters?: Record<string, unknown>;
-    expect: { operator: string; value: unknown };
-  }): Promise<boolean>;
-
-  /** Execute a SQL statement (for system_action steps) */
-  executeSQL(statement: string): Promise<unknown>;
-
   /** Transition state (simulator) or no-op (live) */
   transition(to: string): void;
-
-  /** Clean up connections */
-  close(): Promise<void>;
 }

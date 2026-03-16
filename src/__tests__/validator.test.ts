@@ -2,6 +2,8 @@
 import { describe, it, expect } from 'vitest';
 import { validatePlan } from '../framework/validator.js';
 import { pgReplicationManifest } from '../agent/pg-replication/manifest.js';
+import { PgSimulator } from '../agent/pg-replication/simulator.js';
+import { PgLiveClient } from '../agent/pg-replication/live-client.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { RecoveryStep } from '../types/step-types.js';
 
@@ -97,6 +99,7 @@ describe('validatePlan', () => {
         executionContext: 'postgresql_write',
         target: 'pg-primary',
         riskLevel: 'critical',
+        requiredCapabilities: ['db.query.write'],
         command: { type: 'sql', statement: 'DROP DATABASE production;' },
         statePreservation: {
           before: [{
@@ -158,6 +161,7 @@ describe('validatePlan', () => {
         executionContext: 'postgresql_write',
         target: 'pg-primary',
         riskLevel: 'elevated',
+        requiredCapabilities: ['db.query.write'],
         command: { type: 'sql', statement: 'SELECT 1;' },
         statePreservation: { before: [], after: [] },
         successCriteria: { description: 'Done', check: { type: 'sql', expect: { operator: 'eq', value: 1 } } },
@@ -178,6 +182,7 @@ describe('validatePlan', () => {
         executionContext: 'postgresql_write',
         target: 'pg-primary',
         riskLevel: 'elevated',
+        requiredCapabilities: ['db.query.write'],
         command: { type: 'sql', statement: 'SELECT 1;' },
         statePreservation: {
           before: [{
@@ -204,5 +209,271 @@ describe('validatePlan', () => {
     (plan as unknown as Record<string, unknown>).rollbackStrategy = undefined;
     const result = validatePlan(plan, manifest);
     expect(result.checks.find((c) => c.name === 'Rollback strategy declared')?.passed).toBe(false);
+  });
+
+  it('fails when a system action declares no affected components in blast radius', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'human_notification',
+        name: 'Notify',
+        recipients: [{ role: 'on_call_dba', urgency: 'high' }],
+        message: { summary: 'Test', detail: 'Test', actionRequired: false },
+        channel: 'auto',
+      },
+      {
+        stepId: 'step-002',
+        type: 'system_action',
+        name: 'Undeclared blast radius action',
+        executionContext: 'postgresql_write',
+        target: 'pg-primary',
+        riskLevel: 'routine',
+        requiredCapabilities: ['db.query.write'],
+        command: { type: 'sql', statement: 'SELECT 1;' },
+        statePreservation: { before: [], after: [] },
+        successCriteria: { description: 'Done', check: { type: 'sql', expect: { operator: 'eq', value: 1 } } },
+        blastRadius: { directComponents: [], indirectComponents: [], maxImpact: 'low', cascadeRisk: 'low' },
+        timeout: 'PT30S',
+      },
+    ];
+
+    const result = validatePlan(makePlan({}, steps), manifest);
+    expect(result.checks.find((c) => c.name === 'Blast radius declares affected components')?.passed).toBe(false);
+    expect(result.valid).toBe(false);
+  });
+
+  it('fails when a plan contains nested conditionals from an external source', () => {
+    const nestedConditional = {
+      stepId: 'step-001',
+      type: 'conditional',
+      name: 'Outer conditional',
+      condition: {
+        description: 'outer condition',
+        check: { type: 'sql', expect: { operator: 'eq', value: 1 } },
+      },
+      thenStep: {
+        stepId: 'step-001a',
+        type: 'conditional',
+        name: 'Inner conditional',
+        condition: {
+          description: 'inner condition',
+          check: { type: 'sql', expect: { operator: 'eq', value: 1 } },
+        },
+        thenStep: {
+          stepId: 'step-001a-i',
+          type: 'human_notification',
+          name: 'Inner notify',
+          recipients: [{ role: 'on_call_dba', urgency: 'high' }],
+          message: { summary: 'Test', detail: 'Test', actionRequired: false },
+          channel: 'auto',
+        },
+        elseStep: 'skip',
+      },
+      elseStep: 'skip',
+    } as unknown as RecoveryStep;
+
+    const result = validatePlan(makePlan({}, [nestedConditional]), manifest);
+    expect(result.checks.find((c) => c.name === 'No nested conditionals')?.passed).toBe(false);
+    expect(result.valid).toBe(false);
+  });
+
+  it('fails when a system action omits required capabilities', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'system_action',
+        name: 'Capability-less action',
+        executionContext: 'postgresql_write',
+        target: 'pg-primary',
+        riskLevel: 'routine',
+        requiredCapabilities: [],
+        command: { type: 'sql', statement: 'SELECT 1;' },
+        statePreservation: { before: [], after: [] },
+        successCriteria: { description: 'Done', check: { type: 'sql', expect: { operator: 'eq', value: 1 } } },
+        blastRadius: { directComponents: ['pg-primary'], indirectComponents: [], maxImpact: 'low', cascadeRisk: 'low' },
+        timeout: 'PT30S',
+      },
+    ];
+
+    const result = validatePlan(makePlan({}, steps), manifest);
+    expect(result.checks.find((c) => c.name === 'System actions declare required capabilities')?.passed).toBe(false);
+  });
+
+  it('fails when a system action references an unknown capability', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'system_action',
+        name: 'Unknown capability action',
+        executionContext: 'postgresql_write',
+        target: 'pg-primary',
+        riskLevel: 'routine',
+        requiredCapabilities: ['db.unknown.capability'],
+        command: { type: 'sql', statement: 'SELECT 1;' },
+        statePreservation: { before: [], after: [] },
+        successCriteria: { description: 'Done', check: { type: 'sql', expect: { operator: 'eq', value: 1 } } },
+        blastRadius: { directComponents: ['pg-primary'], indirectComponents: [], maxImpact: 'low', cascadeRisk: 'low' },
+        timeout: 'PT30S',
+      },
+    ];
+
+    const result = validatePlan(makePlan({}, steps), manifest);
+    expect(result.checks.find((c) => c.name === 'Step capabilities are registered')?.passed).toBe(false);
+  });
+
+  it('fails live validation when required capabilities are unresolved for the execution context', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'system_action',
+        name: 'Mismatched capability action',
+        executionContext: 'linux_process',
+        target: 'load-balancer',
+        riskLevel: 'routine',
+        requiredCapabilities: ['db.replica.disconnect'],
+        command: {
+          type: 'structured_command',
+          operation: 'config_reload',
+          parameters: { service: 'load-balancer' },
+        },
+        statePreservation: { before: [], after: [] },
+        successCriteria: {
+          description: 'Done',
+          check: { type: 'structured_command', expect: { operator: 'eq', value: 'running' } },
+        },
+        blastRadius: { directComponents: ['load-balancer'], indirectComponents: [], maxImpact: 'low', cascadeRisk: 'low' },
+        timeout: 'PT30S',
+      },
+    ];
+
+    const structural = validatePlan(makePlan({}, steps), manifest);
+    expect(structural.valid).toBe(true);
+
+    const executable = validatePlan(makePlan({}, steps), manifest, {
+      requireExecutableCapabilities: true,
+    });
+    expect(executable.checks.find((c) => c.name === 'Required capabilities resolve for live execution')?.passed).toBe(false);
+    expect(executable.valid).toBe(false);
+  });
+
+  it('passes provider resolution when a backend supports the requested capability in execute mode', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'system_action',
+        name: 'Disconnect replica',
+        executionContext: 'postgresql_write',
+        target: 'pg-primary',
+        riskLevel: 'routine',
+        requiredCapabilities: ['db.replica.disconnect'],
+        command: {
+          type: 'sql',
+          statement: "SELECT pg_terminate_backend(pid) FROM pg_stat_replication WHERE client_addr = '10.0.1.52';",
+        },
+        statePreservation: { before: [], after: [] },
+        successCriteria: {
+          description: 'Done',
+          check: { type: 'sql', expect: { operator: 'eq', value: 1 } },
+        },
+        blastRadius: { directComponents: ['pg-primary'], indirectComponents: [], maxImpact: 'low', cascadeRisk: 'low' },
+        timeout: 'PT30S',
+      },
+    ];
+
+    const result = validatePlan(makePlan({}, steps), manifest, {
+      requireExecutableCapabilities: true,
+      backend: new PgSimulator(),
+      executionMode: 'execute',
+    });
+
+    expect(result.valid).toBe(true);
+    const providerCheck = result.checks.find((c) => c.name === 'Provider resolution for live execution');
+    expect(providerCheck?.passed).toBe(true);
+    expect(providerCheck?.message).toContain('All 1 live capability requirement(s) resolved successfully.');
+  });
+
+  it('fails provider resolution when no live provider supports the requested capability', async () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'system_action',
+        name: 'Detach load balancer backend',
+        executionContext: 'linux_process',
+        target: 'load-balancer',
+        riskLevel: 'routine',
+        requiredCapabilities: ['traffic.backend.detach'],
+        command: {
+          type: 'structured_command',
+          operation: 'config_reload',
+          parameters: { service: 'load-balancer' },
+        },
+        statePreservation: { before: [], after: [] },
+        successCriteria: {
+          description: 'Done',
+          check: { type: 'structured_command', expect: { operator: 'eq', value: 'running' } },
+        },
+        blastRadius: { directComponents: ['load-balancer'], indirectComponents: [], maxImpact: 'low', cascadeRisk: 'low' },
+        timeout: 'PT30S',
+      },
+    ];
+
+    const backend = new PgLiveClient(
+      {
+        host: '127.0.0.1',
+        port: 5432,
+        user: 'postgres',
+        password: 'postgres',
+        database: 'crisismode',
+      },
+    );
+
+    try {
+      const result = validatePlan(makePlan({}, steps), manifest, {
+        requireExecutableCapabilities: true,
+        backend,
+        executionMode: 'execute',
+      });
+
+      expect(result.valid).toBe(false);
+      const providerCheck = result.checks.find((c) => c.name === 'Provider resolution for live execution');
+      expect(providerCheck?.passed).toBe(false);
+      expect(providerCheck?.message).toContain('Missing live providers for traffic.backend.detach (step-001).');
+    } finally {
+      await backend.close();
+    }
+  });
+
+  it('does not run provider-resolution validation in dry-run mode', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'system_action',
+        name: 'Detach load balancer backend',
+        executionContext: 'linux_process',
+        target: 'load-balancer',
+        riskLevel: 'routine',
+        requiredCapabilities: ['traffic.backend.detach'],
+        command: {
+          type: 'structured_command',
+          operation: 'config_reload',
+          parameters: { service: 'load-balancer' },
+        },
+        statePreservation: { before: [], after: [] },
+        successCriteria: {
+          description: 'Done',
+          check: { type: 'structured_command', expect: { operator: 'eq', value: 'running' } },
+        },
+        blastRadius: { directComponents: ['load-balancer'], indirectComponents: [], maxImpact: 'low', cascadeRisk: 'low' },
+        timeout: 'PT30S',
+      },
+    ];
+
+    const result = validatePlan(makePlan({}, steps), manifest, {
+      backend: new PgSimulator(),
+      executionMode: 'dry-run',
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.checks.find((c) => c.name === 'Provider resolution for live execution')).toBeUndefined();
   });
 });

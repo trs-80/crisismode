@@ -2,6 +2,8 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { PgBackend, ReplicaStatus, ReplicationSlot } from './backend.js';
+import type { Command } from '../../types/common.js';
+import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
@@ -207,8 +209,73 @@ export class PgSimulator implements PgBackend {
     return true;
   }
 
-  async executeSQL(_statement: string): Promise<unknown> {
-    return { simulated: true };
+  async executeCommand(command: Command): Promise<unknown> {
+    if (command.type === 'sql') {
+      const stmt = command.statement ?? '';
+      if (stmt.includes('FROM pg_stat_replication')) {
+        return this.queryReplicationStatus();
+      }
+      if (stmt.includes('FROM pg_replication_slots')) {
+        return this.queryReplicationSlots();
+      }
+      if (stmt.includes('FROM pg_stat_activity')) {
+        return { count: await this.queryConnectionCount() };
+      }
+      return { simulated: true, statement: stmt };
+    }
+
+    if (command.type === 'structured_command') {
+      return { simulated: true, operation: command.operation, parameters: command.parameters };
+    }
+
+    throw new Error(`Unsupported command type for PostgreSQL simulator: ${command.type}`);
+  }
+
+  listCapabilityProviders(): CapabilityProviderDescriptor[] {
+    return [
+      {
+        id: 'postgresql-simulator-sql',
+        kind: 'capability_provider',
+        name: 'PostgreSQL Simulator SQL Provider',
+        maturity: 'simulator_only',
+        capabilities: [
+          'db.query.read',
+          'db.query.write',
+          'db.replica.disconnect',
+          'db.replication_slot.drop',
+          'db.replication_slot.create',
+        ],
+        executionContexts: ['postgresql_read', 'postgresql_write'],
+        targetKinds: ['postgresql'],
+        commandTypes: ['sql'],
+        supportsDryRun: true,
+        supportsExecute: true,
+      },
+      {
+        id: 'postgresql-simulator-reseed',
+        kind: 'capability_provider',
+        name: 'PostgreSQL Simulator Replica Reseed Provider',
+        maturity: 'simulator_only',
+        capabilities: ['db.replica.reseed'],
+        executionContexts: ['postgresql_write'],
+        targetKinds: ['postgresql'],
+        commandTypes: ['structured_command'],
+        supportsDryRun: true,
+        supportsExecute: true,
+      },
+      {
+        id: 'simulated-load-balancer',
+        kind: 'capability_provider',
+        name: 'Simulated Load Balancer Provider',
+        maturity: 'simulator_only',
+        capabilities: ['traffic.backend.detach', 'traffic.backend.attach'],
+        executionContexts: ['linux_process'],
+        targetKinds: ['linux'],
+        commandTypes: ['structured_command'],
+        supportsDryRun: true,
+        supportsExecute: true,
+      },
+    ];
   }
 
   async close(): Promise<void> {

@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
+/**
+ * Built-in agent registrations.
+ *
+ * This is the ONE file you edit when adding a new agent to CrisisMode.
+ * Each import pulls in only the manifest (data) and a lazy factory function —
+ * heavy dependencies (pg driver, redis client, etc.) are loaded on demand.
+ */
+
+import type { AgentRegistration } from './agent-registration.js';
+import { pgReplicationRegistration } from '../agent/pg-replication/registration.js';
+import { redisMemoryRegistration } from '../agent/redis/registration.js';
+import { etcdRecoveryRegistration } from '../agent/etcd/registration.js';
+import { kafkaRecoveryRegistration } from '../agent/kafka/registration.js';
+import { k8sRecoveryRegistration } from '../agent/kubernetes/registration.js';
+import { cephStorageRegistration } from '../agent/ceph/registration.js';
+import { flinkRecoveryRegistration } from '../agent/flink/registration.js';
+
+export const builtinAgents: AgentRegistration[] = [
+  pgReplicationRegistration,
+  redisMemoryRegistration,
+  etcdRecoveryRegistration,
+  kafkaRecoveryRegistration,
+  k8sRecoveryRegistration,
+  cephStorageRegistration,
+  flinkRecoveryRegistration,
+];

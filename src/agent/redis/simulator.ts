@@ -2,14 +2,17 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { RedisBackend, RedisInfo, RedisSlaveInfo, RedisSlowlogEntry } from './backend.js';
+import type { CheckExpression, Command } from '../../types/common.js';
+import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
 export class RedisSimulator implements RedisBackend {
   private state: SimulatorState = 'degraded';
+  private evictionPolicy = 'volatile-lru';
 
-  transition(to: SimulatorState): void {
-    this.state = to;
+  transition(to: string): void {
+    this.state = to as SimulatorState;
   }
 
   async getInfo(): Promise<RedisInfo> {
@@ -104,16 +107,41 @@ export class RedisSimulator implements RedisBackend {
     }
   }
 
-  async executeCommand(_command: string, _args: string[]): Promise<unknown> {
-    return { simulated: true };
+  async executeCommand(command: Command): Promise<unknown> {
+    if (command.type !== 'structured_command') {
+      throw new Error(`Unsupported Redis simulator command type: ${command.type}`);
+    }
+
+    switch (command.operation) {
+      case 'redis_info':
+        return {
+          info: await this.getInfo(),
+          slaves: await this.getSlaves(),
+          keyCount: await this.getKeyCount(),
+          fragmentationRatio: await this.getFragmentationRatio(),
+        };
+      case 'client_kill':
+        this.transition('recovering');
+        return { disconnectedClients: true };
+      case 'active_expiry':
+        this.transition('recovered');
+        return { expiredKeys: true };
+      case 'config_set':
+        if (command.parameters?.key === 'maxmemory-policy') {
+          this.evictionPolicy = String(command.parameters.value);
+        }
+        return { ok: true };
+      default:
+        return { simulated: true, operation: command.operation, parameters: command.parameters };
+    }
   }
 
-  async evaluateCheck(check: {
-    type: string;
-    statement?: string;
-    expect: { operator: string; value: unknown };
-  }): Promise<boolean> {
+  async evaluateCheck(check: CheckExpression): Promise<boolean> {
     const stmt = check.statement ?? '';
+
+    if (stmt === 'PING') {
+      return this.compare('PONG', check.expect.operator, check.expect.value);
+    }
 
     if (stmt.includes('used_memory_percent')) {
       const info = await this.getInfo();
@@ -135,7 +163,28 @@ export class RedisSimulator implements RedisBackend {
       return this.compare(info.evictedKeys, check.expect.operator, check.expect.value);
     }
 
+    if (stmt === 'CONFIG GET maxmemory-policy') {
+      return this.compare(this.evictionPolicy, check.expect.operator, check.expect.value);
+    }
+
     return true;
+  }
+
+  listCapabilityProviders(): CapabilityProviderDescriptor[] {
+    return [
+      {
+        id: 'redis-simulator-admin',
+        kind: 'capability_provider',
+        name: 'Redis Simulator Admin Provider',
+        maturity: 'simulator_only',
+        capabilities: ['cache.client.disconnect', 'cache.expiry.trigger', 'cache.config.set'],
+        executionContexts: ['redis_admin'],
+        targetKinds: ['redis'],
+        commandTypes: ['structured_command'],
+        supportsDryRun: true,
+        supportsExecute: true,
+      },
+    ];
   }
 
   async close(): Promise<void> {}
@@ -143,6 +192,17 @@ export class RedisSimulator implements RedisBackend {
   private compare(actual: unknown, operator: string, expected: unknown): boolean {
     const a = Number(actual);
     const e = Number(expected);
+
+    if (Number.isNaN(a) || Number.isNaN(e)) {
+      const sa = String(actual);
+      const se = String(expected);
+      switch (operator) {
+        case 'eq': return sa === se;
+        case 'neq': return sa !== se;
+        default: return false;
+      }
+    }
+
     switch (operator) {
       case 'eq': return a === e;
       case 'neq': return a !== e;

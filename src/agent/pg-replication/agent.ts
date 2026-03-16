@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
+import { isIP } from 'node:net';
 import type { RecoveryAgent, ReplanResult } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { ExecutionState } from '../../types/execution-state.js';
+import type { HealthAssessment, HealthSignal } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import type { ReplicaStatus } from './backend.js';
@@ -14,14 +16,28 @@ import { PgSimulator } from './simulator.js';
 import { aiDiagnose } from './ai-diagnosis.js';
 
 /**
- * Validates that a value is a valid IPv4 address.
+ * Validates and normalizes a PostgreSQL inet value to a bare IPv4 host address.
  * Used to prevent SQL injection when embedding addresses in plan steps.
  */
 function validateIPv4(addr: string): string {
-  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(addr)) {
+  const match = addr.trim().match(/^([0-9.]+)(?:\/(\d{1,2}))?$/);
+  if (!match) {
     throw new Error(`Invalid IPv4 address: ${addr}`);
   }
-  return addr;
+
+  const [, host, prefixLength] = match;
+  if (isIP(host) !== 4) {
+    throw new Error(`Invalid IPv4 address: ${addr}`);
+  }
+
+  if (prefixLength !== undefined) {
+    const prefix = Number(prefixLength);
+    if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+      throw new Error(`Invalid IPv4 address: ${addr}`);
+    }
+  }
+
+  return host;
 }
 
 /**
@@ -41,6 +57,106 @@ export class PgReplicationAgent implements RecoveryAgent {
 
   constructor(backend?: PgBackend) {
     this.backend = backend ?? new PgSimulator();
+  }
+
+  async assessHealth(_context: AgentContext): Promise<HealthAssessment> {
+    const observedAt = new Date().toISOString();
+    const replicas = await this.backend.queryReplicationStatus();
+    const slots = await this.backend.queryReplicationSlots();
+    const connectionCount = await this.backend.queryConnectionCount();
+
+    if (replicas.length === 0) {
+      return {
+        status: 'unknown',
+        confidence: 0.45,
+        summary: 'Unable to determine PostgreSQL replication health because no replicas were reported by pg_stat_replication.',
+        observedAt,
+        signals: [
+          {
+            source: 'pg_stat_replication',
+            status: 'unknown',
+            detail: 'No replica rows returned from pg_stat_replication.',
+            observedAt,
+          },
+        ],
+        recommendedActions: [
+          'Verify replication is configured and that the primary can see its replicas before attempting recovery.',
+        ],
+      };
+    }
+
+    const worstLag = Math.max(...replicas.map((replica) => replica.lag_seconds));
+    const unhealthyReplicas = replicas.filter(
+      (replica) => replica.state !== 'streaming' || replica.lag_seconds > 10,
+    );
+    const recoveringReplicas = replicas.filter(
+      (replica) => replica.state === 'streaming' && replica.lag_seconds > 2 && replica.lag_seconds <= 10,
+    );
+    const unhealthySlots = slots.filter(
+      (slot) => !slot.active || slot.wal_status === 'lost',
+    );
+
+    let status: HealthAssessment['status'];
+    if (unhealthyReplicas.length > 0 || unhealthySlots.length > 0) {
+      status = 'unhealthy';
+    } else if (recoveringReplicas.length > 0) {
+      status = 'recovering';
+    } else {
+      status = 'healthy';
+    }
+
+    const replicaSignal = this.buildReplicaHealthSignal(
+      replicas,
+      unhealthyReplicas,
+      recoveringReplicas,
+      worstLag,
+      observedAt,
+    );
+    const slotSignal: HealthSignal = unhealthySlots.length > 0
+      ? {
+          source: 'pg_replication_slots',
+          status: 'critical',
+          detail: `${unhealthySlots.length} replication slot(s) are unhealthy: ${unhealthySlots.map((slot) => `${slot.slot_name}:${slot.wal_status}`).join(', ')}.`,
+          observedAt,
+        }
+      : {
+          source: 'pg_replication_slots',
+          status: 'healthy',
+          detail: `All ${slots.length} replication slot(s) are active with healthy WAL retention.`,
+          observedAt,
+        };
+    const connectionSignal: HealthSignal = {
+      source: 'pg_stat_activity',
+      status: connectionCount > 500 ? 'warning' : 'healthy',
+      detail: `${connectionCount} active connection(s) on the primary.`,
+      observedAt,
+    };
+
+    const summary = status === 'healthy'
+      ? `PostgreSQL replication is healthy. All replicas are streaming and worst replay lag is ${worstLag}s.`
+      : status === 'recovering'
+        ? `PostgreSQL replication is recovering. All replicas are streaming, but worst replay lag is still ${worstLag}s.`
+        : `PostgreSQL replication is unhealthy. Worst replay lag is ${worstLag}s and direct health signals still show recovery is required.`;
+
+    const recommendedActions = status === 'healthy'
+      ? ['No action required. Continue monitoring direct replication health signals.']
+      : status === 'recovering'
+        ? ['Continue monitoring until replay lag drops below 2s on all replicas.']
+        : [
+            'Run the replication recovery workflow in dry-run mode to confirm the next safe action.',
+            ...(unhealthySlots.length > 0
+              ? ['Prepare manual replication-slot repair if slot health does not recover during automation.']
+              : []),
+          ];
+
+    return {
+      status,
+      confidence: 0.97,
+      summary,
+      observedAt,
+      signals: [replicaSignal, slotSignal, connectionSignal],
+      recommendedActions,
+    };
   }
 
   async diagnose(context: AgentContext): Promise<DiagnosisResult> {
@@ -101,6 +217,39 @@ export class PgReplicationAgent implements RecoveryAgent {
         },
       ],
       diagnosticPlanNeeded: false,
+    };
+  }
+
+  private buildReplicaHealthSignal(
+    replicas: ReplicaStatus[],
+    unhealthyReplicas: ReplicaStatus[],
+    recoveringReplicas: ReplicaStatus[],
+    worstLag: number,
+    observedAt: string,
+  ): HealthSignal {
+    if (unhealthyReplicas.length > 0) {
+      return {
+        source: 'pg_stat_replication',
+        status: 'critical',
+        detail: `${unhealthyReplicas.length} replica(s) are unhealthy. Worst replay lag is ${worstLag}s.`,
+        observedAt,
+      };
+    }
+
+    if (recoveringReplicas.length > 0) {
+      return {
+        source: 'pg_stat_replication',
+        status: 'warning',
+        detail: `All ${replicas.length} replica(s) are streaming, but worst replay lag is still ${worstLag}s.`,
+        observedAt,
+      };
+    }
+
+    return {
+      source: 'pg_stat_replication',
+      status: 'healthy',
+      detail: `All ${replicas.length} replica(s) are streaming. Worst replay lag is ${worstLag}s.`,
+      observedAt,
     };
   }
 
@@ -186,6 +335,7 @@ export class PgReplicationAgent implements RecoveryAgent {
         executionContext: 'postgresql_write',
         target: primaryId,
         riskLevel: 'elevated',
+        requiredCapabilities: ['db.replica.disconnect'],
         command: {
           type: 'sql',
           subtype: 'dml',
@@ -258,6 +408,7 @@ export class PgReplicationAgent implements RecoveryAgent {
         executionContext: 'linux_process',
         target: 'load-balancer',
         riskLevel: 'routine',
+        requiredCapabilities: ['traffic.backend.detach'],
         command: {
           type: 'structured_command',
           operation: 'config_reload',
@@ -364,6 +515,7 @@ export class PgReplicationAgent implements RecoveryAgent {
         executionContext: 'postgresql_write',
         target: targetId,
         riskLevel: 'high',
+        requiredCapabilities: ['db.replica.reseed'],
         command: {
           type: 'structured_command',
           operation: 'pg_basebackup',
@@ -450,6 +602,7 @@ export class PgReplicationAgent implements RecoveryAgent {
           executionContext: 'linux_process',
           target: 'load-balancer',
           riskLevel: 'routine',
+          requiredCapabilities: ['traffic.backend.attach'],
           command: {
             type: 'structured_command',
             operation: 'config_reload',
@@ -584,6 +737,7 @@ export class PgReplicationAgent implements RecoveryAgent {
           executionContext: 'postgresql_write',
           target: primaryId,
           riskLevel: 'elevated',
+          requiredCapabilities: ['db.replication_slot.drop'],
           command: {
             type: 'sql',
             subtype: 'function_call',
@@ -627,6 +781,7 @@ export class PgReplicationAgent implements RecoveryAgent {
           executionContext: 'postgresql_write',
           target: primaryId,
           riskLevel: 'routine',
+          requiredCapabilities: ['db.replication_slot.create'],
           command: {
             type: 'sql',
             subtype: 'function_call',

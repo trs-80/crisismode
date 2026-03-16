@@ -10,7 +10,9 @@ import type { ValidationResult } from '../framework/validator.js';
 import type { CatalogMatchResult } from '../framework/catalog.js';
 import type { CatalogEntry } from '../types/catalog-entry.js';
 import type { ForensicRecord } from '../types/forensic-record.js';
+import type { HealthAssessment, OperatorSummary } from '../types/health.js';
 import type { StepResult } from '../types/execution-state.js';
+import type { PlanExplanation } from '../framework/ai-explainer.js';
 
 const DIVIDER = chalk.dim('─'.repeat(72));
 const DOUBLE_DIVIDER = chalk.dim('═'.repeat(72));
@@ -149,6 +151,36 @@ export function displayDiagnosis(diagnosis: DiagnosisResult): void {
   console.log('');
 }
 
+export function displayHealthAssessment(assessment: HealthAssessment): void {
+  console.log(
+    chalk.dim('     State:       ') + colorHealthStatus(assessment.status)(assessment.status),
+  );
+  console.log(chalk.dim(`     Confidence:  ${(assessment.confidence * 100).toFixed(0)}%`));
+  console.log(chalk.dim(`     Summary:     ${assessment.summary}`));
+  console.log('');
+
+  for (const signal of assessment.signals) {
+    const color =
+      signal.status === 'critical'
+        ? chalk.red
+        : signal.status === 'warning'
+          ? chalk.yellow
+          : signal.status === 'healthy'
+            ? chalk.green
+            : chalk.dim;
+    console.log(color(`     [${signal.status.toUpperCase()}] `) + chalk.dim(`${signal.source}: ${signal.detail}`));
+  }
+
+  if (assessment.recommendedActions.length > 0) {
+    console.log('');
+    console.log(chalk.cyan('     Recommendations:'));
+    for (const action of assessment.recommendedActions) {
+      console.log(chalk.dim(`       - ${action}`));
+    }
+  }
+  console.log('');
+}
+
 export function displayPlanTable(plan: RecoveryPlan): void {
   console.log(chalk.dim(`     Plan ID:      ${plan.metadata.planId}`));
   console.log(chalk.dim(`     Duration:     ${plan.metadata.estimatedDuration}`));
@@ -201,12 +233,80 @@ function riskBadge(risk: string): string {
   }
 }
 
+export function displayPlanExplanation(explanation: PlanExplanation): void {
+  const sourceLabel = explanation.source === 'ai' ? 'AI-Generated' : 'Structural';
+  console.log(chalk.cyan(`     Plan Explanation (${sourceLabel}):`));
+  console.log(chalk.white(`     ${explanation.summary}`));
+  console.log('');
+
+  for (const se of explanation.stepExplanations) {
+    if (se.explanation) {
+      console.log(chalk.dim(`     ${se.stepId}: ${se.explanation}`));
+    }
+  }
+  console.log('');
+
+  if (explanation.risks.length > 0) {
+    console.log(chalk.yellow('     Key risks:'));
+    for (const risk of explanation.risks) {
+      console.log(chalk.yellow(`       - ${risk}`));
+    }
+    console.log('');
+  }
+}
+
 export function displayValidation(result: ValidationResult): void {
   for (const check of result.checks) {
     if (check.passed) {
-      console.log(chalk.green(`     ✓ ${check.name}`));
+      const detail = check.name === 'Provider resolution for live execution'
+        ? `: ${check.message}`
+        : '';
+      console.log(chalk.green(`     ✓ ${check.name}${detail}`));
     } else {
       console.log(chalk.red(`     ✗ ${check.name}: ${check.message}`));
+    }
+  }
+  console.log('');
+}
+
+export function displayOperatorSummary(summary: OperatorSummary): void {
+  console.log(chalk.dim(`     Current state:      ${summary.currentState}`));
+  console.log(chalk.dim(`     Confidence:         ${(summary.confidence * 100).toFixed(0)}%`));
+  console.log(chalk.dim(`     Action required:    ${formatActionRequired(summary.actionRequired)}`));
+  console.log(chalk.dim(`     Execute readiness:  ${summary.executeReadiness}`));
+  console.log(chalk.dim(`     Automation status:  ${summary.automationStatus}`));
+  console.log(chalk.dim(`     Mutations applied:  ${summary.mutationsPerformed ? 'yes' : 'no'}`));
+  console.log('');
+  console.log(chalk.dim(`     Summary:            ${summary.summary}`));
+  console.log(chalk.dim(`     Next step:          ${summary.recommendedNextStep}`));
+  console.log('');
+
+  if (summary.recommendedActions.length > 0) {
+    console.log(chalk.dim('     Recommended actions:'));
+    for (const action of summary.recommendedActions) {
+      console.log(chalk.dim(`       - ${action}`));
+    }
+    console.log('');
+  }
+
+  console.log(chalk.dim('     Evidence:'));
+  for (const signal of summary.evidence) {
+    const color =
+      signal.status === 'critical'
+        ? chalk.red
+        : signal.status === 'warning'
+          ? chalk.yellow
+          : signal.status === 'healthy'
+            ? chalk.green
+            : chalk.dim;
+    console.log(color(`       [${signal.status.toUpperCase()}] `) + chalk.dim(`${signal.source}: ${signal.detail}`));
+  }
+
+  if (summary.validationBlockers.length > 0) {
+    console.log('');
+    console.log(chalk.red('     Blockers:'));
+    for (const blocker of summary.validationBlockers) {
+      console.log(chalk.red(`       - ${blocker}`));
     }
   }
   console.log('');
@@ -381,4 +481,34 @@ export function displayComplete(outputPath: string): void {
   console.log(chalk.bold.green('  Demo Complete'));
   console.log(DOUBLE_DIVIDER);
   console.log('');
+}
+
+function colorHealthStatus(status: HealthAssessment['status']): typeof chalk {
+  switch (status) {
+    case 'healthy':
+      return chalk.green;
+    case 'recovering':
+      return chalk.yellow;
+    case 'unhealthy':
+      return chalk.red;
+    default:
+      return chalk.dim;
+  }
+}
+
+function formatActionRequired(action: OperatorSummary['actionRequired']): string {
+  switch (action) {
+    case 'none':
+      return 'none';
+    case 'monitor':
+      return 'monitor';
+    case 'investigate':
+      return 'investigate';
+    case 'retry_with_execute':
+      return 'retry with execute';
+    case 'manual_intervention_required':
+      return 'manual intervention required';
+    case 'use_different_tool':
+      return 'use different tool or manual runbook';
+  }
 }

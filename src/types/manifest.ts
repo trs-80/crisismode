@@ -2,6 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { RiskLevel } from './common.js';
+import type { PluginMetadata } from './plugin.js';
 
 export interface AgentManifest {
   apiVersion: string;
@@ -13,6 +14,7 @@ export interface AgentManifest {
     authors: string[];
     license: string;
     tags: string[];
+    plugin: PluginMetadata;
   };
   spec: {
     targetSystems: TargetSystem[];
@@ -57,4 +59,5 @@ export interface ExecutionContextDeclaration {
   privilege: string;
   target: string;
   allowedOperations?: string[];
+  capabilities?: string[];
 }

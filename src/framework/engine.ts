@@ -13,7 +13,8 @@ import { executeCapture, validateBlastRadius } from './safety.js';
 import { requestApproval, shouldAutoApprove } from './coordinator.js';
 import { isCatalogCovered } from './catalog.js';
 import { ForensicRecorder } from './forensics.js';
-import type { PgBackend } from '../agent/pg-replication/backend.js';
+import type { ExecutionBackend } from './backend.js';
+import { resolveStepProviders } from './provider-registry.js';
 
 export interface EngineCallbacks {
   onStepStart?: (step: RecoveryStep, index: number) => void;
@@ -32,11 +33,15 @@ export interface EngineCallbacks {
 
 export type ExecutionMode = 'dry-run' | 'execute';
 
-export class ExecutionEngine {
+/**
+ * Legacy sequential execution engine.
+ * Use RecoveryGraphEngine for checkpointed, resumable execution.
+ */
+export class LegacyExecutionEngine {
   private recorder: ForensicRecorder;
   private coveredRiskLevels: RiskLevel[] = [];
   private callbacks: EngineCallbacks;
-  private backend: PgBackend;
+  private backend: ExecutionBackend;
   private executionState: ExecutionState;
   private mode: ExecutionMode;
 
@@ -45,7 +50,7 @@ export class ExecutionEngine {
     private manifest: AgentManifest,
     private agent: RecoveryAgent,
     recorder: ForensicRecorder,
-    backend: PgBackend,
+    backend: ExecutionBackend,
     callbacks: EngineCallbacks = {},
     mode: ExecutionMode = 'dry-run',
   ) {
@@ -81,11 +86,13 @@ export class ExecutionEngine {
 
       this.callbacks.onStepComplete?.(step, result);
 
-      if (result.status === 'failed') {
+      if (result.status === 'failed' || (step.type === 'human_approval' && result.status === 'skipped')) {
         this.recorder.addLogEntry({
-          type: 'step_failed',
+          type: result.status === 'failed' ? 'step_failed' : 'info',
           stepId: step.stepId,
-          message: `Step failed: ${result.error}`,
+          message: result.status === 'failed'
+            ? `Step failed: ${result.error}`
+            : 'Execution halted after approval step was skipped',
         });
         break;
       }
@@ -119,7 +126,7 @@ export class ExecutionEngine {
         case 'system_action':
           return this.executeSystemAction(step, startedAt, startTime);
         case 'human_approval':
-          return await this.executeApproval(step, startedAt, startTime);
+          return await this.executeApproval(step, plan, startedAt, startTime);
         case 'replanning_checkpoint':
           return await this.executeReplanningCheckpoint(step, plan, diagnosis, startedAt, startTime);
         case 'conditional':
@@ -147,10 +154,7 @@ export class ExecutionEngine {
     startedAt: string,
     startTime: number,
   ): Promise<StepResult> {
-    // Execute the diagnosis query against the backend
-    const output = step.command.statement
-      ? await this.backend.queryReplicationStatus()
-      : null;
+    const output = await this.backend.executeCommand(step.command);
 
     this.recorder.addLogEntry({
       type: 'step_complete',
@@ -231,8 +235,47 @@ export class ExecutionEngine {
     startTime: number,
   ): Promise<StepResult> {
     // Blast radius check
-    const blastResult = validateBlastRadius(step, this.manifest);
+    const blastResult = validateBlastRadius(step, this.manifest, this.context);
     this.callbacks.onBlastRadiusCheck?.(step, blastResult.message);
+    if (!blastResult.valid) {
+      this.recorder.addLogEntry({
+        type: 'step_failed',
+        stepId: step.stepId,
+        message: `Blast radius validation failed: ${blastResult.message}`,
+      });
+      return {
+        stepId: step.stepId,
+        step,
+        status: 'failed',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        error: `Blast radius validation failed: ${blastResult.message}`,
+      };
+    }
+
+    const providerResolution = resolveStepProviders(step, this.manifest, this.backend, this.mode);
+    this.recorder.addLogEntry({
+      type: providerResolution.resolved ? 'info' : 'step_failed',
+      stepId: step.stepId,
+      message: `Provider resolution: ${providerResolution.summary}`,
+      data: {
+        providers: providerResolution.providers,
+        capabilities: providerResolution.capabilities,
+      },
+    });
+    if (this.mode === 'execute' && !providerResolution.resolved) {
+      return {
+        stepId: step.stepId,
+        step,
+        status: 'failed',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        error: `Provider resolution failed: ${providerResolution.summary}`,
+        providerResolution: providerResolution.capabilities,
+      };
+    }
 
     // Execute before captures
     const beforeCaptures = step.statePreservation.before.map((capture) => {
@@ -254,6 +297,7 @@ export class ExecutionEngine {
         completedAt: new Date().toISOString(),
         durationMs: Date.now() - startTime,
         error: 'Required before capture failed',
+        providerResolution: providerResolution.capabilities,
       };
     }
 
@@ -276,6 +320,7 @@ export class ExecutionEngine {
             completedAt: new Date().toISOString(),
             durationMs: Date.now() - startTime,
             error: `Precondition failed: ${pre.description}`,
+            providerResolution: providerResolution.capabilities,
           };
         }
       }
@@ -284,10 +329,10 @@ export class ExecutionEngine {
     // Execute or log the command based on mode
     const cmdDesc = `${step.command.type} ${step.command.operation || step.command.statement || ''}`.trim();
 
-    if (this.mode === 'execute' && step.command.statement && step.command.type === 'sql') {
-      // Live execution: run the SQL
+    let output: unknown;
+    if (this.mode === 'execute') {
       try {
-        await this.backend.executeSQL(step.command.statement);
+        output = await this.backend.executeCommand(step.command);
         this.recorder.addLogEntry({
           type: 'step_complete',
           stepId: step.stepId,
@@ -308,27 +353,35 @@ export class ExecutionEngine {
           completedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime,
           error: `Command execution failed: ${errMsg}`,
+          providerResolution: providerResolution.capabilities,
         };
       }
-    } else if (this.mode === 'dry-run') {
+    } else {
       this.recorder.addLogEntry({
         type: 'step_complete',
         stepId: step.stepId,
         message: `[DRY-RUN] Would execute: ${cmdDesc}`,
       });
       this.callbacks.onCapture?.(`[DRY-RUN] ${step.name}`, 'skipped');
-    } else {
-      // Structured commands (non-SQL) — log in both modes
-      this.recorder.addLogEntry({
-        type: 'step_complete',
+
+      if (step.stateTransition) {
+        this.backend.transition?.(step.stateTransition);
+      }
+
+      return {
         stepId: step.stepId,
-        message: `Executed command: ${cmdDesc}`,
-      });
+        step,
+        status: 'success',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        output: { dryRun: true },
+        providerResolution: providerResolution.capabilities,
+      };
     }
 
-    // State transitions declared by the step (simulator uses these; live client no-ops)
     if (step.stateTransition) {
-      this.backend.transition(step.stateTransition);
+      this.backend.transition?.(step.stateTransition);
     }
 
     // Check success criteria
@@ -354,22 +407,29 @@ export class ExecutionEngine {
       startedAt,
       completedAt: new Date().toISOString(),
       durationMs: Date.now() - startTime,
+      output,
+      providerResolution: providerResolution.capabilities,
       error: successPassed ? undefined : `Success criteria failed: ${step.successCriteria.description}`,
     };
   }
 
   private async executeApproval(
     step: RecoveryStep & { type: 'human_approval' },
+    plan: RecoveryPlan,
     startedAt: string,
     startTime: number,
   ): Promise<StepResult> {
-    const effectiveTrust =
-      this.context.trustScenarioOverrides['replication_lag_cascade'] || this.context.trustLevel;
+    // Derive the effective risk level from the plan's system actions
+    const planRiskLevel = this.derivePlanMaxRiskLevel(plan);
 
-    const catalogCovered = isCatalogCovered('high', this.coveredRiskLevels);
+    // Look up trust override for the current plan's scenario, not a hardcoded one
+    const effectiveTrust =
+      this.context.trustScenarioOverrides[plan.metadata.scenario] || this.context.trustLevel;
+
+    const catalogCovered = isCatalogCovered(planRiskLevel, this.coveredRiskLevels);
 
     const autoApprove = shouldAutoApprove(
-      'high',
+      planRiskLevel,
       effectiveTrust,
       catalogCovered,
       this.context.organizationalPolicies.requireApprovalForAllElevated,
@@ -462,11 +522,31 @@ export class ExecutionEngine {
         this.recorder.addStepResult(result);
         this.executionState.completedSteps.push(result);
         this.callbacks.onStepComplete?.(revisedStep, result);
+        if (result.status === 'failed') {
+          return {
+            stepId: step.stepId,
+            step,
+            status: 'failed',
+            startedAt,
+            completedAt: new Date().toISOString(),
+            durationMs: Date.now() - startTime,
+            error: `Revised plan failed at step ${revisedStep.stepId}: ${result.error ?? 'unknown error'}`,
+          };
+        }
       }
     } else if (replanResult.action === 'continue') {
       this.callbacks.onReplanResult?.('continue', 'Current plan remains valid');
     } else {
       this.callbacks.onReplanResult?.('abort', replanResult.reason);
+      return {
+        stepId: step.stepId,
+        step,
+        status: 'failed',
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startTime,
+        error: `Replan aborted execution: ${replanResult.reason}`,
+      };
     }
 
     return {
@@ -552,10 +632,92 @@ export class ExecutionEngine {
     originalPlan: RecoveryPlan,
     revisedPlan: RecoveryPlan,
   ): boolean {
-    // Simplified fast replan check
-    // 1. No new execution contexts
-    // 2. No higher risk levels
-    // 3. Same target systems
-    return true; // In the demo, fast replan always passes
+    const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
+
+    // Collect execution contexts from a plan's steps
+    const collectContexts = (steps: RecoveryStep[]): Set<string> => {
+      const contexts = new Set<string>();
+      for (const step of steps) {
+        if (step.type === 'system_action' || step.type === 'diagnosis_action') {
+          contexts.add(step.executionContext);
+        }
+        if (step.type === 'conditional') {
+          if (step.thenStep.type === 'system_action' || step.thenStep.type === 'diagnosis_action') {
+            contexts.add(step.thenStep.executionContext);
+          }
+          if (step.elseStep !== 'skip' && (step.elseStep.type === 'system_action' || step.elseStep.type === 'diagnosis_action')) {
+            contexts.add(step.elseStep.executionContext);
+          }
+        }
+      }
+      return contexts;
+    };
+
+    // Collect max risk level from a plan's steps
+    const getMaxRisk = (steps: RecoveryStep[]): number => {
+      let max = 0;
+      for (const step of steps) {
+        if (step.type === 'system_action') {
+          max = Math.max(max, RISK_ORDER.indexOf(step.riskLevel));
+        }
+        if (step.type === 'conditional') {
+          if (step.thenStep.type === 'system_action') {
+            max = Math.max(max, RISK_ORDER.indexOf(step.thenStep.riskLevel));
+          }
+          if (step.elseStep !== 'skip' && step.elseStep.type === 'system_action') {
+            max = Math.max(max, RISK_ORDER.indexOf(step.elseStep.riskLevel));
+          }
+        }
+      }
+      return max;
+    };
+
+    // Collect target systems from a plan's affected systems
+    const getTargets = (plan: RecoveryPlan): Set<string> =>
+      new Set(plan.impact.affectedSystems.map((s) => s.identifier));
+
+    // Condition 1: No new execution contexts
+    const originalContexts = collectContexts(originalPlan.steps);
+    const revisedContexts = collectContexts(revisedPlan.steps);
+    for (const ctx of revisedContexts) {
+      if (!originalContexts.has(ctx)) return false;
+    }
+
+    // Condition 2: No higher risk levels
+    if (getMaxRisk(revisedPlan.steps) > getMaxRisk(originalPlan.steps)) return false;
+
+    // Condition 3: Same target systems
+    const originalTargets = getTargets(originalPlan);
+    const revisedTargets = getTargets(revisedPlan);
+    for (const target of revisedTargets) {
+      if (!originalTargets.has(target)) return false;
+    }
+
+    return true;
+  }
+
+  private derivePlanMaxRiskLevel(plan: RecoveryPlan): RiskLevel {
+    const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
+    let maxIdx = 0;
+    for (const step of plan.steps) {
+      if (step.type === 'system_action') {
+        maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.riskLevel));
+      }
+      if (step.type === 'conditional') {
+        if (step.thenStep.type === 'system_action') {
+          maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.thenStep.riskLevel));
+        }
+        if (step.elseStep !== 'skip' && step.elseStep.type === 'system_action') {
+          maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.elseStep.riskLevel));
+        }
+      }
+    }
+    return RISK_ORDER[maxIdx];
   }
 }
+
+/**
+ * Backwards-compatible alias.
+ * Callers that import ExecutionEngine continue to get the legacy engine.
+ */
+export const ExecutionEngine = LegacyExecutionEngine;

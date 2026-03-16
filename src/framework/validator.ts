@@ -5,6 +5,14 @@ import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { AgentManifest } from '../types/manifest.js';
 import type { RecoveryStep } from '../types/step-types.js';
 import type { RiskLevel } from '../types/common.js';
+import { isKnownCapability } from './capability-registry.js';
+import type { ExecutionBackend } from './backend.js';
+import {
+  flattenProviderResolutions,
+  resolveStepProviders,
+  summarizeLiveProviderReadiness,
+} from './provider-registry.js';
+import type { ProviderCapabilityReference } from './provider-registry.js';
 
 export interface ValidationResult {
   valid: boolean;
@@ -15,6 +23,16 @@ export interface ValidationCheck {
   name: string;
   passed: boolean;
   message: string;
+  details?: {
+    blockedCapabilities?: ProviderCapabilityReference[];
+    supportedCapabilities?: ProviderCapabilityReference[];
+  };
+}
+
+export interface ValidationOptions {
+  requireExecutableCapabilities?: boolean;
+  backend?: ExecutionBackend;
+  executionMode?: 'dry-run' | 'execute';
 }
 
 const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
@@ -36,7 +54,11 @@ function getStepRisk(step: RecoveryStep): RiskLevel | null {
   return null;
 }
 
-export function validatePlan(plan: RecoveryPlan, manifest: AgentManifest): ValidationResult {
+export function validatePlan(
+  plan: RecoveryPlan,
+  manifest: AgentManifest,
+  options: ValidationOptions = {},
+): ValidationResult {
   const checks: ValidationCheck[] = [];
 
   // Check 1: scenario matches manifest
@@ -162,10 +184,34 @@ export function validatePlan(plan: RecoveryPlan, manifest: AgentManifest): Valid
       : 'Missing rollback strategy',
   });
 
-  // Check 8: no nested conditionals
+  const systemActionSteps = collectSystemActions(plan.steps);
+
+  // Check 8: system actions declare affected components in blast radius
+  const missingBlastRadiusComponents = systemActionSteps
+    .filter((step) =>
+      step.blastRadius.directComponents.length === 0
+      && step.blastRadius.indirectComponents.length === 0,
+    )
+    .map((step) => step.stepId);
+  checks.push({
+    name: 'Blast radius declares affected components',
+    passed: missingBlastRadiusComponents.length === 0,
+    message:
+      missingBlastRadiusComponents.length === 0
+        ? 'All system actions declare at least one affected component in blast radius'
+        : `Blast radius missing affected components on steps: ${missingBlastRadiusComponents.join(', ')}`,
+  });
+
+  // Check 9: no nested conditionals
   // Note: TypeScript's NonConditionalStep type prevents nesting at compile time,
   // but we validate at runtime for plans from external sources
-  const nestedConditional = false;
+  const hasNestedConditional = (step: RecoveryStep): boolean => {
+    if (step.type !== 'conditional') return false;
+    const thenStep = step.thenStep as unknown as RecoveryStep;
+    const elseStep = step.elseStep === 'skip' ? 'skip' : (step.elseStep as unknown as RecoveryStep);
+    return thenStep.type === 'conditional' || (elseStep !== 'skip' && elseStep.type === 'conditional');
+  };
+  const nestedConditional = plan.steps.some(hasNestedConditional);
   checks.push({
     name: 'No nested conditionals',
     passed: !nestedConditional,
@@ -174,8 +220,106 @@ export function validatePlan(plan: RecoveryPlan, manifest: AgentManifest): Valid
       : 'Nested conditional steps detected (not permitted)',
   });
 
+  // Check 10: system actions declare required capabilities
+  const missingCapabilityDeclarations = systemActionSteps
+    .filter((step) => step.requiredCapabilities.length === 0)
+    .map((step) => step.stepId);
+  checks.push({
+    name: 'System actions declare required capabilities',
+    passed: missingCapabilityDeclarations.length === 0,
+    message:
+      missingCapabilityDeclarations.length === 0
+        ? `All ${systemActionSteps.length} system actions declare capabilities`
+        : `Missing capabilities on steps: ${missingCapabilityDeclarations.join(', ')}`,
+  });
+
+  // Check 11: manifest capabilities are registered
+  const unknownManifestCapabilities = manifest.spec.executionContexts.flatMap((context) =>
+    (context.capabilities ?? [])
+      .filter((capability) => !isKnownCapability(capability))
+      .map((capability) => `${context.name}:${capability}`),
+  );
+  checks.push({
+    name: 'Manifest capabilities are registered',
+    passed: unknownManifestCapabilities.length === 0,
+    message:
+      unknownManifestCapabilities.length === 0
+        ? 'All manifest execution-context capabilities exist in the registry'
+        : `Unknown manifest capabilities: ${unknownManifestCapabilities.join(', ')}`,
+  });
+
+  // Check 12: step capabilities are registered
+  const unknownStepCapabilities = systemActionSteps.flatMap((step) =>
+    step.requiredCapabilities
+      .filter((capability) => !isKnownCapability(capability))
+      .map((capability) => `${step.stepId}:${capability}`),
+  );
+  checks.push({
+    name: 'Step capabilities are registered',
+    passed: unknownStepCapabilities.length === 0,
+    message:
+      unknownStepCapabilities.length === 0
+        ? 'All step capabilities exist in the registry'
+        : `Unknown step capabilities: ${unknownStepCapabilities.join(', ')}`,
+  });
+
+  // Check 13: required capabilities are declared on execution contexts for live execution
+  if (options.requireExecutableCapabilities) {
+    const contextCapabilities = new Map(
+      manifest.spec.executionContexts.map((context) => [context.name, new Set(context.capabilities ?? [])]),
+    );
+    const unresolvedCapabilities = systemActionSteps.flatMap((step) => {
+      const declared = contextCapabilities.get(step.executionContext) ?? new Set<string>();
+      return step.requiredCapabilities
+        .filter((capability) => !declared.has(capability))
+        .map((capability) => `${step.stepId}:${capability}@${step.executionContext}`);
+    });
+    checks.push({
+      name: 'Required capabilities resolve for live execution',
+      passed: unresolvedCapabilities.length === 0,
+      message:
+        unresolvedCapabilities.length === 0
+          ? 'All required capabilities resolve to the declared execution contexts'
+        : `Unresolved live capabilities: ${unresolvedCapabilities.join(', ')}`,
+    });
+  }
+
+  // Check 14: provider resolution for live execution
+  if (options.backend && options.executionMode === 'execute') {
+    const backend = options.backend;
+    const providerResolutions = systemActionSteps.map((step) =>
+      resolveStepProviders(step, manifest, backend, 'execute'),
+    );
+    const flattenedResolutions = flattenProviderResolutions(providerResolutions);
+    checks.push({
+      name: 'Provider resolution for live execution',
+      passed: providerResolutions.every((resolution) => resolution.resolved),
+      message: summarizeLiveProviderReadiness(providerResolutions),
+      details: {
+        blockedCapabilities: flattenedResolutions.filter((resolution) => !resolution.resolved),
+        supportedCapabilities: flattenedResolutions.filter((resolution) => resolution.resolved),
+      },
+    });
+  }
+
   return {
     valid: checks.every((c) => c.passed),
     checks,
   };
+}
+
+function collectSystemActions(steps: RecoveryStep[]): Array<RecoveryStep & { type: 'system_action' }> {
+  const actions: Array<RecoveryStep & { type: 'system_action' }> = [];
+  const visit = (step: RecoveryStep) => {
+    if (step.type === 'system_action') {
+      actions.push(step);
+      return;
+    }
+    if (step.type === 'conditional') {
+      visit(step.thenStep as RecoveryStep);
+      if (step.elseStep !== 'skip') visit(step.elseStep as RecoveryStep);
+    }
+  };
+  steps.forEach(visit);
+  return actions;
 }

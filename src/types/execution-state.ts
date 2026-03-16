@@ -2,6 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { RecoveryStep } from './step-types.js';
+import type { CapabilityProviderResolution } from './plugin.js';
 
 export interface ExecutionState {
   completedSteps: StepResult[];
@@ -20,6 +21,7 @@ export interface StepResult {
   durationMs: number;
   output?: unknown;
   error?: string;
+  providerResolution?: CapabilityProviderResolution[];
   captureResults?: Array<{
     name: string;
     status: 'captured' | 'skipped' | 'failed';
