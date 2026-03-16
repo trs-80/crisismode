@@ -7,6 +7,7 @@ import type { StepResult } from '../types/execution-state.js';
 import type { SystemActionStep } from '../types/step-types.js';
 import type { ExecutionBackend } from './backend.js';
 import type { ForensicLogEntry } from './graph-types.js';
+import { dynamicOps, makeTimestamp } from './graph-helpers.js';
 
 /**
  * State schema for the rollback subgraph.
@@ -38,10 +39,6 @@ const RollbackGraphState = Annotation.Root({
 });
 
 type RollbackState = typeof RollbackGraphState.State;
-
-function makeTimestamp(): string {
-  return new Date().toISOString();
-}
 
 /**
  * Extract steps that have rollback directives from completed steps.
@@ -81,10 +78,7 @@ export function buildRollbackGraph(
         message: 'No rollback steps to execute',
       }],
     }));
-    const g = builder as unknown as {
-      addEdge(from: string, to: string): unknown;
-      compile(opts: { checkpointer: BaseCheckpointSaver }): ReturnType<typeof builder.compile>;
-    };
+    const g = dynamicOps(builder);
     g.addEdge(START, 'noop');
     g.addEdge('noop', END);
     return g.compile({ checkpointer: checkpointer ?? new MemorySaver() });
@@ -175,10 +169,7 @@ export function buildRollbackGraph(
   }
 
   // Wire edges sequentially
-  const g = builder as unknown as {
-    addEdge(from: string, to: string): unknown;
-    compile(opts: { checkpointer: BaseCheckpointSaver }): ReturnType<typeof builder.compile>;
-  };
+  const g = dynamicOps(builder);
 
   g.addEdge(START, 'rollback_0');
   for (let i = 0; i < nodeCount - 1; i++) {

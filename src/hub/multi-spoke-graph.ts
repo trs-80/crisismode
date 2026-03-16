@@ -5,6 +5,7 @@ import { Annotation, StateGraph, START, END, MemorySaver } from '@langchain/lang
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
 import type { SpokeRegistration, SpokeDispatchResult } from './graph-state.js';
 import type { ForensicLogEntry } from '../framework/graph-types.js';
+import { dynamicOps, makeTimestamp } from '../framework/graph-helpers.js';
 
 /**
  * State for coordinating multiple spokes executing related recovery plans.
@@ -57,7 +58,7 @@ function dispatchAllNode(state: MultiSpokeStateType) {
   for (const spoke of state.spokes) {
     if (spoke.status !== 'active') {
       logs.push({
-        timestamp: new Date().toISOString(),
+        timestamp: makeTimestamp(),
         type: 'info',
         message: `Skipping inactive spoke: ${spoke.spokeId} (status: ${spoke.status})`,
       });
@@ -68,13 +69,13 @@ function dispatchAllNode(state: MultiSpokeStateType) {
       spokeId: spoke.spokeId,
       planId: `plan-${spoke.spokeId}-${Date.now()}`,
       status: 'dispatched',
-      dispatchedAt: new Date().toISOString(),
+      dispatchedAt: makeTimestamp(),
     });
 
     spokeStatuses[spoke.spokeId] = 'running';
 
     logs.push({
-      timestamp: new Date().toISOString(),
+      timestamp: makeTimestamp(),
       type: 'info',
       message: `Dispatched recovery to spoke: ${spoke.spokeId}`,
     });
@@ -111,7 +112,7 @@ function monitorNode(state: MultiSpokeStateType) {
   return {
     outcome,
     coordinationLog: [{
-      timestamp: new Date().toISOString(),
+      timestamp: makeTimestamp(),
       type: 'info' as const,
       message: `Multi-spoke status: ${succeeded} succeeded, ${failed} failed, ${running} running`,
     }],
@@ -129,10 +130,7 @@ export function buildMultiSpokeGraph(checkpointer?: BaseCheckpointSaver) {
   builder.addNode('dispatch_all', dispatchAllNode);
   builder.addNode('monitor', monitorNode);
 
-  const g = builder as unknown as {
-    addEdge(from: string, to: string): unknown;
-    compile(opts: { checkpointer: BaseCheckpointSaver }): ReturnType<typeof builder.compile>;
-  };
+  const g = dynamicOps(builder);
 
   g.addEdge(START, 'dispatch_all');
   g.addEdge('dispatch_all', 'monitor');

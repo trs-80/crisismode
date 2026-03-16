@@ -15,6 +15,8 @@ import { isCatalogCovered } from './catalog.js';
 import { ForensicRecorder } from './forensics.js';
 import type { ExecutionBackend } from './backend.js';
 import { resolveStepProviders } from './provider-registry.js';
+import { derivePlanMaxRiskLevel, getMaxRiskIndex } from './risk.js';
+import { collectExecutionContexts } from './step-walker.js';
 
 export interface EngineCallbacks {
   onStepStart?: (step: RecoveryStep, index: number) => void;
@@ -69,6 +71,24 @@ export class LegacyExecutionEngine {
 
   setCoveredRiskLevels(levels: RiskLevel[]): void {
     this.coveredRiskLevels = levels;
+  }
+
+  private makeResult(
+    step: RecoveryStep,
+    status: StepResult['status'],
+    startedAt: string,
+    startTime: number,
+    extra?: Partial<StepResult>,
+  ): StepResult {
+    return {
+      stepId: step.stepId,
+      step,
+      status,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      durationMs: Date.now() - startTime,
+      ...extra,
+    };
   }
 
   async executePlan(plan: RecoveryPlan, diagnosis: DiagnosisResult): Promise<StepResult[]> {
@@ -162,15 +182,7 @@ export class LegacyExecutionEngine {
       message: `Diagnosis action completed: ${step.name}`,
     });
 
-    return {
-      stepId: step.stepId,
-      step,
-      status: 'success',
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-      output,
-    };
+    return this.makeResult(step, 'success', startedAt, startTime, { output });
   }
 
   private executeNotification(
@@ -187,14 +199,7 @@ export class LegacyExecutionEngine {
       data: { recipients: step.recipients },
     });
 
-    return {
-      stepId: step.stepId,
-      step,
-      status: 'success',
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-    };
+    return this.makeResult(step, 'success', startedAt, startTime);
   }
 
   private executeCheckpoint(
@@ -213,20 +218,14 @@ export class LegacyExecutionEngine {
       (r, i) => r.status === 'failed' && step.stateCaptures[i].capturePolicy === 'required',
     );
 
-    return {
-      stepId: step.stepId,
-      step,
-      status: requiredFailed ? 'failed' : 'success',
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
+    return this.makeResult(step, requiredFailed ? 'failed' : 'success', startedAt, startTime, {
       captureResults: captureResults.map((r) => ({
         name: r.name,
         status: r.status,
         reason: r.reason,
         data: r.data,
       })),
-    };
+    });
   }
 
   private async executeSystemAction(
@@ -234,7 +233,10 @@ export class LegacyExecutionEngine {
     startedAt: string,
     startTime: number,
   ): Promise<StepResult> {
-    // Blast radius check
+    const fail = (error: string, extra?: Partial<StepResult>) =>
+      this.makeResult(step, 'failed', startedAt, startTime, { error, ...extra });
+
+    // Phase 1: Blast radius validation
     const blastResult = validateBlastRadius(step, this.manifest, this.context);
     this.callbacks.onBlastRadiusCheck?.(step, blastResult.message);
     if (!blastResult.valid) {
@@ -243,17 +245,10 @@ export class LegacyExecutionEngine {
         stepId: step.stepId,
         message: `Blast radius validation failed: ${blastResult.message}`,
       });
-      return {
-        stepId: step.stepId,
-        step,
-        status: 'failed',
-        startedAt,
-        completedAt: new Date().toISOString(),
-        durationMs: Date.now() - startTime,
-        error: `Blast radius validation failed: ${blastResult.message}`,
-      };
+      return fail(`Blast radius validation failed: ${blastResult.message}`);
     }
 
+    // Phase 2: Provider resolution
     const providerResolution = resolveStepProviders(step, this.manifest, this.backend, this.mode);
     this.recorder.addLogEntry({
       type: providerResolution.resolved ? 'info' : 'step_failed',
@@ -265,19 +260,12 @@ export class LegacyExecutionEngine {
       },
     });
     if (this.mode === 'execute' && !providerResolution.resolved) {
-      return {
-        stepId: step.stepId,
-        step,
-        status: 'failed',
-        startedAt,
-        completedAt: new Date().toISOString(),
-        durationMs: Date.now() - startTime,
-        error: `Provider resolution failed: ${providerResolution.summary}`,
+      return fail(`Provider resolution failed: ${providerResolution.summary}`, {
         providerResolution: providerResolution.capabilities,
-      };
+      });
     }
 
-    // Execute before captures
+    // Phase 3: Before captures
     const beforeCaptures = step.statePreservation.before.map((capture) => {
       const result = executeCapture(capture);
       this.recorder.addCapture(result);
@@ -289,19 +277,12 @@ export class LegacyExecutionEngine {
       (r, i) => r.status === 'failed' && step.statePreservation.before[i].capturePolicy === 'required',
     );
     if (requiredBeforeFailed) {
-      return {
-        stepId: step.stepId,
-        step,
-        status: 'failed',
-        startedAt,
-        completedAt: new Date().toISOString(),
-        durationMs: Date.now() - startTime,
-        error: 'Required before capture failed',
+      return fail('Required before capture failed', {
         providerResolution: providerResolution.capabilities,
-      };
+      });
     }
 
-    // Check preconditions
+    // Phase 4: Preconditions
     if (step.preConditions) {
       for (const pre of step.preConditions) {
         const passed = await this.backend.evaluateCheck(pre.check);
@@ -312,51 +293,17 @@ export class LegacyExecutionEngine {
           message: `Precondition ${passed ? 'passed' : 'FAILED'}: ${pre.description}`,
         });
         if (!passed) {
-          return {
-            stepId: step.stepId,
-            step,
-            status: 'failed',
-            startedAt,
-            completedAt: new Date().toISOString(),
-            durationMs: Date.now() - startTime,
-            error: `Precondition failed: ${pre.description}`,
+          return fail(`Precondition failed: ${pre.description}`, {
             providerResolution: providerResolution.capabilities,
-          };
+          });
         }
       }
     }
 
-    // Execute or log the command based on mode
+    // Phase 5: Command execution
     const cmdDesc = `${step.command.type} ${step.command.operation || step.command.statement || ''}`.trim();
 
-    let output: unknown;
-    if (this.mode === 'execute') {
-      try {
-        output = await this.backend.executeCommand(step.command);
-        this.recorder.addLogEntry({
-          type: 'step_complete',
-          stepId: step.stepId,
-          message: `Executed command: ${cmdDesc}`,
-        });
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        this.recorder.addLogEntry({
-          type: 'step_failed',
-          stepId: step.stepId,
-          message: `Command execution failed: ${errMsg}`,
-        });
-        return {
-          stepId: step.stepId,
-          step,
-          status: 'failed',
-          startedAt,
-          completedAt: new Date().toISOString(),
-          durationMs: Date.now() - startTime,
-          error: `Command execution failed: ${errMsg}`,
-          providerResolution: providerResolution.capabilities,
-        };
-      }
-    } else {
+    if (this.mode !== 'execute') {
       this.recorder.addLogEntry({
         type: 'step_complete',
         stepId: step.stepId,
@@ -368,23 +315,37 @@ export class LegacyExecutionEngine {
         this.backend.transition?.(step.stateTransition);
       }
 
-      return {
-        stepId: step.stepId,
-        step,
-        status: 'success',
-        startedAt,
-        completedAt: new Date().toISOString(),
-        durationMs: Date.now() - startTime,
+      return this.makeResult(step, 'success', startedAt, startTime, {
         output: { dryRun: true },
         providerResolution: providerResolution.capabilities,
-      };
+      });
+    }
+
+    let output: unknown;
+    try {
+      output = await this.backend.executeCommand(step.command);
+      this.recorder.addLogEntry({
+        type: 'step_complete',
+        stepId: step.stepId,
+        message: `Executed command: ${cmdDesc}`,
+      });
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.recorder.addLogEntry({
+        type: 'step_failed',
+        stepId: step.stepId,
+        message: `Command execution failed: ${errMsg}`,
+      });
+      return fail(`Command execution failed: ${errMsg}`, {
+        providerResolution: providerResolution.capabilities,
+      });
     }
 
     if (step.stateTransition) {
       this.backend.transition?.(step.stateTransition);
     }
 
-    // Check success criteria
+    // Phase 6: Success criteria
     const successPassed = await this.backend.evaluateCheck(step.successCriteria.check);
     this.callbacks.onSuccessCheck?.(step, successPassed, step.successCriteria.description);
     this.recorder.addLogEntry({
@@ -393,24 +354,18 @@ export class LegacyExecutionEngine {
       message: `Success criteria ${successPassed ? 'passed' : 'FAILED'}: ${step.successCriteria.description}`,
     });
 
-    // Execute after captures
+    // Phase 7: After captures
     for (const capture of step.statePreservation.after) {
       const result = executeCapture(capture);
       this.recorder.addCapture(result);
       this.callbacks.onCapture?.(result.name, result.status);
     }
 
-    return {
-      stepId: step.stepId,
-      step,
-      status: successPassed ? 'success' : 'failed',
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
+    return this.makeResult(step, successPassed ? 'success' : 'failed', startedAt, startTime, {
       output,
       providerResolution: providerResolution.capabilities,
       error: successPassed ? undefined : `Success criteria failed: ${step.successCriteria.description}`,
-    };
+    });
   }
 
   private async executeApproval(
@@ -419,15 +374,10 @@ export class LegacyExecutionEngine {
     startedAt: string,
     startTime: number,
   ): Promise<StepResult> {
-    // Derive the effective risk level from the plan's system actions
-    const planRiskLevel = this.derivePlanMaxRiskLevel(plan);
-
-    // Look up trust override for the current plan's scenario, not a hardcoded one
+    const planRiskLevel = derivePlanMaxRiskLevel(plan);
     const effectiveTrust =
       this.context.trustScenarioOverrides[plan.metadata.scenario] || this.context.trustLevel;
-
     const catalogCovered = isCatalogCovered(planRiskLevel, this.coveredRiskLevels);
-
     const autoApprove = shouldAutoApprove(
       planRiskLevel,
       effectiveTrust,
@@ -446,37 +396,23 @@ export class LegacyExecutionEngine {
         message: 'Approval auto-satisfied by trust level or catalog',
       });
     } else {
-      const approval = await requestApproval(step, catalogCovered);
-      result = approval;
+      result = await requestApproval(step, catalogCovered);
       this.recorder.addLogEntry({
         type: 'approval_received',
         stepId: step.stepId,
-        message: `Approval result: ${approval}`,
+        message: `Approval result: ${result}`,
       });
     }
 
     this.callbacks.onApprovalResult?.(step, result, catalogCovered);
 
     if (result === 'rejected') {
-      return {
-        stepId: step.stepId,
-        step,
-        status: 'failed',
-        startedAt,
-        completedAt: new Date().toISOString(),
-        durationMs: Date.now() - startTime,
+      return this.makeResult(step, 'failed', startedAt, startTime, {
         error: 'Human rejected the step',
-      };
+      });
     }
 
-    return {
-      stepId: step.stepId,
-      step,
-      status: result === 'skipped' ? 'skipped' : 'success',
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-    };
+    return this.makeResult(step, result === 'skipped' ? 'skipped' : 'success', startedAt, startTime);
   }
 
   private async executeReplanningCheckpoint(
@@ -488,7 +424,6 @@ export class LegacyExecutionEngine {
   ): Promise<StepResult> {
     this.callbacks.onReplanStart?.(step);
 
-    // Execute diagnostic captures
     if (step.diagnosticCaptures) {
       for (const capture of step.diagnosticCaptures) {
         const result = executeCapture(capture);
@@ -497,66 +432,47 @@ export class LegacyExecutionEngine {
       }
     }
 
-    // Invoke agent's replan
     const replanResult = await this.agent.replan(this.context, diagnosis, this.executionState);
-
     this.recorder.addLogEntry({
       type: 'replan_result',
       stepId: step.stepId,
       message: `Replan result: ${replanResult.action}`,
     });
 
-    if (replanResult.action === 'revised_plan') {
-      this.recorder.incrementReplanCount();
-      this.recorder.addPlan(replanResult.plan);
-
-      // Check fast replan conditions
-      const fastReplanMet = step.fastReplan && this.checkFastReplanConditions(plan, replanResult.plan);
-      const details = `Revised plan: ${replanResult.plan.metadata.summary}. Fast replan: ${fastReplanMet ? 'approved' : 'not applicable'}`;
-      this.callbacks.onReplanResult?.('revised_plan', details);
-
-      // Execute the revised plan steps inline
-      for (const revisedStep of replanResult.plan.steps) {
-        this.callbacks.onStepStart?.(revisedStep, -1);
-        const result = await this.executeStep(revisedStep, replanResult.plan, diagnosis);
-        this.recorder.addStepResult(result);
-        this.executionState.completedSteps.push(result);
-        this.callbacks.onStepComplete?.(revisedStep, result);
-        if (result.status === 'failed') {
-          return {
-            stepId: step.stepId,
-            step,
-            status: 'failed',
-            startedAt,
-            completedAt: new Date().toISOString(),
-            durationMs: Date.now() - startTime,
-            error: `Revised plan failed at step ${revisedStep.stepId}: ${result.error ?? 'unknown error'}`,
-          };
-        }
-      }
-    } else if (replanResult.action === 'continue') {
-      this.callbacks.onReplanResult?.('continue', 'Current plan remains valid');
-    } else {
+    if (replanResult.action === 'abort') {
       this.callbacks.onReplanResult?.('abort', replanResult.reason);
-      return {
-        stepId: step.stepId,
-        step,
-        status: 'failed',
-        startedAt,
-        completedAt: new Date().toISOString(),
-        durationMs: Date.now() - startTime,
+      return this.makeResult(step, 'failed', startedAt, startTime, {
         error: `Replan aborted execution: ${replanResult.reason}`,
-      };
+      });
     }
 
-    return {
-      stepId: step.stepId,
-      step,
-      status: 'success',
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-    };
+    if (replanResult.action === 'continue') {
+      this.callbacks.onReplanResult?.('continue', 'Current plan remains valid');
+      return this.makeResult(step, 'success', startedAt, startTime);
+    }
+
+    // revised_plan
+    this.recorder.incrementReplanCount();
+    this.recorder.addPlan(replanResult.plan);
+
+    const fastReplanMet = step.fastReplan && this.checkFastReplanConditions(plan, replanResult.plan);
+    const details = `Revised plan: ${replanResult.plan.metadata.summary}. Fast replan: ${fastReplanMet ? 'approved' : 'not applicable'}`;
+    this.callbacks.onReplanResult?.('revised_plan', details);
+
+    for (const revisedStep of replanResult.plan.steps) {
+      this.callbacks.onStepStart?.(revisedStep, -1);
+      const result = await this.executeStep(revisedStep, replanResult.plan, diagnosis);
+      this.recorder.addStepResult(result);
+      this.executionState.completedSteps.push(result);
+      this.callbacks.onStepComplete?.(revisedStep, result);
+      if (result.status === 'failed') {
+        return this.makeResult(step, 'failed', startedAt, startTime, {
+          error: `Revised plan failed at step ${revisedStep.stepId}: ${result.error ?? 'unknown error'}`,
+        });
+      }
+    }
+
+    return this.makeResult(step, 'success', startedAt, startTime);
   }
 
   private async executeConditional(
@@ -578,33 +494,17 @@ export class LegacyExecutionEngine {
       this.callbacks.onStepStart?.(step.thenStep, -1);
       branchResult = await this.executeBranchStep(step.thenStep, startedAt, startTime);
       this.callbacks.onStepComplete?.(step.thenStep, branchResult);
+    } else if (step.elseStep === 'skip') {
+      branchResult = this.makeResult(step, 'skipped', startedAt, startTime);
     } else {
-      if (step.elseStep === 'skip') {
-        branchResult = {
-          stepId: step.stepId,
-          step,
-          status: 'skipped',
-          startedAt,
-          completedAt: new Date().toISOString(),
-          durationMs: Date.now() - startTime,
-        };
-      } else {
-        this.callbacks.onStepStart?.(step.elseStep, -1);
-        branchResult = await this.executeBranchStep(step.elseStep, startedAt, startTime);
-        this.callbacks.onStepComplete?.(step.elseStep, branchResult);
-      }
+      this.callbacks.onStepStart?.(step.elseStep, -1);
+      branchResult = await this.executeBranchStep(step.elseStep, startedAt, startTime);
+      this.callbacks.onStepComplete?.(step.elseStep, branchResult);
     }
 
     this.recorder.addStepResult(branchResult);
 
-    return {
-      stepId: step.stepId,
-      step,
-      status: branchResult.status,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-    };
+    return this.makeResult(step, branchResult.status, startedAt, startTime);
   }
 
   private async executeBranchStep(
@@ -618,75 +518,26 @@ export class LegacyExecutionEngine {
     if (step.type === 'human_notification') {
       return this.executeNotification(step, startedAt, startTime);
     }
-    return {
-      stepId: step.stepId,
-      step,
-      status: 'success',
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-    };
+    return this.makeResult(step, 'success', startedAt, startTime);
   }
 
   private checkFastReplanConditions(
     originalPlan: RecoveryPlan,
     revisedPlan: RecoveryPlan,
   ): boolean {
-    const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
-
-    // Collect execution contexts from a plan's steps
-    const collectContexts = (steps: RecoveryStep[]): Set<string> => {
-      const contexts = new Set<string>();
-      for (const step of steps) {
-        if (step.type === 'system_action' || step.type === 'diagnosis_action') {
-          contexts.add(step.executionContext);
-        }
-        if (step.type === 'conditional') {
-          if (step.thenStep.type === 'system_action' || step.thenStep.type === 'diagnosis_action') {
-            contexts.add(step.thenStep.executionContext);
-          }
-          if (step.elseStep !== 'skip' && (step.elseStep.type === 'system_action' || step.elseStep.type === 'diagnosis_action')) {
-            contexts.add(step.elseStep.executionContext);
-          }
-        }
-      }
-      return contexts;
-    };
-
-    // Collect max risk level from a plan's steps
-    const getMaxRisk = (steps: RecoveryStep[]): number => {
-      let max = 0;
-      for (const step of steps) {
-        if (step.type === 'system_action') {
-          max = Math.max(max, RISK_ORDER.indexOf(step.riskLevel));
-        }
-        if (step.type === 'conditional') {
-          if (step.thenStep.type === 'system_action') {
-            max = Math.max(max, RISK_ORDER.indexOf(step.thenStep.riskLevel));
-          }
-          if (step.elseStep !== 'skip' && step.elseStep.type === 'system_action') {
-            max = Math.max(max, RISK_ORDER.indexOf(step.elseStep.riskLevel));
-          }
-        }
-      }
-      return max;
-    };
-
-    // Collect target systems from a plan's affected systems
-    const getTargets = (plan: RecoveryPlan): Set<string> =>
-      new Set(plan.impact.affectedSystems.map((s) => s.identifier));
-
     // Condition 1: No new execution contexts
-    const originalContexts = collectContexts(originalPlan.steps);
-    const revisedContexts = collectContexts(revisedPlan.steps);
+    const originalContexts = collectExecutionContexts(originalPlan.steps);
+    const revisedContexts = collectExecutionContexts(revisedPlan.steps);
     for (const ctx of revisedContexts) {
       if (!originalContexts.has(ctx)) return false;
     }
 
     // Condition 2: No higher risk levels
-    if (getMaxRisk(revisedPlan.steps) > getMaxRisk(originalPlan.steps)) return false;
+    if (getMaxRiskIndex(revisedPlan.steps) > getMaxRiskIndex(originalPlan.steps)) return false;
 
     // Condition 3: Same target systems
+    const getTargets = (plan: RecoveryPlan): Set<string> =>
+      new Set(plan.impact.affectedSystems.map((s) => s.identifier));
     const originalTargets = getTargets(originalPlan);
     const revisedTargets = getTargets(revisedPlan);
     for (const target of revisedTargets) {
@@ -694,25 +545,6 @@ export class LegacyExecutionEngine {
     }
 
     return true;
-  }
-
-  private derivePlanMaxRiskLevel(plan: RecoveryPlan): RiskLevel {
-    const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
-    let maxIdx = 0;
-    for (const step of plan.steps) {
-      if (step.type === 'system_action') {
-        maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.riskLevel));
-      }
-      if (step.type === 'conditional') {
-        if (step.thenStep.type === 'system_action') {
-          maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.thenStep.riskLevel));
-        }
-        if (step.elseStep !== 'skip' && step.elseStep.type === 'system_action') {
-          maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.elseStep.riskLevel));
-        }
-      }
-    }
-    return RISK_ORDER[maxIdx];
   }
 }
 

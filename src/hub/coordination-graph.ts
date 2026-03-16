@@ -5,6 +5,7 @@ import { StateGraph, START, END, interrupt } from '@langchain/langgraph';
 import type { BaseCheckpointSaver } from '@langchain/langgraph';
 import { HubCoordinationState } from './graph-state.js';
 import type { HubCoordinationStateType, HubAlert } from './graph-state.js';
+import { dynamicOps } from '../framework/graph-helpers.js';
 
 /**
  * Configuration for the hub coordination graph.
@@ -209,12 +210,7 @@ export function buildCoordinationGraph(config: HubGraphConfig) {
   builder.addNode('forensic_collection', forensicCollectionNode);
   builder.addNode('trust_update', trustUpdateNode);
 
-  // Use type assertion for dynamic node name edges
-  const g = builder as unknown as {
-    addEdge(from: string, to: string): unknown;
-    addConditionalEdges(from: string, fn: (state: HubCoordinationStateType) => string): unknown;
-    compile(opts: { checkpointer: BaseCheckpointSaver }): ReturnType<typeof builder.compile>;
-  };
+  const g = dynamicOps(builder);
 
   g.addEdge(START, 'alert_intake');
 

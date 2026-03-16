@@ -19,6 +19,7 @@ import type { ApprovalHandler } from './approval-handler.js';
 import type { EngineCallbacks } from './engine.js';
 import { ForensicRecorder } from './forensics.js';
 import { Command } from '@langchain/langgraph';
+import { dynamicOps } from './graph-helpers.js';
 
 export interface GraphEngineOptions {
   checkpointer?: BaseCheckpointSaver;
@@ -116,12 +117,7 @@ export class RecoveryGraphEngine {
     }
 
     // Wire edges: START -> step_0, step_i -> step_{i+1} (conditional), step_N -> END
-    // We use type assertions because node names are dynamic strings.
-    const g = builder as unknown as {
-      addEdge(from: string, to: string): unknown;
-      addConditionalEdges(from: string, fn: (state: RecoveryGraphStateType) => string): unknown;
-      compile(opts: { checkpointer: BaseCheckpointSaver }): ReturnType<typeof builder.compile>;
-    };
+    const g = dynamicOps(builder);
 
     if (stepCount > 0) {
       g.addEdge(START, 'step_0');
@@ -160,28 +156,7 @@ export class RecoveryGraphEngine {
    */
   async executePlan(plan: RecoveryPlan, diagnosis: DiagnosisResult): Promise<StepResult[]> {
     const graph = this.buildGraph(plan);
-    const config = { configurable: { thread_id: this.threadId } };
-
-    const initialState = {
-      plan,
-      diagnosis,
-    };
-
-    let finalState: RecoveryGraphStateType | undefined;
-
-    for await (const event of await graph.stream(initialState, {
-      ...config,
-      streamMode: 'values',
-    })) {
-      const candidate = event as RecoveryGraphStateType;
-      // Interrupt events may emit partial state without completedSteps.
-      // Keep the last state that has the completedSteps array.
-      if (candidate.completedSteps !== undefined) {
-        finalState = candidate;
-      }
-    }
-
-    return finalState?.completedSteps ?? [];
+    return this.streamToCompletion(graph, { plan, diagnosis });
   }
 
   /**
@@ -194,15 +169,25 @@ export class RecoveryGraphEngine {
     }
 
     const graph = this.buildGraph(plan);
-    const config = { configurable: { thread_id: this.threadId } };
+    return this.streamToCompletion(graph, new Command({ resume: decision }));
+  }
 
+  /**
+   * Stream a graph to completion and return the final completed steps.
+   * Shared by executePlan and resume to avoid duplicating the streaming loop.
+   */
+  private async streamToCompletion(graph: unknown, input: unknown): Promise<StepResult[]> {
+    const config = { configurable: { thread_id: this.threadId } };
     let finalState: RecoveryGraphStateType | undefined;
 
-    for await (const event of await graph.stream(
-      new Command({ resume: decision }),
-      { ...config, streamMode: 'values' },
-    )) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for await (const event of await (graph as any).stream(input, {
+      ...config,
+      streamMode: 'values',
+    })) {
       const candidate = event as RecoveryGraphStateType;
+      // Interrupt events may emit partial state without completedSteps.
+      // Keep the last state that has the completedSteps array.
       if (candidate.completedSteps !== undefined) {
         finalState = candidate;
       }
@@ -219,10 +204,7 @@ export class RecoveryGraphEngine {
     // so we need a compiled graph to query it
     const builder = new StateGraph(RecoveryGraphState);
     builder.addNode('noop', () => ({}));
-    const g = builder as unknown as {
-      addEdge(from: string, to: string): unknown;
-      compile(opts: { checkpointer: BaseCheckpointSaver }): ReturnType<typeof builder.compile>;
-    };
+    const g = dynamicOps(builder);
     g.addEdge(START, 'noop');
     g.addEdge('noop', END);
     const graph = g.compile({ checkpointer: this.checkpointer });
