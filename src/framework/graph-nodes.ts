@@ -17,6 +17,8 @@ import { executeCapture, validateBlastRadius } from './safety.js';
 import { shouldAutoApprove } from './coordinator.js';
 import { isCatalogCovered } from './catalog.js';
 import { resolveStepProviders } from './provider-registry.js';
+import { derivePlanMaxRiskLevel } from './risk.js';
+import { makeTimestamp } from './graph-helpers.js';
 
 export type ExecutionMode = 'dry-run' | 'execute';
 
@@ -28,10 +30,6 @@ export interface GraphNodeContext {
   mode: ExecutionMode;
   coveredRiskLevels: RiskLevel[];
   approvalHandler?: ApprovalHandler;
-}
-
-function makeTimestamp(): string {
-  return new Date().toISOString();
 }
 
 function makeLogEntry(
@@ -560,21 +558,3 @@ export function createNodeForStep(
   }
 }
 
-function derivePlanMaxRiskLevel(plan: RecoveryPlan): RiskLevel {
-  const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
-  let maxIdx = 0;
-  for (const step of plan.steps) {
-    if (step.type === 'system_action') {
-      maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.riskLevel));
-    }
-    if (step.type === 'conditional') {
-      if (step.thenStep.type === 'system_action') {
-        maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.thenStep.riskLevel));
-      }
-      if (step.elseStep !== 'skip' && step.elseStep.type === 'system_action') {
-        maxIdx = Math.max(maxIdx, RISK_ORDER.indexOf(step.elseStep.riskLevel));
-      }
-    }
-  }
-  return RISK_ORDER[maxIdx];
-}
