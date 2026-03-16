@@ -25,25 +25,39 @@ import { resolveCredentials } from './config/credentials.js';
 import { getFiringAlerts, validateAlertPayload, type AlertManagerAlert, type AlertManagerPayload } from './webhook-utils.js';
 import type { AgentContext } from './types/agent-context.js';
 
-const MODE: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
-const { configPath } = parseCliFlags(process.argv);
+export interface WebhookServerOptions {
+  configPath?: string;
+  execute?: boolean;
+}
+
 const MAX_BODY_BYTES = 1_048_576; // 1 MiB
 
-// Load site config
-const { config, source, filePath } = loadConfig({ configPath });
-const registry = new AgentRegistry(config);
-
-const PORT = config.webhook?.port ?? parseInt(process.env.PORT || '3000', 10);
-const WEBHOOK_SECRET = config.webhook?.secret
-  ? resolveCredentials(config.webhook.secret).token ?? ''
-  : process.env.WEBHOOK_SECRET ?? '';
-const HUB_ENDPOINT = config.hub?.endpoint ?? process.env.HUB_ENDPOINT ?? 'http://localhost:8080';
-
-// Hub client for forensic record submission
-const hubClient = new HubClient({ endpoint: HUB_ENDPOINT });
-
-// Track active recoveries to prevent duplicate runs
+// Module-level state — initialized by startWebhookServer or by direct execution
+let MODE: ExecutionMode;
+let config: ReturnType<typeof loadConfig>['config'];
+let source: ReturnType<typeof loadConfig>['source'];
+let filePath: ReturnType<typeof loadConfig>['filePath'];
+let registry: AgentRegistry;
+let PORT: number;
+let WEBHOOK_SECRET: string;
+let HUB_ENDPOINT: string;
+let hubClient: HubClient;
 const activeRecoveries = new Set<string>();
+
+function initModule(options?: WebhookServerOptions): void {
+  MODE = options?.execute ? 'execute' : 'dry-run';
+  const result = loadConfig({ configPath: options?.configPath });
+  config = result.config;
+  source = result.source;
+  filePath = result.filePath;
+  registry = new AgentRegistry(config);
+  PORT = config.webhook?.port ?? parseInt(process.env.PORT || '3000', 10);
+  WEBHOOK_SECRET = config.webhook?.secret
+    ? resolveCredentials(config.webhook.secret).token ?? ''
+    : process.env.WEBHOOK_SECRET ?? '';
+  HUB_ENDPOINT = config.hub?.endpoint ?? process.env.HUB_ENDPOINT ?? 'http://localhost:8080';
+  hubClient = new HubClient({ endpoint: HUB_ENDPOINT });
+}
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -278,6 +292,17 @@ async function handleAlert(alert: AlertManagerAlert): Promise<{
   }
 }
 
+/**
+ * Start the webhook server — extracted for CLI reuse.
+ */
+export async function startWebhookServer(options?: WebhookServerOptions): Promise<void> {
+  initModule(options);
+  return new Promise((_resolve) => {
+    createWebhookServer();
+  });
+}
+
+function createWebhookServer(): void {
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const path = req.url?.split('?')[0];
 
@@ -359,3 +384,12 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('');
 });
+} // end createWebhookServer
+
+// Direct execution entry point (backward compat for `pnpm run webhook`)
+const isDirectExecution = process.argv[1]?.endsWith('webhook.ts') || process.argv[1]?.endsWith('webhook.js');
+if (isDirectExecution) {
+  const execMode = process.argv.includes('--execute');
+  const { configPath } = parseCliFlags(process.argv);
+  startWebhookServer({ configPath, execute: execMode });
+}

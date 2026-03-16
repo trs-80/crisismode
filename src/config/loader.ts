@@ -191,6 +191,24 @@ function buildLegacyConfig(): SiteConfig {
 }
 
 /**
+ * Load config with auto-detection fallback.
+ * Returns null config when no config file exists and no env vars are set.
+ * The caller can then use detect.ts to probe localhost.
+ */
+export function loadConfigWithDetection(options?: LoadConfigOptions): {
+  config: SiteConfig | null;
+  source: 'file' | 'env-fallback' | 'none';
+  filePath?: string;
+} {
+  try {
+    const result = loadConfig(options);
+    return result;
+  } catch {
+    return { config: null, source: 'none' };
+  }
+}
+
+/**
  * Parse --config <path> and --target <name> from process.argv.
  */
 export function parseCliFlags(argv: string[]): { configPath?: string; targetName?: string } {

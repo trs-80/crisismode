@@ -1,8 +1,35 @@
 {
   "name": "crisismode",
   "version": "0.2.0",
-  "description": "Recovery Agent Contract Framework - Interactive CLI Demo",
+  "description": "AI-powered infrastructure recovery — detect, diagnose, and recover stateful systems",
   "type": "module",
+  "bin": {
+    "crisismode": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "keywords": [
+    "crisis",
+    "recovery",
+    "infrastructure",
+    "postgresql",
+    "redis",
+    "etcd",
+    "kafka",
+    "kubernetes",
+    "diagnosis",
+    "ai",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/trs-80/crisismode.git"
+  },
+  "homepage": "https://crisismode.ai",
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",

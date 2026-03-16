@@ -58,10 +58,21 @@ async function confirmExecution(targetName: string, targetKind: string): Promise
   });
 }
 
-async function runLive(): Promise<void> {
-  const execMode: ExecutionMode = process.argv.includes('--execute') ? 'execute' : 'dry-run';
-  const healthOnly = process.argv.includes('--health-only');
-  const { configPath, targetName } = parseCliFlags(process.argv);
+export interface RecoveryOptions {
+  configPath?: string;
+  targetName?: string;
+  execute?: boolean;
+  healthOnly?: boolean;
+}
+
+/**
+ * Run the full recovery flow — extracted for CLI reuse.
+ */
+export async function runRecovery(options: RecoveryOptions = {}): Promise<void> {
+  const execMode: ExecutionMode = options.execute ? 'execute' : 'dry-run';
+  const healthOnly = options.healthOnly ?? false;
+  const configPath = options.configPath;
+  const targetName = options.targetName;
 
   // Load config (file or env-var fallback)
   const { config, source, filePath } = loadConfig({ configPath });
@@ -358,6 +369,14 @@ async function runLive(): Promise<void> {
   } finally {
     await backend.close();
   }
+}
+
+/** Backward-compatible entry point for `pnpm run live`. */
+function runLive(): Promise<void> {
+  const execMode = process.argv.includes('--execute');
+  const healthOnly = process.argv.includes('--health-only');
+  const { configPath, targetName } = parseCliFlags(process.argv);
+  return runRecovery({ configPath, targetName, execute: execMode, healthOnly });
 }
 
 runLive().catch((err) => {
