@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ForensicRecord, ExecutionLogEntry } from '../types/forensic-record.js';
 import type { AgentContext } from '../types/agent-context.js';
@@ -120,5 +120,58 @@ export class ForensicRecorder {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify(record, null, 2), 'utf-8');
     return record;
+  }
+}
+
+/**
+ * Crash-safe forensic recorder that writes entries to an append-only JSONL file.
+ *
+ * Each graph node's forensic log entries are flushed to disk immediately,
+ * so on crash recovery the log is reconstructable from the local JSONL store
+ * combined with the graph checkpoint.
+ */
+export class StreamingForensicRecorder extends ForensicRecorder {
+  private logPath: string;
+
+  constructor(logPath: string) {
+    super();
+    this.logPath = logPath;
+    mkdirSync(dirname(logPath), { recursive: true });
+    // Initialize empty file
+    writeFileSync(logPath, '', 'utf-8');
+  }
+
+  override addLogEntry(entry: Omit<ExecutionLogEntry, 'timestamp'>): void {
+    super.addLogEntry(entry);
+    const timestamped = { ...entry, timestamp: new Date().toISOString() };
+    appendFileSync(this.logPath, JSON.stringify(timestamped) + '\n', 'utf-8');
+  }
+
+  override addStepResult(result: StepResult): void {
+    super.addStepResult(result);
+    const logLine = {
+      type: 'step_result' as const,
+      stepId: result.stepId,
+      status: result.status,
+      durationMs: result.durationMs,
+      error: result.error,
+      timestamp: new Date().toISOString(),
+    };
+    appendFileSync(this.logPath, JSON.stringify(logLine) + '\n', 'utf-8');
+  }
+
+  /**
+   * Read all forensic entries from the JSONL file.
+   * Used for crash recovery — reconstructs the log from what was persisted.
+   */
+  readPersistedEntries(): Array<Record<string, unknown>> {
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const content = readFileSync(this.logPath, 'utf-8').trim();
+    if (!content) return [];
+    return content.split('\n').map((line) => JSON.parse(line));
+  }
+
+  getLogPath(): string {
+    return this.logPath;
   }
 }

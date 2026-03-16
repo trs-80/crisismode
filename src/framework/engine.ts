@@ -33,7 +33,11 @@ export interface EngineCallbacks {
 
 export type ExecutionMode = 'dry-run' | 'execute';
 
-export class ExecutionEngine {
+/**
+ * Legacy sequential execution engine.
+ * Use RecoveryGraphEngine for checkpointed, resumable execution.
+ */
+export class LegacyExecutionEngine {
   private recorder: ForensicRecorder;
   private coveredRiskLevels: RiskLevel[] = [];
   private callbacks: EngineCallbacks;
@@ -711,3 +715,9 @@ export class ExecutionEngine {
     return RISK_ORDER[maxIdx];
   }
 }
+
+/**
+ * Backwards-compatible alias.
+ * Callers that import ExecutionEngine continue to get the legacy engine.
+ */
+export const ExecutionEngine = LegacyExecutionEngine;
