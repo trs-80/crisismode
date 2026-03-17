@@ -1,0 +1,8 @@
+{
+  "name": "check-http-endpoint",
+  "description": "Checks if an HTTP endpoint is reachable and responding correctly",
+  "version": "1.0.0",
+  "targetKinds": ["application", "generic"],
+  "verbs": ["health", "diagnose", "plan"],
+  "executable": "./check.sh"
+}

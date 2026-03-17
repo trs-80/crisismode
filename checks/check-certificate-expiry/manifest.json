@@ -1,0 +1,8 @@
+{
+  "name": "check-certificate-expiry",
+  "description": "Checks TLS certificate expiry and reports certificate details",
+  "version": "1.0.0",
+  "targetKinds": ["application", "network"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh"
+}

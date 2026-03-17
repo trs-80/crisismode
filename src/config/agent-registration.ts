@@ -30,6 +30,9 @@ export interface AgentRegistration {
   /** Agent manifest (just data, no heavy imports) */
   manifest: AgentManifest;
 
+  /** Where this registration originated — 'builtin' for core agents, 'plugin' for external */
+  source?: 'builtin' | 'plugin';
+
   /**
    * Async factory — creates an agent + backend for a resolved target.
    * Use dynamic import() here to avoid eagerly loading drivers.

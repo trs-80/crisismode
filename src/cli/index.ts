@@ -32,12 +32,14 @@ const HELP = `
     crisismode recover [options]            Full recovery flow (dry-run default)
     crisismode status                       Quick health probe
     crisismode init [path]                  Generate crisismode.yaml
+    crisismode init --agent <name>          Scaffold a check plugin
     crisismode demo                         Run simulator demo
     crisismode webhook [options]            Start webhook receiver
     crisismode ask "<question>"             Natural language AI diagnosis
     crisismode watch [options]              Continuous shadow observation
 
   Options:
+    --agent <name>      Scaffold a new check plugin (init only)
     --config <path>     Path to crisismode.yaml
     --target <name>     Target name from config
     --category <kinds>  Comma-separated service kinds to scan (scan only)
@@ -65,6 +67,7 @@ async function main(): Promise<void> {
         config: { type: 'string' },
         target: { type: 'string' },
         category: { type: 'string' },
+        agent: { type: 'string' },
         execute: { type: 'boolean', default: false },
         'health-only': { type: 'boolean', default: false },
         interval: { type: 'string' },
@@ -153,7 +156,7 @@ async function main(): Promise<void> {
 
     case 'init': {
       const { runInit } = await import('./commands/init.js');
-      await runInit(positionals[0]);
+      await runInit(positionals[0], values.agent as string | undefined);
       break;
     }
 
