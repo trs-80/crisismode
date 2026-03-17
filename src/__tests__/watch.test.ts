@@ -117,8 +117,10 @@ function makeMockAgent(healthStatus: string = 'healthy') {
     assessHealth: vi.fn(async () => ({
       status: healthStatus,
       confidence: 0.95,
-      findings: [],
-      timestamp: new Date().toISOString(),
+      summary: `System is ${healthStatus}`,
+      observedAt: new Date().toISOString(),
+      signals: [],
+      recommendedActions: [],
     })),
     diagnose: vi.fn(async () => ({
       scenarioId: 'test',
@@ -258,11 +260,14 @@ describe('runWatch', () => {
     // First call: healthy, second call: unhealthy
     instance.agent.assessHealth.mockImplementation(async () => {
       callCount++;
+      const status = callCount === 1 ? 'healthy' : 'unhealthy';
       return {
-        status: callCount === 1 ? 'healthy' : 'unhealthy',
+        status,
         confidence: 0.95,
-        findings: [],
-        timestamp: new Date().toISOString(),
+        summary: `System is ${status}`,
+        observedAt: new Date().toISOString(),
+        signals: [],
+        recommendedActions: [],
       };
     });
 
