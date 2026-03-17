@@ -216,6 +216,9 @@ export function executeCheckPlugin(
       });
     });
 
+    // Ignore EPIPE — the child may exit before we finish writing
+    child.stdin.on('error', () => {});
+
     // Write the request and close stdin
     child.stdin.write(JSON.stringify(request));
     child.stdin.end();
