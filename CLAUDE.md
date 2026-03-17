@@ -45,6 +45,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 
 | Command | Description |
 |---|---|
+| `scan` | Zero-config health scan with scored summary (default when no command given) |
 | `diagnose` | Health check + AI-powered diagnosis (read-only) |
 | `recover` | Full recovery flow with execution planning |
 | `status` | Quick health probe |
@@ -54,7 +55,23 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `webhook` | Start webhook receiver for AlertManager |
 | `watch` | Continuous shadow observation |
 
-Supporting modules: `detect.ts` (system detection), `autodiscovery.ts` (zero-config agent detection), `output.ts` (structured output formatting), `errors.ts` (error formatting).
+### Output Modes
+
+Three output modes are supported:
+- **human** (default for TTY): colored, interactive, emoji severity indicators
+- **pipe** (auto-detected when stdout is not a TTY): plain text, no ANSI, tab-separated
+- **machine** (`--json`): structured JSON/JSONL with metadata
+
+### Escalation Levels
+
+Five progressive escalation levels surface in scan output and recovery proposals:
+1. **Observe** — read-only health checks, no system interaction
+2. **Diagnose** — read-only queries against live systems
+3. **Suggest** — generate recovery plans without executing
+4. **Repair (safe)** — execute routine/elevated risk actions
+5. **Repair (destructive)** — execute high/critical risk actions
+
+Supporting modules: `detect.ts` (system detection), `autodiscovery.ts` (zero-config agent detection), `output.ts` (structured output formatting), `errors.ts` (error formatting), `escalation.ts` (five-level escalation model).
 
 ## Agent Pattern
 
@@ -137,7 +154,8 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
 | `src/cli/index.ts` | Unified CLI entry point |
-| `src/cli/commands/` | CLI subcommands (diagnose, recover, status, ask, demo, init, webhook, watch) |
+| `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch) |
+| `src/framework/escalation.ts` | Five-level progressive escalation model |
 | `src/agent/pg-replication/` | Reference agent implementation (PostgreSQL) |
 | `src/agent/redis/` | Redis memory pressure recovery agent |
 | `src/agent/etcd/` | etcd consensus recovery agent |

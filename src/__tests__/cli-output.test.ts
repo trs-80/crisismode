@@ -2,7 +2,11 @@
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { configure, printHealthStatus, printDiagnosis, printStatus, printError } from '../cli/output.js';
+import {
+  configure, getOutputMode, printHealthStatus, printDiagnosis, printStatus,
+  printError, printScanSummary, escalationBadge, printNextAction,
+} from '../cli/output.js';
+import type { ScanResult } from '../cli/output.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 
@@ -82,5 +86,108 @@ describe('CLI output — JSON mode', () => {
     const parsed = JSON.parse(output);
     expect(parsed.type).toBe('error');
     expect(parsed.message).toBe('something failed');
+  });
+
+  it('printScanSummary outputs valid JSON in machine mode', () => {
+    const result: ScanResult = {
+      score: 85,
+      findings: [
+        {
+          id: 'PG-001',
+          service: 'postgresql (detected-postgresql)',
+          status: 'healthy',
+          summary: 'All systems operational',
+          confidence: 0.95,
+          escalationLevel: 1,
+          signals: [],
+        },
+      ],
+      scannedAt: '2026-03-17T00:00:00Z',
+      durationMs: 150,
+    };
+
+    printScanSummary(result);
+
+    const output = logSpy.mock.calls[0][0];
+    const parsed = JSON.parse(output);
+    expect(parsed.type).toBe('scan');
+    expect(parsed.score).toBe(85);
+    expect(parsed.findings).toHaveLength(1);
+    expect(parsed.findings[0].id).toBe('PG-001');
+  });
+});
+
+describe('CLI output — output modes', () => {
+  afterEach(() => {
+    configure({ json: false, noColor: false, verbose: false });
+  });
+
+  it('json flag sets machine mode', () => {
+    configure({ json: true });
+    expect(getOutputMode()).toBe('machine');
+  });
+
+  it('explicit mode overrides auto-detection', () => {
+    configure({ mode: 'pipe' });
+    expect(getOutputMode()).toBe('pipe');
+  });
+
+  it('explicit machine mode sets json compat flag', () => {
+    configure({ mode: 'machine' });
+    expect(getOutputMode()).toBe('machine');
+  });
+});
+
+describe('CLI output — pipe mode', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configure({ mode: 'pipe', noColor: true });
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, verbose: false });
+  });
+
+  it('printScanSummary outputs tab-separated lines in pipe mode', () => {
+    const result: ScanResult = {
+      score: 100,
+      findings: [
+        {
+          id: 'REDIS-001',
+          service: 'redis',
+          status: 'healthy',
+          summary: 'OK',
+          confidence: 0.9,
+          escalationLevel: 1,
+          signals: [],
+        },
+      ],
+      scannedAt: '2026-03-17T00:00:00Z',
+      durationMs: 50,
+    };
+
+    printScanSummary(result);
+
+    // First line: summary, second line: finding
+    expect(logSpy.mock.calls[0][0]).toContain('scan\t100');
+    expect(logSpy.mock.calls[1][0]).toContain('finding\tREDIS-001');
+  });
+
+  it('printNextAction is suppressed in pipe mode', () => {
+    printNextAction('Run crisismode diagnose PG-001');
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('CLI output — escalation badges', () => {
+  it('returns a string for each level', () => {
+    for (const level of [1, 2, 3, 4, 5] as const) {
+      const badge = escalationBadge(level);
+      expect(typeof badge).toBe('string');
+      expect(badge.length).toBeGreaterThan(0);
+    }
   });
 });

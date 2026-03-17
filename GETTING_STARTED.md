@@ -110,7 +110,7 @@ pnpm run webhook --execute      # execute mode
 
 ### CLI (`src/cli/`)
 
-The unified `crisismode` CLI provides commands: `diagnose`, `recover`, `status`, `ask`, `demo`, `init`, `webhook`, `watch`. Supporting modules handle system detection (`detect.ts`), zero-config agent discovery (`autodiscovery.ts`), structured output (`output.ts`), and error formatting (`errors.ts`).
+The unified `crisismode` CLI provides commands: `scan` (default), `diagnose`, `recover`, `status`, `ask`, `demo`, `init`, `webhook`, `watch`. Running `crisismode` with no arguments performs a zero-config health scan. Supporting modules handle system detection (`detect.ts`), zero-config agent discovery (`autodiscovery.ts`), structured output (`output.ts`), escalation levels (`escalation.ts`), and error formatting (`errors.ts`).
 
 ### Core Framework (`src/framework/`)
 

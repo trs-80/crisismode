@@ -45,6 +45,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 
 | Command | Description |
 |---|---|
+| `scan` | Zero-config health scan with scored summary (default when no command given) |
 | `diagnose` | Health check + AI-powered diagnosis (read-only) |
 | `recover` | Full recovery flow with execution planning |
 | `status` | Quick health probe |
@@ -54,7 +55,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `webhook` | Start webhook receiver for AlertManager |
 | `watch` | Continuous shadow observation |
 
-Supporting modules: `detect.ts` (system detection), `autodiscovery.ts` (zero-config agent detection), `output.ts` (structured output formatting), `errors.ts` (error formatting).
+Supporting modules: `detect.ts` (system detection), `autodiscovery.ts` (zero-config agent detection), `output.ts` (structured output formatting), `escalation.ts` (five-level escalation model), `errors.ts` (error formatting).
 
 ## Agent Pattern
 

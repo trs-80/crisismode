@@ -6,7 +6,8 @@
  * CrisisMode CLI — unified entry point for all commands.
  *
  * Usage:
- *   crisismode                              # interactive guided experience
+ *   crisismode                              # zero-config health scan (default)
+ *   crisismode scan                         # explicit health scan
  *   crisismode diagnose                     # health check + diagnosis (read-only)
  *   crisismode recover                      # full recovery (dry-run default)
  *   crisismode status                       # quick health probe
@@ -25,7 +26,8 @@ const HELP = `
   CrisisMode — AI-powered infrastructure recovery
 
   Usage:
-    crisismode                              Interactive guided experience
+    crisismode                              Zero-config health scan (default)
+    crisismode scan [options]               Health scan with scored summary
     crisismode diagnose [options]           Health check + diagnosis (read-only)
     crisismode recover [options]            Full recovery flow (dry-run default)
     crisismode status                       Quick health probe
@@ -38,6 +40,7 @@ const HELP = `
   Options:
     --config <path>     Path to crisismode.yaml
     --target <name>     Target name from config
+    --category <kinds>  Comma-separated service kinds to scan (scan only)
     --execute           Enable mutations (recover/webhook only)
     --health-only       Health check only, no diagnosis (recover only)
     --json              Machine-readable JSON output
@@ -61,6 +64,7 @@ async function main(): Promise<void> {
       options: {
         config: { type: 'string' },
         target: { type: 'string' },
+        category: { type: 'string' },
         execute: { type: 'boolean', default: false },
         'health-only': { type: 'boolean', default: false },
         interval: { type: 'string' },
@@ -110,6 +114,17 @@ async function main(): Promise<void> {
 
   // Route to command
   switch (subcommand) {
+    case 'scan': {
+      const { runScan } = await import('./commands/scan.js');
+      const categoryStr = values.category as string | undefined;
+      await runScan({
+        configPath: values.config as string | undefined,
+        category: categoryStr ? categoryStr.split(',').map((s) => s.trim()) : undefined,
+        verbose: values.verbose as boolean,
+      });
+      break;
+    }
+
     case 'diagnose': {
       const { runDiagnose } = await import('./commands/diagnose.js');
       await runDiagnose({
@@ -180,9 +195,14 @@ async function main(): Promise<void> {
     }
 
     case undefined: {
-      // No subcommand — interactive mode
-      const { runInteractive } = await import('./interactive.js');
-      await runInteractive();
+      // No subcommand — default to scan (zero-config health scan)
+      const { runScan: runDefaultScan } = await import('./commands/scan.js');
+      const defaultCategoryStr = values.category as string | undefined;
+      await runDefaultScan({
+        configPath: values.config as string | undefined,
+        category: defaultCategoryStr ? defaultCategoryStr.split(',').map((s) => s.trim()) : undefined,
+        verbose: values.verbose as boolean,
+      });
       break;
     }
 

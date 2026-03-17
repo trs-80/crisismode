@@ -16,10 +16,16 @@ export interface DetectedService {
 }
 
 const DEFAULT_PROBES: Array<{ kind: string; port: number }> = [
+  // Infrastructure agents
   { kind: 'postgresql', port: 5432 },
   { kind: 'redis', port: 6379 },
   { kind: 'etcd', port: 2379 },
   { kind: 'kafka', port: 9092 },
+  { kind: 'kubernetes', port: 6443 },
+  { kind: 'ceph', port: 6789 },
+  { kind: 'flink', port: 8081 },
+  // Application-level agents (common dev ports)
+  { kind: 'message-queue', port: 5672 },   // RabbitMQ/AMQP
 ];
 
 const PROBE_TIMEOUT_MS = 2000;

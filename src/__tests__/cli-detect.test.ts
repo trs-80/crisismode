@@ -60,8 +60,9 @@ describe('detectServices', () => {
 
   it('uses default probes when called with no arguments', async () => {
     // Just verify it returns results for default ports (all likely closed in test)
+    // Covers all 8 default probes (pg, redis, etcd, kafka, k8s, ceph, flink, message-queue)
     const results = await detectServices('127.0.0.1');
-    expect(results.length).toBeGreaterThanOrEqual(4);
+    expect(results.length).toBeGreaterThanOrEqual(8);
     for (const r of results) {
       expect(r).toHaveProperty('kind');
       expect(r).toHaveProperty('detected');
