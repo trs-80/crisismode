@@ -36,17 +36,20 @@ describe('detectServices', () => {
   });
 
   it('reports false for closed ports', async () => {
+    // Use a port guaranteed to be in range but almost certainly closed
+    const closedPort = port > 10000 ? port - 10000 : port + 1;
     const results = await detectServices('127.0.0.1', [
-      { kind: 'no-service', port: port + 10000 },
+      { kind: 'no-service', port: closedPort },
     ]);
     expect(results).toHaveLength(1);
     expect(results[0].detected).toBe(false);
   });
 
   it('probes multiple ports in parallel', async () => {
+    const closedPort = port > 10000 ? port - 10000 : port + 1;
     const results = await detectServices('127.0.0.1', [
       { kind: 'open', port },
-      { kind: 'closed', port: port + 10000 },
+      { kind: 'closed', port: closedPort },
     ]);
     expect(results).toHaveLength(2);
     const open = results.find((r) => r.kind === 'open');

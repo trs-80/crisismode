@@ -3,6 +3,7 @@
 
 import type { AgentContext } from '../types/agent-context.js';
 import type { AgentManifest } from '../types/manifest.js';
+import { getNetworkProfile } from './network-profile.js';
 
 export function assembleContext(
   trigger: AgentContext['trigger'],
@@ -73,9 +74,10 @@ export function assembleContext(
     frameworkLayers: {
       execution_kernel: 'available',
       safety: 'available',
-      coordination: 'available',
-      enrichment: 'unavailable',
+      coordination: getNetworkProfile()?.hub.status === 'available' ? 'available' : 'unavailable',
+      enrichment: getNetworkProfile()?.internet.status === 'unavailable' ? 'unavailable' : 'available',
     },
+    network: getNetworkProfile() ?? undefined,
     trustLevel: 'copilot',
     trustScenarioOverrides: {
       replication_lag_cascade: 'autopilot',

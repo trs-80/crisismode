@@ -11,9 +11,10 @@ import { buildOperatorSummary } from '../../framework/operator-summary.js';
 import { loadConfig, parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { detectServices } from '../detect.js';
+import { probeNetwork } from '../../framework/network-profile.js';
 import {
   printBanner, printHealthStatus, printDiagnosis, printOperatorSummary,
-  printInfo, printSuccess, printWarning, printDetection,
+  printInfo, printSuccess, printWarning, printDetection, printNetworkProfile,
 } from '../output.js';
 import { noConfig, formatError } from '../errors.js';
 import type { AgentContext } from '../../types/agent-context.js';
@@ -52,10 +53,25 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
   printInfo(`Config: ${source}`);
   console.log('');
 
+  // Probe network connectivity (runs in parallel with agent setup)
+  const targetProbes = config.targets.map((t) => ({
+    host: t.primary.host,
+    port: t.primary.port,
+    label: t.name,
+  }));
+  const networkPromise = probeNetwork({
+    hubEndpoint: 'hub' in config ? config.hub?.endpoint : undefined,
+    targets: targetProbes,
+  });
+
   const registry = new AgentRegistry(config);
   const { agent, backend, target } = opts.targetName
     ? await registry.createForTarget(opts.targetName)
     : await registry.createFirst();
+
+  // Wait for network probe (ran in parallel with agent creation)
+  const networkProfile = await networkPromise;
+  printNetworkProfile(networkProfile);
 
   await AgentRegistry.discoverVersion({ agent, backend, target });
 
@@ -76,6 +92,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     };
 
     const context = assembleContext(trigger, agent.manifest);
+    context.network = networkProfile;
 
     // Health assessment
     printInfo('Assessing health...');
@@ -94,7 +111,8 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
 
     // Diagnosis (read-only)
     const hasAiKey = !!process.env.ANTHROPIC_API_KEY;
-    printInfo(hasAiKey ? 'Running AI-powered diagnosis...' : 'Running rule-based diagnosis...');
+    const aiAvailable = hasAiKey && networkProfile.internet.status !== 'unavailable';
+    printInfo(aiAvailable ? 'Running AI-powered diagnosis...' : 'Running rule-based diagnosis...');
 
     const diagnosis = await agent.diagnose(context);
     printDiagnosis(diagnosis);

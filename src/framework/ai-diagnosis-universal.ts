@@ -15,6 +15,7 @@
  */
 
 import { sanitizeInput } from './ai-diagnosis.js';
+import { getNetworkProfile } from './network-profile.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { HealthAssessment } from '../types/health.js';
 
@@ -59,6 +60,12 @@ export async function universalAiDiagnosis(
 ): Promise<UniversalDiagnosisResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
+    return buildFallback(request);
+  }
+
+  // Skip AI call if network profile says no internet
+  const profile = getNetworkProfile();
+  if (profile && profile.internet.status === 'unavailable') {
     return buildFallback(request);
   }
 
