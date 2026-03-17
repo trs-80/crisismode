@@ -108,11 +108,16 @@ pnpm run webhook --execute      # execute mode
 
 ## Project Layout
 
+### CLI (`src/cli/`)
+
+The unified `crisismode` CLI provides commands: `diagnose`, `recover`, `status`, `ask`, `demo`, `init`, `webhook`, `watch`. Supporting modules handle system detection (`detect.ts`), zero-config agent discovery (`autodiscovery.ts`), structured output (`output.ts`), and error formatting (`errors.ts`).
+
 ### Core Framework (`src/framework/`)
 
 | File | Purpose |
 |---|---|
 | `engine.ts` | Executes recovery plans step-by-step. Handles dry-run vs execute mode. |
+| `graph-engine.ts` | LangGraph-based graph execution engine for complex workflows |
 | `backend.ts` | ExecutionBackend contract — shared interface for all execution backends |
 | `safety.ts` | State capture, blast radius validation |
 | `coordinator.ts` | Human approval logic (auto-approve decisions based on trust + catalog) |
@@ -123,6 +128,10 @@ pnpm run webhook --execute      # execute mode
 | `capability-registry.ts` | Global registry of standard recovery capabilities |
 | `provider-registry.ts` | Resolves capability providers for plan steps |
 | `operator-summary.ts` | Builds operator-facing health and readiness summaries |
+| `symptom-router.ts` | Routes symptoms to appropriate recovery agents |
+| `ai-diagnosis-universal.ts` | Universal AI-powered diagnosis for any agent |
+| `incident-report.ts` | Structured incident report generation |
+| `network-profile.ts` | Network diagnostics and profiling |
 | `index.ts` | Barrel export for all framework modules |
 
 ### Agents (`src/agent/`)
@@ -132,11 +141,12 @@ Each agent follows the same pattern:
 ```
 agent/
   <system>/
-    backend.ts      # Interface that both simulator and live client implement
-    simulator.ts    # In-memory implementation for demos and tests
-    live-client.ts  # Real infrastructure client (connects to actual systems)
-    manifest.ts     # Agent manifest (capabilities, risk profile, triggers)
-    agent.ts        # RecoveryAgent implementation (diagnose, plan, replan)
+    backend.ts        # Interface that both simulator and live client implement
+    simulator.ts      # In-memory implementation for demos and tests
+    live-client.ts    # Real infrastructure client (connects to actual systems)
+    manifest.ts       # Agent manifest (capabilities, risk profile, triggers)
+    agent.ts          # RecoveryAgent implementation (diagnose, plan, replan)
+    registration.ts   # Lazy factory for the agent registry
 ```
 
 **PostgreSQL Replication** (`pg-replication/`) — the MVP agent. Has a full live client that queries real `pg_stat_replication`.
@@ -152,6 +162,16 @@ agent/
 **Ceph Storage** (`ceph/`) — distributed storage recovery. Handles OSD failures, degraded placement groups, pool near-full conditions. Simulator complete.
 
 **Flink Stream Processing** (`flink/`) — stream job recovery. Handles checkpoint failure cascades, savepoint corruption, backpressure. Simulator complete.
+
+**AI Provider** (`ai-provider/`) — AI service failover and fallback. Handles provider failover routing, rate limit management. Simulator complete.
+
+**Config Drift** (`config-drift/`) — configuration drift detection and remediation. Handles drift detection, compliance enforcement. Simulator complete.
+
+**DB Migration** (`db-migration/`) — database migration safety. Handles migration safety checks, rollback orchestration. Simulator complete.
+
+**Deploy Rollback** (`deploy-rollback/`) — deployment rollback orchestration. Handles rollback coordination, canary failure response. Simulator complete.
+
+**Queue Backlog** (`queue-backlog/`) — queue backlog and lag recovery. Handles backlog reduction, consumer lag recovery. Simulator complete.
 
 ### Type System (`src/types/`)
 
@@ -171,7 +191,7 @@ All contract types are defined here. Key types:
 3. Create `src/agent/<system>/manifest.ts` — declare what your agent targets and its risk profile
 4. Create `src/agent/<system>/agent.ts` — implement `RecoveryAgent` (diagnose, plan, replan)
 5. Create `src/agent/<system>/registration.ts` — lazy factory for the agent registry
-6. Register your agent in `src/config/builtin-agents.ts`
+6. Register your agent in `src/config/builtin-agents.ts` via the agent registry (`src/config/agent-registry.ts`)
 7. Add capabilities to `src/framework/capability-registry.ts` if your agent uses new capability domains
 
 The framework handles validation, approval workflows, forensic recording, and hub communication — your agent only needs to diagnose and produce plans.
