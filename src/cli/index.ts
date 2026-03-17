@@ -14,6 +14,7 @@
  *   crisismode demo                         # run simulator demo
  *   crisismode webhook                      # start webhook receiver
  *   crisismode ask "my postgres is slow"    # AI-powered diagnosis
+ *   crisismode watch                        # continuous shadow observation
  */
 
 import { parseArgs } from 'node:util';
@@ -32,6 +33,7 @@ const HELP = `
     crisismode demo                         Run simulator demo
     crisismode webhook [options]            Start webhook receiver
     crisismode ask "<question>"             Natural language AI diagnosis
+    crisismode watch [options]              Continuous shadow observation
 
   Options:
     --config <path>     Path to crisismode.yaml
@@ -61,6 +63,7 @@ async function main(): Promise<void> {
         target: { type: 'string' },
         execute: { type: 'boolean', default: false },
         'health-only': { type: 'boolean', default: false },
+        interval: { type: 'string' },
         json: { type: 'boolean', default: false },
         'no-color': { type: 'boolean', default: false },
         verbose: { type: 'boolean', default: false },
@@ -162,6 +165,17 @@ async function main(): Promise<void> {
       }
       const { runAsk } = await import('./commands/ask.js');
       await runAsk(question);
+      break;
+    }
+
+    case 'watch': {
+      const { runWatch } = await import('./commands/watch.js');
+      const intervalStr = values.interval as string | undefined;
+      await runWatch({
+        configPath: values.config as string | undefined,
+        targetName: values.target as string | undefined,
+        intervalMs: intervalStr ? parseInt(intervalStr, 10) * 1000 : undefined,
+      });
       break;
     }
 

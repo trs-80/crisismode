@@ -13,6 +13,7 @@ import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { StepResult } from '../types/execution-state.js';
 import type { PlanExplanation } from '../framework/ai-explainer.js';
 import type { DetectedService } from './detect.js';
+import type { NetworkProfile } from '../framework/network-profile.js';
 
 export interface OutputOptions {
   json: boolean;
@@ -268,6 +269,56 @@ export function printStatus(services: Array<{ kind: string; host: string; port: 
       : chalk.red('DOWN');
     console.log(`  ${icon}  ${s.kind.padEnd(14)} ${s.host}:${s.port}`);
   }
+  console.log('');
+}
+
+// ── Network profile ──
+
+export function printNetworkProfile(profile: NetworkProfile): void {
+  if (outputOptions.json) {
+    jsonOut('network', { profile });
+    return;
+  }
+
+  const modeLabel: Record<string, string> = {
+    full: 'Full connectivity',
+    private_only: 'Private network only (no internet)',
+    isolated: 'Isolated (no network)',
+    unknown: 'Unknown',
+  };
+
+  const modeColor =
+    profile.mode === 'full' ? chalk.green
+    : profile.mode === 'private_only' ? chalk.yellow
+    : profile.mode === 'isolated' ? chalk.red
+    : chalk.dim;
+
+  console.log(chalk.bold('  Network: ') + modeColor(modeLabel[profile.mode] ?? profile.mode));
+
+  if (profile.internet.status === 'unavailable') {
+    console.log(chalk.yellow('    AI features will use rule-based fallback (no internet)'));
+  }
+
+  if (profile.hub.status !== 'unknown') {
+    const hubColor = profile.hub.status === 'available' ? chalk.green : chalk.yellow;
+    console.log(chalk.dim('    Hub: ') + hubColor(profile.hub.status));
+  }
+
+  if (outputOptions.verbose) {
+    if (profile.dns.available) {
+      console.log(chalk.dim(`    DNS: OK (${profile.dns.latencyMs}ms)`));
+    } else {
+      console.log(chalk.yellow(`    DNS: unavailable`));
+    }
+
+    for (const probe of [...profile.internet.probes, ...profile.targets.probes]) {
+      const icon = probe.reachable ? chalk.green('OK') : chalk.red('FAIL');
+      const latency = probe.reachable ? chalk.dim(` (${probe.latencyMs}ms)`) : '';
+      const error = probe.error ? chalk.dim(` — ${probe.error}`) : '';
+      console.log(chalk.dim(`    ${probe.target}: `) + icon + latency + error);
+    }
+  }
+
   console.log('');
 }
 

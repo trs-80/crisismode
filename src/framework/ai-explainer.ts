@@ -16,6 +16,7 @@
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import { sanitizeInput } from './ai-diagnosis.js';
+import { getNetworkProfile } from './network-profile.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -49,6 +50,12 @@ export async function explainPlan(
 ): Promise<PlanExplanation> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
+    return buildFallbackExplanation(plan, diagnosis);
+  }
+
+  // Skip AI call if network profile says no internet
+  const profile = getNetworkProfile();
+  if (profile && profile.internet.status === 'unavailable') {
     return buildFallbackExplanation(plan, diagnosis);
   }
 

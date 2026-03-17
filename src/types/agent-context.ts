@@ -2,6 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { TrustLevel } from './common.js';
+import type { NetworkProfile } from '../framework/network-profile.js';
 
 export interface AgentContext {
   trigger: {
@@ -23,6 +24,8 @@ export interface AgentContext {
     coordination: 'available' | 'degraded' | 'unavailable';
     enrichment: 'available' | 'degraded' | 'unavailable';
   };
+  /** Network connectivity profile — internet, hub, and target reachability. */
+  network?: NetworkProfile;
   trustLevel: TrustLevel;
   trustScenarioOverrides: Record<string, TrustLevel>;
   organizationalPolicies: OrganizationalPolicies;

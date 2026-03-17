@@ -17,6 +17,7 @@
  */
 
 import type { DiagnosisResult, DiagnosisFinding } from '../types/diagnosis-result.js';
+import { isInternetAvailable, getNetworkProfile } from './network-profile.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -117,6 +118,12 @@ export async function aiDiagnose(
 ): Promise<DiagnosisResult | null> {
   const apiKey = config.apiKey ?? process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
+    return null;
+  }
+
+  // Skip immediately if network profile says no internet — avoids a 10s timeout
+  const profile = getNetworkProfile();
+  if (profile && profile.internet.status === 'unavailable') {
     return null;
   }
 

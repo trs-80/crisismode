@@ -42,3 +42,6 @@ temp/
 
 # Local test data
 test/local/.data/
+
+# Internal product specs
+specs/product/

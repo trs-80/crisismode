@@ -16,7 +16,10 @@ export class CrisisModeError extends Error {
   }
 }
 
-const SUPPORTED_KINDS = ['postgresql', 'redis', 'etcd', 'kafka', 'kubernetes', 'ceph', 'flink'];
+const SUPPORTED_KINDS = [
+  'postgresql', 'redis', 'etcd', 'kafka', 'kubernetes', 'ceph', 'flink',
+  'application', 'ai-provider', 'managed-database', 'message-queue', 'application-config',
+];
 
 export function connectionRefused(kind: string, host: string, port: number): CrisisModeError {
   const hints: Record<string, string> = {
