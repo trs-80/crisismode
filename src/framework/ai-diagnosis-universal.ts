@@ -18,6 +18,7 @@ import { sanitizeInput } from './ai-diagnosis.js';
 import { getNetworkProfile } from './network-profile.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { HealthAssessment } from '../types/health.js';
+import type { SentryEnrichment } from '../integrations/sentry.js';
 
 const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -29,6 +30,8 @@ export interface UniversalDiagnosisRequest {
   diagnosis?: DiagnosisResult;
   /** Health assessment from an agent. */
   health?: HealthAssessment;
+  /** Sentry error context to enrich diagnosis. */
+  sentryContext?: SentryEnrichment;
 }
 
 export interface UniversalDiagnosisResult {
@@ -95,6 +98,19 @@ async function callAi(
     parts.push(`\nDiagnosis:\n- Status: ${request.diagnosis.status}\n- Scenario: ${request.diagnosis.scenario}\n- Confidence: ${(request.diagnosis.confidence * 100).toFixed(0)}%\n- Findings:\n${request.diagnosis.findings.map((f) => `  [${f.severity.toUpperCase()}] ${f.source}: ${f.observation}`).join('\n')}`);
   }
 
+  if (request.sentryContext) {
+    parts.push(`\nSentry Error Context:\n${request.sentryContext.summary}`);
+    if (request.sentryContext.recentErrors.length > 0) {
+      parts.push('Recent Errors:');
+      for (const err of request.sentryContext.recentErrors.slice(0, 10)) {
+        parts.push(`  [${err.count}x] ${err.title} (last: ${err.lastSeen})`);
+      }
+    }
+    if (request.sentryContext.errorSpike) {
+      parts.push(`Error Spike: ${request.sentryContext.errorSpike.spikeMultiplier}x above baseline (${request.sentryContext.errorSpike.currentRate.toFixed(1)} errors/hour)`);
+    }
+  }
+
   const userMessage = sanitizeInput(parts.join('\n\n'));
 
   const controller = new AbortController();
@@ -156,6 +172,11 @@ function buildFallback(request: UniversalDiagnosisRequest): UniversalDiagnosisRe
     for (const f of request.diagnosis.findings) {
       parts.push(`  [${f.severity.toUpperCase()}] ${f.observation}`);
     }
+  }
+
+  if (request.sentryContext && request.sentryContext.recentErrors.length > 0) {
+    parts.push('');
+    parts.push(`Sentry: ${request.sentryContext.summary}`);
   }
 
   return {

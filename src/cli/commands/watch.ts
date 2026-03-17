@@ -5,6 +5,9 @@
  * `crisismode watch` — shadow/continuous observation mode.
  * Runs periodic health checks and produces recovery proposals proactively.
  * Safe to run indefinitely — never mutates infrastructure.
+ *
+ * Uses WatchState to accumulate health history, detect patterns, and
+ * build health cards across observation cycles.
  */
 
 import { assembleContext } from '../../framework/context.js';
@@ -13,6 +16,8 @@ import { loadConfig, parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { detectServices } from '../detect.js';
 import { generateDiagnosisReport } from '../../framework/incident-report.js';
+import { WatchState } from '../../framework/watch-state.js';
+import type { HealthCard, RecurringPattern } from '../../framework/watch-state.js';
 import {
   printBanner, printHealthStatus, printInfo, printSuccess,
   printWarning, printError, printDetection,
@@ -26,20 +31,6 @@ export interface WatchOptions {
   targetName?: string;
   intervalMs?: number;
   maxCycles?: number;
-}
-
-interface HealthTransition {
-  from: HealthStatus;
-  to: HealthStatus;
-  timestamp: string;
-}
-
-interface WatchSummary {
-  totalCycles: number;
-  healthTransitions: HealthTransition[];
-  proposalsGenerated: number;
-  startedAt: string;
-  endedAt: string;
 }
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -84,16 +75,9 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
   printInfo(`Shadow mode active — observing ${target.name} every ${intervalSec}s`);
   console.log('');
 
-  const summary: WatchSummary = {
-    totalCycles: 0,
-    healthTransitions: [],
-    proposalsGenerated: 0,
-    startedAt: new Date().toISOString(),
-    endedAt: '',
-  };
-
-  let lastStatus: HealthStatus | null = null;
+  const watchState = new WatchState(target.name);
   let running = true;
+  let cycleCount = 0;
 
   const handleShutdown = (): void => {
     running = false;
@@ -104,11 +88,11 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
 
   try {
     while (running) {
-      if (opts.maxCycles !== undefined && summary.totalCycles >= opts.maxCycles) {
+      if (opts.maxCycles !== undefined && cycleCount >= opts.maxCycles) {
         break;
       }
 
-      summary.totalCycles++;
+      cycleCount++;
 
       const trigger: AgentContext['trigger'] = {
         type: 'health_check',
@@ -117,7 +101,7 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
           alertname: `${target.kind}WatchCheck`,
           instance: `${target.primary.host}:${target.primary.port}`,
           severity: 'info',
-          cycle: summary.totalCycles,
+          cycle: cycleCount,
         },
         receivedAt: new Date().toISOString(),
       };
@@ -126,28 +110,23 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
 
       try {
         const health = await agent.assessHealth(context);
-        const timestamp = new Date().toISOString();
         const confidencePct = (health.confidence * 100).toFixed(0);
 
-        // Compact one-line status
-        printInfo(`[${timestamp}] ${health.status.toUpperCase()} (${confidencePct}% confidence)`);
+        // Record in watch state
+        const transition = watchState.recordHealth(health, cycleCount);
 
-        // Track health transitions
-        if (lastStatus !== null && lastStatus !== health.status) {
-          summary.healthTransitions.push({
-            from: lastStatus,
-            to: health.status,
-            timestamp,
-          });
-        }
+        // Compact one-line status
+        printInfo(`[${health.observedAt}] ${health.status.toUpperCase()} (${confidencePct}% confidence)`);
 
         // If transitioned from healthy to unhealthy, generate a recovery proposal
-        if (lastStatus === 'healthy' && health.status === 'unhealthy') {
+        if (transition && transition.from === 'healthy' && transition.to === 'unhealthy') {
           printWarning('Health transitioned from healthy to unhealthy — generating recovery proposal...');
           console.log('');
 
           const diagnosis = await agent.diagnose(context);
           const plan = await agent.plan(context, diagnosis);
+
+          watchState.recordProposal(diagnosis, plan, cycleCount);
 
           const operatorSummary = buildOperatorSummary({
             health,
@@ -159,18 +138,23 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
           console.log(report.markdown);
           console.log('');
 
-          summary.proposalsGenerated++;
           printWarning('Recovery proposal ready. Run `crisismode recover` to execute.');
           console.log('');
         }
 
-        lastStatus = health.status;
+        // Print pattern alerts
+        if (cycleCount > 0 && cycleCount % 10 === 0) {
+          const patterns = watchState.detectPatterns();
+          for (const pattern of patterns) {
+            printWarning(`Pattern detected: ${pattern.description}`);
+          }
+        }
       } catch (err) {
         printError(`Health check failed: ${err instanceof Error ? err.message : String(err)}`);
       }
 
       // Sleep for the interval, but check running flag periodically
-      if (running && (opts.maxCycles === undefined || summary.totalCycles < opts.maxCycles)) {
+      if (running && (opts.maxCycles === undefined || cycleCount < opts.maxCycles)) {
         await sleep(intervalMs);
       }
     }
@@ -180,24 +164,40 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
     await backend.close();
   }
 
-  summary.endedAt = new Date().toISOString();
-  printWatchSummary(summary);
+  printWatchSummary(watchState);
 }
 
-function printWatchSummary(summary: WatchSummary): void {
+/** Get a health card for the current watch state — used by integrations. */
+export { WatchState };
+
+function printWatchSummary(state: WatchState): void {
+  const summary = state.getSummary();
+  const card = state.getHealthCard();
+
   console.log('');
   printInfo('--- Observation Summary ---');
+  printInfo(`Target:               ${card.target}`);
   printInfo(`Total cycles:         ${summary.totalCycles}`);
-  printInfo(`Health transitions:   ${summary.healthTransitions.length}`);
-  printInfo(`Proposals generated:  ${summary.proposalsGenerated}`);
+  printInfo(`Health transitions:   ${summary.transitions.length}`);
+  printInfo(`Proposals generated:  ${summary.proposals.length}`);
+  printInfo(`Uptime:               ${card.uptimePercent}%`);
+  printInfo(`Avg confidence:       ${(card.avgConfidence * 100).toFixed(1)}%`);
   printInfo(`Started:              ${summary.startedAt}`);
-  printInfo(`Ended:                ${summary.endedAt}`);
+  printInfo(`Ended:                ${summary.lastUpdated}`);
 
-  if (summary.healthTransitions.length > 0) {
+  if (summary.transitions.length > 0) {
     console.log('');
     printInfo('Health transitions:');
-    for (const t of summary.healthTransitions) {
+    for (const t of summary.transitions) {
       printInfo(`  ${t.timestamp}: ${t.from} -> ${t.to}`);
+    }
+  }
+
+  if (summary.patterns.length > 0) {
+    console.log('');
+    printInfo('Detected patterns:');
+    for (const p of summary.patterns) {
+      printWarning(`  [${p.pattern}] ${p.description}`);
     }
   }
 
