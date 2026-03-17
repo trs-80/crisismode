@@ -7,37 +7,70 @@
  */
 
 import chalk from 'chalk';
-import type { HealthAssessment, OperatorSummary } from '../types/health.js';
+import type { HealthAssessment, HealthStatus, OperatorSummary } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { StepResult } from '../types/execution-state.js';
 import type { PlanExplanation } from '../framework/ai-explainer.js';
 import type { DetectedService } from './detect.js';
 import type { NetworkProfile } from '../framework/network-profile.js';
+import type { EscalationLevel } from '../framework/escalation.js';
+
+/**
+ * Three output modes:
+ *   - human:   colored, interactive, emoji severity indicators (default for TTY)
+ *   - pipe:    plain text, no ANSI, tab-separated (auto-detected when stdout is not a TTY)
+ *   - machine: structured JSON/JSONL with metadata (--json flag)
+ */
+export type OutputMode = 'human' | 'pipe' | 'machine';
 
 export interface OutputOptions {
+  /** @deprecated Use `mode` instead. Kept for backward compatibility. */
   json: boolean;
   noColor: boolean;
   verbose: boolean;
+  mode: OutputMode;
 }
 
-let outputOptions: OutputOptions = { json: false, noColor: false, verbose: false };
+let outputOptions: OutputOptions = { json: false, noColor: false, verbose: false, mode: 'human' };
 
 export function configure(opts: Partial<OutputOptions>): void {
   outputOptions = { ...outputOptions, ...opts };
-  if (opts.noColor) {
+
+  // Resolve output mode: explicit --json → machine, otherwise auto-detect TTY
+  if (opts.json || opts.mode === 'machine') {
+    outputOptions.mode = 'machine';
+    outputOptions.json = true;
+  } else if (opts.mode) {
+    outputOptions.mode = opts.mode;
+  } else if (!process.stdout.isTTY) {
+    outputOptions.mode = 'pipe';
+  } else {
+    outputOptions.mode = 'human';
+  }
+
+  if (opts.noColor || outputOptions.mode === 'pipe') {
     chalk.level = 0;
   }
+}
+
+/** Get the current output mode. */
+export function getOutputMode(): OutputMode {
+  return outputOptions.mode;
 }
 
 function jsonOut(type: string, data: unknown): void {
   console.log(JSON.stringify({ type, ...data as Record<string, unknown> }));
 }
 
+function pipeOut(line: string): void {
+  console.log(line);
+}
+
 // ── Banner ──
 
 export function printBanner(): void {
-  if (outputOptions.json) return;
+  if (outputOptions.mode !== 'human') return;
   console.log('');
   console.log(chalk.bold.red('  CrisisMode') + chalk.dim(' — AI-powered infrastructure recovery'));
   console.log('');
@@ -46,7 +79,7 @@ export function printBanner(): void {
 // ── Detection results ──
 
 export function printDetection(services: DetectedService[]): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('detection', { services });
     return;
   }
@@ -73,7 +106,7 @@ export function printDetection(services: DetectedService[]): void {
 // ── Health status ──
 
 export function printHealthStatus(assessment: HealthAssessment): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('health', { assessment });
     return;
   }
@@ -110,7 +143,7 @@ export function printHealthStatus(assessment: HealthAssessment): void {
 // ── Diagnosis ──
 
 export function printDiagnosis(diagnosis: DiagnosisResult): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('diagnosis', { diagnosis });
     return;
   }
@@ -149,7 +182,7 @@ export function printDiagnosis(diagnosis: DiagnosisResult): void {
 // ── Plan ──
 
 export function printPlan(plan: RecoveryPlan): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('plan', { plan });
     return;
   }
@@ -193,7 +226,7 @@ function riskBadge(risk: string): string {
 // ── Plan Explanation ──
 
 export function printPlanExplanation(explanation: PlanExplanation): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('plan_explanation', { explanation });
     return;
   }
@@ -215,7 +248,7 @@ export function printPlanExplanation(explanation: PlanExplanation): void {
 // ── Results ──
 
 export function printResults(results: StepResult[]): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('results', { results });
     return;
   }
@@ -234,7 +267,7 @@ export function printResults(results: StepResult[]): void {
 // ── Operator Summary ──
 
 export function printOperatorSummary(summary: OperatorSummary): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('operator_summary', { summary });
     return;
   }
@@ -258,7 +291,7 @@ export function printOperatorSummary(summary: OperatorSummary): void {
 // ── Status table ──
 
 export function printStatus(services: Array<{ kind: string; host: string; port: number; status: 'up' | 'down' | 'degraded' }>): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('status', { services });
     return;
   }
@@ -275,7 +308,7 @@ export function printStatus(services: Array<{ kind: string; host: string; port: 
 // ── Network profile ──
 
 export function printNetworkProfile(profile: NetworkProfile): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('network', { profile });
     return;
   }
@@ -325,24 +358,146 @@ export function printNetworkProfile(profile: NetworkProfile): void {
 // ── Generic messages ──
 
 export function printInfo(msg: string): void {
-  if (outputOptions.json) return;
+  if (outputOptions.mode === 'machine') return;
   console.log(chalk.dim(`  ${msg}`));
 }
 
 export function printSuccess(msg: string): void {
-  if (outputOptions.json) return;
+  if (outputOptions.mode === 'machine') return;
   console.log(chalk.green(`  ✓ ${msg}`));
 }
 
 export function printWarning(msg: string): void {
-  if (outputOptions.json) return;
+  if (outputOptions.mode === 'machine') return;
   console.log(chalk.yellow(`  ! ${msg}`));
 }
 
 export function printError(msg: string): void {
-  if (outputOptions.json) {
+  if (outputOptions.mode === 'machine') {
     jsonOut('error', { message: msg });
     return;
   }
   console.error(chalk.red(`  ✗ ${msg}`));
+}
+
+// ── Scan summary ──
+
+export interface ScanFinding {
+  id: string;
+  service: string;
+  status: HealthStatus;
+  summary: string;
+  confidence: number;
+  escalationLevel: EscalationLevel;
+  signals: Array<{ status: string; detail: string }>;
+}
+
+export interface ScanResult {
+  score: number;
+  findings: ScanFinding[];
+  scannedAt: string;
+  durationMs: number;
+}
+
+export function printScanSummary(result: ScanResult): void {
+  if (outputOptions.mode === 'machine') {
+    jsonOut('scan', { ...result });
+    return;
+  }
+
+  if (outputOptions.mode === 'pipe') {
+    // Tab-separated: score, scanned_at, duration_ms
+    pipeOut(`scan\t${result.score}\t${result.scannedAt}\t${result.durationMs}`);
+    for (const f of result.findings) {
+      pipeOut(`finding\t${f.id}\t${f.service}\t${f.status}\t${f.confidence}\t${f.summary}`);
+    }
+    return;
+  }
+
+  // Human mode — colored, scored table
+  console.log('');
+  const scoreColor = result.score >= 80 ? chalk.green
+    : result.score >= 50 ? chalk.yellow
+    : chalk.red;
+  console.log(chalk.bold('  System Health Score: ') + scoreColor(`${result.score}/100`));
+  console.log(chalk.dim(`  Scanned at ${result.scannedAt} (${result.durationMs}ms)`));
+  console.log('');
+
+  if (result.findings.length === 0) {
+    console.log(chalk.dim('  No services detected. Run with --verbose for details.'));
+    console.log('');
+    return;
+  }
+
+  // Table header
+  console.log(
+    chalk.dim('  ') +
+    chalk.bold('ID'.padEnd(14)) +
+    chalk.bold('Service'.padEnd(20)) +
+    chalk.bold('Status'.padEnd(14)) +
+    chalk.bold('Level'.padEnd(10)) +
+    chalk.bold('Summary'),
+  );
+  console.log(chalk.dim('  ' + '-'.repeat(80)));
+
+  for (const f of result.findings) {
+    const statusIcon = healthStatusIcon(f.status);
+    const levelBadge = escalationBadge(f.escalationLevel);
+    console.log(
+      chalk.dim('  ') +
+      chalk.cyan(f.id.padEnd(14)) +
+      f.service.padEnd(20) +
+      statusIcon.padEnd(14 + (statusIcon.length - stripAnsi(statusIcon).length)) +
+      levelBadge.padEnd(10 + (levelBadge.length - stripAnsi(levelBadge).length)) +
+      chalk.dim(f.summary),
+    );
+  }
+  console.log('');
+}
+
+function healthStatusIcon(status: HealthStatus): string {
+  switch (status) {
+    case 'healthy': return chalk.green('OK');
+    case 'recovering': return chalk.yellow('RECOVERING');
+    case 'unhealthy': return chalk.red('UNHEALTHY');
+    case 'unknown': return chalk.dim('UNKNOWN');
+  }
+}
+
+// ── Escalation badges ──
+
+const ESCALATION_LABELS: Record<EscalationLevel, string> = {
+  1: 'Observe',
+  2: 'Diagnose',
+  3: 'Suggest',
+  4: 'Repair',
+  5: 'Repair!',
+};
+
+export function escalationBadge(level: EscalationLevel): string {
+  const label = ESCALATION_LABELS[level];
+  switch (level) {
+    case 1: return chalk.dim(label);
+    case 2: return chalk.blue(label);
+    case 3: return chalk.cyan(label);
+    case 4: return chalk.yellow(label);
+    case 5: return chalk.red(label);
+  }
+}
+
+// ── Next action suggestions ──
+
+export function printNextAction(message: string): void {
+  if (outputOptions.mode === 'machine') return;
+  if (outputOptions.mode === 'pipe') return;
+  console.log(chalk.cyan('  → ') + chalk.white(message));
+  console.log('');
+}
+
+// ── Helpers ──
+
+/** Strip ANSI escape codes for width calculation. */
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1B\[[0-9;]*m/g, '');
 }

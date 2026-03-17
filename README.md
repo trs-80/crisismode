@@ -80,7 +80,7 @@ specs/
 
 src/
   cli/                              # Unified CLI interface
-    commands/                       #   diagnose, recover, status, ask, demo, init, webhook, watch
+    commands/                       #   scan, diagnose, recover, status, ask, demo, init, webhook, watch
     detect.ts                       #   System detection and auto-discovery
     autodiscovery.ts                #   Zero-config agent detection
     output.ts                       #   Structured output formatting
@@ -230,6 +230,8 @@ Requires [Podman](https://podman.io/):
 ### CLI Commands
 
 ```bash
+crisismode             # Zero-config health scan (default)
+crisismode scan        # Health scan with scored summary and next-action hints
 crisismode diagnose    # Health check + AI-powered diagnosis (read-only)
 crisismode recover     # Full recovery flow with execution planning
 crisismode status      # Quick health probe
@@ -239,6 +241,8 @@ crisismode init        # Generate crisismode.yaml configuration
 crisismode webhook     # Start webhook receiver for AlertManager
 crisismode watch       # Continuous shadow observation
 ```
+
+Output modes: `--json` for machine-readable JSON, plain text auto-detected when piped, colored TTY output by default.
 
 ### Building a new agent
 

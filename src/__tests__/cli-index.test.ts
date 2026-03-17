@@ -13,8 +13,10 @@ describe('CLI argument parsing', () => {
     options: {
       config: { type: 'string' as const },
       target: { type: 'string' as const },
+      category: { type: 'string' as const },
       execute: { type: 'boolean' as const, default: false },
       'health-only': { type: 'boolean' as const, default: false },
+      interval: { type: 'string' as const },
       json: { type: 'boolean' as const, default: false },
       'no-color': { type: 'boolean' as const, default: false },
       verbose: { type: 'boolean' as const, default: false },
@@ -64,5 +66,15 @@ describe('CLI argument parsing', () => {
     const { values, positionals } = parseArgs({ ...parseOpts, args: ['--json', 'some', 'question'] });
     expect(values.json).toBe(true);
     expect(positionals).toEqual(['some', 'question']);
+  });
+
+  it('parses --category flag', () => {
+    const { values } = parseArgs({ ...parseOpts, args: ['--category', 'postgresql,redis'] });
+    expect(values.category).toBe('postgresql,redis');
+  });
+
+  it('parses --interval flag', () => {
+    const { values } = parseArgs({ ...parseOpts, args: ['--interval', '60'] });
+    expect(values.interval).toBe('60');
   });
 });
