@@ -1,0 +1,8 @@
+{
+  "name": "check-dns-resolution",
+  "description": "Checks DNS resolution for a target hostname",
+  "version": "1.0.0",
+  "targetKinds": ["network", "generic"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh"
+}

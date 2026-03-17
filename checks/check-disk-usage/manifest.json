@@ -1,0 +1,8 @@
+{
+  "name": "check-disk-usage",
+  "description": "Checks disk usage on the target system, warns at 80%, critical at 90%",
+  "version": "1.0.0",
+  "targetKinds": ["linux", "generic"],
+  "verbs": ["health", "diagnose", "plan"],
+  "executable": "./check.sh"
+}

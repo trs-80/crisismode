@@ -16,6 +16,8 @@ import { AgentRegistry } from '../../config/agent-registry.js';
 import { loadConfig } from '../../config/loader.js';
 import { detectServices } from '../detect.js';
 import { discoverStack } from '../autodiscovery.js';
+import { discoverCheckPlugins } from '../../framework/check-discovery.js';
+import { executeCheckPlugin, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
   printBanner, printScanSummary, printNextAction,
   printInfo, printDetection, printError,
@@ -24,6 +26,8 @@ import type { ScanFinding, ScanResult } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { HealthAssessment } from '../../types/health.js';
 import type { AgentInstance } from '../../config/agent-registration.js';
+import type { CheckRequest, CheckHealthResult } from '../../framework/check-plugin.js';
+import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 
 export interface ScanOptions {
   configPath?: string;
@@ -48,6 +52,7 @@ const KIND_PREFIX: Record<string, string> = {
   'managed-database': 'DBMIG',
   'message-queue': 'QUEUE',
   'application-config': 'CFG',
+  plugin: 'PLUG',
 };
 
 function findingId(kind: string, index: number): string {
@@ -98,6 +103,9 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
       printInfo(`No targets match categories: ${opts.category.join(', ')}`);
     }
   }
+
+  // Plugin discovery (parallel with phase 2 setup)
+  const pluginDiscovery = discoverCheckPlugins();
 
   // Phase 2: Parallel health checks
   printInfo(`Running health checks on ${targets.length} target(s)...`);
@@ -172,7 +180,71 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     }
   });
 
-  await Promise.all(healthPromises);
+  // Await plugin discovery alongside built-in health checks
+  const [, discoveryResult] = await Promise.all([
+    Promise.all(healthPromises),
+    pluginDiscovery,
+  ]);
+
+  // Phase 2b: External check plugin health checks
+  const healthPlugins = discoveryResult.plugins.filter(
+    (p) => p.manifest.verbs.includes('health'),
+  );
+
+  if (healthPlugins.length > 0) {
+    printInfo(`Found ${healthPlugins.length} external check plugin(s)`);
+
+    const pluginPromises = healthPlugins.map(async (plugin: DiscoveredPlugin) => {
+      try {
+        const request: CheckRequest = {
+          verb: 'health',
+          target: {
+            name: 'plugin-check',
+            kind: plugin.manifest.targetKinds[0] ?? 'generic',
+          },
+        };
+
+        const execResult = await executeCheckPlugin(
+          plugin.executablePath,
+          request,
+          { timeoutMs: plugin.manifest.timeoutMs ?? 10_000, cwd: plugin.pluginDir },
+        );
+
+        const healthResult = execResult.result as CheckHealthResult | null;
+        const status = healthResult?.status ?? exitStatusToHealth(execResult.exitStatus);
+        const summary = healthResult?.summary ?? `Plugin exited with status: ${execResult.exitStatus}`;
+        const confidence = healthResult?.confidence ?? (status === 'unknown' ? 0 : 0.5);
+        const signals = (healthResult?.signals ?? []).map((s) => ({
+          status: s.status,
+          detail: s.detail,
+        }));
+
+        const id = findingId('plugin', findingCounter++);
+        findings.push({
+          id,
+          service: `plugin (${plugin.manifest.name})`,
+          status,
+          summary,
+          confidence,
+          escalationLevel: status === 'healthy' ? 1 : 2,
+          signals,
+        });
+      } catch (err) {
+        const id = findingId('plugin', findingCounter++);
+        findings.push({
+          id,
+          service: `plugin (${plugin.manifest.name})`,
+          status: 'unknown',
+          summary: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          confidence: 0,
+          escalationLevel: 2,
+          signals: [],
+        });
+      }
+    });
+
+    await Promise.all(pluginPromises);
+  }
 
   // Phase 3: Compute score
   const score = computeHealthScore(findings);

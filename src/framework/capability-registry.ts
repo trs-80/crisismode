@@ -3,7 +3,7 @@
 
 import type { CapabilityDefinition } from '../types/plugin.js';
 
-const CAPABILITIES: CapabilityDefinition[] = [
+let CAPABILITIES: CapabilityDefinition[] = [
   {
     id: 'db.query.read',
     actionKind: 'read',
@@ -247,7 +247,7 @@ const CAPABILITIES: CapabilityDefinition[] = [
   },
 ];
 
-const CAPABILITY_INDEX = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));
+let CAPABILITY_INDEX = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));
 
 export function listCapabilities(): CapabilityDefinition[] {
   return CAPABILITIES;
@@ -259,4 +259,34 @@ export function getCapability(id: string): CapabilityDefinition | undefined {
 
 export function isKnownCapability(id: string): boolean {
   return CAPABILITY_INDEX.has(id);
+}
+
+/**
+ * Register an external plugin capability.
+ * If a capability with the same ID already exists, it is replaced.
+ */
+export function registerExternalCapability(capability: CapabilityDefinition): void {
+  const existing = CAPABILITY_INDEX.get(capability.id);
+  if (existing) {
+    const idx = CAPABILITIES.indexOf(existing);
+    if (idx >= 0) {
+      CAPABILITIES[idx] = capability;
+    }
+  } else {
+    CAPABILITIES.push(capability);
+  }
+  CAPABILITY_INDEX.set(capability.id, capability);
+}
+
+/**
+ * Unregister a capability by ID.
+ * Returns true if the capability was found and removed, false otherwise.
+ */
+export function unregisterCapability(id: string): boolean {
+  const existing = CAPABILITY_INDEX.get(id);
+  if (!existing) return false;
+
+  CAPABILITIES = CAPABILITIES.filter((c) => c.id !== id);
+  CAPABILITY_INDEX.delete(id);
+  return true;
 }
