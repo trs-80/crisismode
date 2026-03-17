@@ -17,9 +17,14 @@ CrisisMode is an AI crisis recovery framework with a hub-and-spoke architecture.
 - **ExecutionBackend** (`src/framework/backend.ts`) — shared contract for execution backends (`executeCommand()`, `evaluateCheck()`, optional `listCapabilityProviders()`)
 - **PgBackend / RedisBackend / EtcdBackend / KafkaBackend / K8sBackend / CephBackend / FlinkBackend** — agent-specific backend interfaces that extend ExecutionBackend with system-specific diagnosis methods
 - **ExecutionEngine** (`src/framework/engine.ts`) — executes plans step-by-step with safety checks
+- **GraphEngine** (`src/framework/graph-engine.ts`) — LangGraph-based graph execution engine for complex recovery workflows
+- **SymptomRouter** (`src/framework/symptom-router.ts`) — routes symptoms to the appropriate recovery agent
 - **ProviderRegistry** (`src/framework/provider-registry.ts`) — resolves which capability providers can handle each step
 - **CapabilityRegistry** (`src/framework/capability-registry.ts`) — global registry of standard recovery capabilities (e.g., `db.query.read`, `db.replica.disconnect`)
 - **OperatorSummary** (`src/framework/operator-summary.ts`) — builds human-readable health and readiness summaries for operators
+- **IncidentReport** (`src/framework/incident-report.ts`) — generates structured incident reports from recovery executions
+- **NetworkProfile** (`src/framework/network-profile.ts`) — network diagnostics and profiling
+- **AI Diagnosis** (`src/framework/ai-diagnosis-universal.ts`) — universal AI-powered diagnosis for any agent via Claude API
 - **ForensicRecorder** — immutable audit trail for every execution
 
 ### Execution modes
@@ -34,17 +39,35 @@ CrisisMode is an AI crisis recovery framework with a hub-and-spoke architecture.
 - **Async by default** — backend interfaces return `Promise<T>`, engine methods are async
 - **Type imports** — use `import type { ... }` for type-only imports
 
+## CLI
+
+The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the following commands:
+
+| Command | Description |
+|---|---|
+| `diagnose` | Health check + AI-powered diagnosis (read-only) |
+| `recover` | Full recovery flow with execution planning |
+| `status` | Quick health probe |
+| `ask` | Natural language AI diagnosis |
+| `demo` | Simulator demo mode |
+| `init` | Generate `crisismode.yaml` configuration |
+| `webhook` | Start webhook receiver for AlertManager |
+| `watch` | Continuous shadow observation |
+
+Supporting modules: `detect.ts` (system detection), `autodiscovery.ts` (zero-config agent detection), `output.ts` (structured output formatting), `errors.ts` (error formatting).
+
 ## Agent Pattern
 
 Every agent follows this structure:
 
 ```
 src/agent/<system>/
-  backend.ts      # Interface (PgBackend, RedisBackend, etc.)
-  simulator.ts    # In-memory implementation for demos/tests
-  live-client.ts  # Real infrastructure client
-  manifest.ts     # AgentManifest — capabilities, risk profile, triggers
-  agent.ts        # RecoveryAgent implementation
+  backend.ts        # Interface (PgBackend, RedisBackend, etc.)
+  simulator.ts      # In-memory implementation for demos/tests
+  live-client.ts    # Real infrastructure client
+  manifest.ts       # AgentManifest — capabilities, risk profile, triggers
+  agent.ts          # RecoveryAgent implementation
+  registration.ts   # Lazy factory for the agent registry
 ```
 
 When building a new agent:
@@ -53,6 +76,7 @@ When building a new agent:
 3. The live client queries real infrastructure (database, cache, API)
 4. The manifest declares what the agent targets, its max risk level, and trigger conditions
 5. The agent uses diagnosis findings to dynamically build plans — never hardcode IPs or hostnames
+6. Create `registration.ts` with a lazy factory and register in `src/config/builtin-agents.ts`
 
 ## Recovery Plan Steps
 
@@ -105,8 +129,15 @@ These are enforced by the validator (`src/framework/validator.ts`).
 |---|---|
 | `src/agent/interface.ts` | RecoveryAgent contract — start here for understanding the agent model |
 | `src/framework/engine.ts` | ExecutionEngine — how plans are executed step by step |
+| `src/framework/graph-engine.ts` | LangGraph-based graph execution engine |
+| `src/framework/symptom-router.ts` | Routes symptoms to appropriate recovery agents |
+| `src/framework/ai-diagnosis-universal.ts` | Universal AI-powered diagnosis for any agent |
+| `src/framework/incident-report.ts` | Structured incident report generation |
+| `src/framework/network-profile.ts` | Network diagnostics and profiling |
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
+| `src/cli/index.ts` | Unified CLI entry point |
+| `src/cli/commands/` | CLI subcommands (diagnose, recover, status, ask, demo, init, webhook, watch) |
 | `src/agent/pg-replication/` | Reference agent implementation (PostgreSQL) |
 | `src/agent/redis/` | Redis memory pressure recovery agent |
 | `src/agent/etcd/` | etcd consensus recovery agent |
@@ -114,6 +145,14 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/agent/kubernetes/` | Kubernetes cluster recovery agent |
 | `src/agent/ceph/` | Ceph storage recovery agent |
 | `src/agent/flink/` | Flink stream processing recovery agent |
+| `src/agent/ai-provider/` | AI service failover and fallback agent |
+| `src/agent/config-drift/` | Configuration drift detection and remediation agent |
+| `src/agent/db-migration/` | Database migration safety and rollback agent |
+| `src/agent/deploy-rollback/` | Deployment rollback orchestration agent |
+| `src/agent/queue-backlog/` | Queue backlog and lag recovery agent |
+| `src/config/builtin-agents.ts` | Built-in agent registration |
+| `src/config/agent-registry.ts` | Global agent registry |
+| `src/integrations/` | External integrations (GitHub, Sentry) |
 | `specs/foundational/recovery-agent-contract.md` | The authoritative specification |
 | `src/framework/backend.ts` | ExecutionBackend contract — shared interface for all backends |
 | `src/framework/provider-registry.ts` | Resolves capability providers for plan steps |

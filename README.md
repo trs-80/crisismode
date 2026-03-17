@@ -74,10 +74,23 @@ specs/
     recovery-agent-contract.md      # Agent contract specification (v0.2.1)
   deployment/
     operations.md                   # Hub-and-spoke deployment & operations spec
+  architecture/
+    plugin-platform.md              # Plugin platform architecture guide
+    operator-health-and-ai-services.md  # Operator summary, AI services spec
 
 src/
+  cli/                              # Unified CLI interface
+    commands/                       #   diagnose, recover, status, ask, demo, init, webhook, watch
+    detect.ts                       #   System detection and auto-discovery
+    autodiscovery.ts                #   Zero-config agent detection
+    output.ts                       #   Structured output formatting
   types/                            # TypeScript type definitions for the contract
   framework/                        # Execution engine, safety, forensics, coordination, hub client
+    graph-engine.ts                 #   LangGraph-based graph execution engine
+    symptom-router.ts               #   Routes symptoms to appropriate agents
+    ai-diagnosis-universal.ts       #   Universal AI-powered diagnosis
+    incident-report.ts              #   Incident report generation
+    network-profile.ts              #   Network diagnostics and profiling
   agent/
     interface.ts                    # RecoveryAgent contract interface
     pg-replication/                 # PostgreSQL replication recovery agent
@@ -87,6 +100,14 @@ src/
     kubernetes/                     # Kubernetes cluster recovery agent
     ceph/                           # Ceph storage recovery agent
     flink/                          # Flink stream processing recovery agent
+    ai-provider/                    # AI service failover and fallback agent
+    config-drift/                   # Configuration drift detection agent
+    db-migration/                   # Database migration safety agent
+    deploy-rollback/                # Deployment rollback orchestration agent
+    queue-backlog/                  # Queue backlog and lag recovery agent
+  config/                           # Agent registry, built-in agents, credentials
+  integrations/                     # External integrations (GitHub, Sentry)
+  hub/                              # Hub coordination and multi-spoke orchestration
   demo/                             # Interactive CLI demo (simulator mode)
   live.ts                           # Live mode — runs against real infrastructure
   webhook.ts                        # Webhook receiver for AlertManager integration
@@ -184,6 +205,8 @@ Requires [Podman](https://podman.io/):
 
 ## Agents
 
+### Stateful System Agents
+
 | Agent | System | Scenarios | Status |
 |---|---|---|---|
 | **PostgreSQL Replication** | PostgreSQL >=14 | Replication lag cascade, slot overflow, replica divergence, WAL sender timeout | Live — tested against real PG |
@@ -193,6 +216,29 @@ Requires [Podman](https://podman.io/):
 | **Kubernetes Recovery** | K8s >=1.27 | Node not ready cascade, pod crashloop cascade, stuck reconciliation, PVC terminating | Simulator complete |
 | **Ceph Storage** | Ceph >=17 (Quincy) | OSD down cascade, degraded PGs, slow OSD ops, pool near-full | Simulator complete |
 | **Flink Stream Processing** | Flink >=1.16 | Checkpoint failure cascade, savepoint corruption, TaskManager loss, backpressure | Simulator complete |
+
+### Cross-Cutting Concern Agents
+
+| Agent | Domain | Scenarios | Status |
+|---|---|---|---|
+| **AI Provider** | AI/ML services | Provider failover, fallback routing, rate limit management | Simulator complete |
+| **Config Drift** | Configuration | Drift detection, remediation, compliance enforcement | Simulator complete |
+| **DB Migration** | Database ops | Migration safety checks, rollback orchestration | Simulator complete |
+| **Deploy Rollback** | Deployments | Deployment rollback, canary failure response | Simulator complete |
+| **Queue Backlog** | Message queues | Backlog reduction, consumer lag recovery | Simulator complete |
+
+### CLI Commands
+
+```bash
+crisismode diagnose    # Health check + AI-powered diagnosis (read-only)
+crisismode recover     # Full recovery flow with execution planning
+crisismode status      # Quick health probe
+crisismode ask         # Natural language AI diagnosis
+crisismode demo        # Simulator demo mode
+crisismode init        # Generate crisismode.yaml configuration
+crisismode webhook     # Start webhook receiver for AlertManager
+crisismode watch       # Continuous shadow observation
+```
 
 ### Building a new agent
 
@@ -248,6 +294,7 @@ Alert Source (Prometheus) → Spoke Webhook Receiver
 - [Recovery Agent Contract](specs/foundational/recovery-agent-contract.md) — the authoritative agent interface definition
 - [Deployment & Operations](specs/deployment/operations.md) — hub-and-spoke architecture, integration patterns, operational management
 - [Plugin Platform Architecture Guide](specs/architecture/plugin-platform.md) — how the repo evolves from bespoke agents to a scalable plugin ecosystem
+- [Operator Health & AI Services](specs/architecture/operator-health-and-ai-services.md) — operator summary, AI diagnosis, and site config spec
 
 ## Development
 
