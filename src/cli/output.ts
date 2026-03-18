@@ -429,24 +429,31 @@ export function printScanSummary(result: ScanResult): void {
     return;
   }
 
+  // Compute service column width from data (min 20, max 40, +2 for padding)
+  const svcWidth = Math.min(40, Math.max(20, ...result.findings.map((f) => f.service.length + 2)));
+
   // Table header
   console.log(
     chalk.dim('  ') +
     chalk.bold('ID'.padEnd(14)) +
-    chalk.bold('Service'.padEnd(20)) +
+    chalk.bold('Service'.padEnd(svcWidth)) +
     chalk.bold('Status'.padEnd(14)) +
     chalk.bold('Level'.padEnd(10)) +
     chalk.bold('Summary'),
   );
-  console.log(chalk.dim('  ' + '-'.repeat(80)));
+  console.log(chalk.dim('  ' + '-'.repeat(12 + svcWidth + 14 + 10 + 30)));
 
   for (const f of result.findings) {
     const statusIcon = healthStatusIcon(f.status);
     const levelBadge = escalationBadge(f.escalationLevel);
+    // Truncate service name if it exceeds column width
+    const svc = f.service.length > svcWidth - 2
+      ? f.service.slice(0, svcWidth - 5) + '...'
+      : f.service;
     console.log(
       chalk.dim('  ') +
       chalk.cyan(f.id.padEnd(14)) +
-      f.service.padEnd(20) +
+      svc.padEnd(svcWidth) +
       statusIcon.padEnd(14 + (statusIcon.length - stripAnsi(statusIcon).length)) +
       levelBadge.padEnd(10 + (levelBadge.length - stripAnsi(levelBadge).length)) +
       chalk.dim(f.summary),
