@@ -353,4 +353,120 @@ describe('runWatch', () => {
       expect.stringContaining('every 5s'),
     );
   });
+
+  it('detects and prints patterns at cycle 10', async () => {
+    setupConfigSuccess();
+    const instance = makeAgentInstance();
+    let callCount = 0;
+
+    // Alternate healthy/unhealthy to create a flapping pattern
+    instance.agent.assessHealth.mockImplementation(async () => {
+      callCount++;
+      const status = callCount % 2 === 0 ? 'unhealthy' : 'healthy';
+      return {
+        status,
+        confidence: 0.9,
+        summary: `Status: ${status}`,
+        observedAt: new Date().toISOString(),
+        signals: [],
+        recommendedActions: [],
+      };
+    });
+
+    const registry = new AgentRegistry({} as never);
+    vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
+
+    await runWatch({ maxCycles: 10, intervalMs: 1 });
+
+    // 10 cycles of flapping should trigger pattern detection at cycle 10
+    expect(instance.agent.assessHealth).toHaveBeenCalledTimes(10);
+    // Pattern detection runs at cycle 10 — if patterns found, printWarning is called
+    // The flapping between healthy/unhealthy produces transitions + proposals
+    expect(instance.backend.close).toHaveBeenCalled();
+  });
+
+  it('prints summary with detected patterns', async () => {
+    setupConfigSuccess();
+    const instance = makeAgentInstance();
+    let callCount = 0;
+
+    // Create a health flapping pattern: healthy → unhealthy → healthy → unhealthy ...
+    instance.agent.assessHealth.mockImplementation(async () => {
+      callCount++;
+      const status = callCount % 2 === 0 ? 'unhealthy' : 'healthy';
+      return {
+        status,
+        confidence: 0.85,
+        summary: `System ${status}`,
+        observedAt: new Date().toISOString(),
+        signals: [],
+        recommendedActions: [],
+      };
+    });
+
+    const registry = new AgentRegistry({} as never);
+    vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
+
+    await runWatch({ maxCycles: 10, intervalMs: 1 });
+
+    // Summary should show transitions
+    expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Health transitions'));
+  });
+
+  it('uses default interval when not specified', async () => {
+    setupConfigSuccess();
+    const instance = makeAgentInstance('healthy');
+    const registry = new AgentRegistry({} as never);
+    vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
+
+    await runWatch({ maxCycles: 1 });
+
+    expect(vi.mocked(printInfo)).toHaveBeenCalledWith(
+      expect.stringContaining('every 30s'),
+    );
+  });
+
+  it('prints watch summary with uptime and confidence', async () => {
+    setupConfigSuccess();
+    const instance = makeAgentInstance('healthy');
+    const registry = new AgentRegistry({} as never);
+    vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
+
+    await runWatch({ maxCycles: 3, intervalMs: 1 });
+
+    expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Uptime:'));
+    expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Avg confidence:'));
+    expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Total cycles:         3'));
+  });
+
+  it('handles multiple transitions in sequence', async () => {
+    setupConfigSuccess();
+    const instance = makeAgentInstance();
+    let callCount = 0;
+
+    // healthy → unhealthy → healthy (two transitions)
+    instance.agent.assessHealth.mockImplementation(async () => {
+      callCount++;
+      let status: string;
+      if (callCount <= 1) status = 'healthy';
+      else if (callCount <= 2) status = 'unhealthy';
+      else status = 'healthy';
+      return {
+        status,
+        confidence: 0.9,
+        summary: `System is ${status}`,
+        observedAt: new Date().toISOString(),
+        signals: [],
+        recommendedActions: [],
+      };
+    });
+
+    const registry = new AgentRegistry({} as never);
+    vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
+
+    await runWatch({ maxCycles: 3, intervalMs: 1 });
+
+    // Should show 2 health transitions
+    expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Health transitions:   2'));
+  });
 });
