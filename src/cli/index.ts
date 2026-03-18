@@ -36,7 +36,9 @@ const HELP = `
     crisismode demo                         Run simulator demo
     crisismode webhook [options]            Start webhook receiver
     crisismode ask "<question>"             Natural language AI diagnosis
+    crisismode ask                          Interactive diagnostic REPL
     crisismode watch [options]              Continuous shadow observation
+    crisismode completions bash|zsh|fish   Generate shell completions
 
   Options:
     --agent <name>      Scaffold a new check plugin (init only)
@@ -100,17 +102,21 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Version
+  // Version — inlined by esbuild at bundle time; falls back to package.json for dev
   if (values.version) {
-    const { readFileSync } = await import('node:fs');
-    const { resolve, dirname } = await import('node:path');
-    const { fileURLToPath } = await import('node:url');
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    try {
-      const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'));
-      console.log(pkg.version);
-    } catch {
-      console.log('unknown');
+    if (process.env.__CRISISMODE_VERSION) {
+      console.log(process.env.__CRISISMODE_VERSION);
+    } else {
+      const { readFileSync } = await import('node:fs');
+      const { resolve, dirname } = await import('node:path');
+      const { fileURLToPath } = await import('node:url');
+      const __dirname = dirname(fileURLToPath(import.meta.url));
+      try {
+        const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf-8'));
+        console.log(pkg.version);
+      } catch {
+        console.log('unknown');
+      }
     }
     return;
   }
@@ -178,11 +184,13 @@ async function main(): Promise<void> {
     case 'ask': {
       const question = positionals.join(' ');
       if (!question) {
-        console.error('Usage: crisismode ask "<your question>"');
-        process.exit(1);
+        // No question provided — launch interactive REPL
+        const { runAskRepl } = await import('./commands/ask.js');
+        await runAskRepl();
+      } else {
+        const { runAsk } = await import('./commands/ask.js');
+        await runAsk(question);
       }
-      const { runAsk } = await import('./commands/ask.js');
-      await runAsk(question);
       break;
     }
 
@@ -194,6 +202,17 @@ async function main(): Promise<void> {
         targetName: values.target as string | undefined,
         intervalMs: intervalStr ? parseInt(intervalStr, 10) * 1000 : undefined,
       });
+      break;
+    }
+
+    case 'completions': {
+      const shell = positionals[0];
+      if (!shell) {
+        console.error('Usage: crisismode completions bash|zsh|fish');
+        process.exit(1);
+      }
+      const { runCompletions } = await import('./commands/completions.js');
+      await runCompletions(shell);
       break;
     }
 

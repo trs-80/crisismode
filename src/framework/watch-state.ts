@@ -47,6 +47,21 @@ export interface RecurringPattern {
   description: string;
 }
 
+export interface DegradationForecast {
+  /** Predicted status if current trend continues */
+  predictedStatus: HealthStatus;
+  /** Confidence in the prediction (0-1) */
+  confidence: number;
+  /** Estimated cycles until predicted status is reached */
+  cyclesUntil: number;
+  /** What metric is driving the prediction */
+  driver: 'confidence-trend' | 'signal-growth' | 'pattern-recurrence' | 'status-trajectory';
+  /** Human-readable explanation */
+  explanation: string;
+  /** Recommended preventive action */
+  recommendation: string;
+}
+
 export interface HealthCard {
   target: string;
   currentStatus: HealthStatus;
@@ -57,6 +72,7 @@ export interface HealthCard {
   transitionCount: number;
   proposalCount: number;
   patterns: RecurringPattern[];
+  forecasts: DegradationForecast[];
   lastChecked: string;
   watchingSince: string;
 }
@@ -185,9 +201,98 @@ export class WatchState {
       transitionCount: this.transitions.length,
       proposalCount: this.proposals.length,
       patterns: this.detectPatterns(),
+      forecasts: this.forecastDegradation(),
       lastChecked: lastSnapshot?.timestamp ?? this.startedAt,
       watchingSince: this.startedAt,
     };
+  }
+
+  /** Forecast degradation by analysing trends in health data. */
+  forecastDegradation(): DegradationForecast[] {
+    const forecasts: DegradationForecast[] = [];
+    if (this.snapshots.length < 5) return forecasts;
+
+    // 1. Confidence trend — linear regression on recent confidence values
+    const recentWindow = Math.min(this.snapshots.length, 30);
+    const recent = this.snapshots.slice(-recentWindow);
+    const slope = linearSlope(recent.map((s) => s.confidence));
+
+    if (slope < -0.01) {
+      // Confidence declining — estimate when it crosses 0.5 (unhealthy threshold)
+      const lastConf = recent[recent.length - 1].confidence;
+      const threshold = 0.5;
+      if (lastConf > threshold) {
+        const cyclesUntil = Math.ceil((lastConf - threshold) / Math.abs(slope));
+        forecasts.push({
+          predictedStatus: 'unhealthy',
+          confidence: Math.min(Math.abs(slope) * 20, 0.9),
+          cyclesUntil,
+          driver: 'confidence-trend',
+          explanation: `Confidence declining at ${(slope * 100).toFixed(2)}%/cycle — will cross unhealthy threshold in ~${cyclesUntil} cycles`,
+          recommendation: 'Investigate root cause now while system is still healthy. Run `crisismode diagnose`.',
+        });
+      }
+    }
+
+    // 2. Signal count growth — more signals = more warnings
+    const signalSlope = linearSlope(recent.map((s) => s.signalCount));
+    if (signalSlope > 0.1 && recent[recent.length - 1].signalCount >= 2) {
+      const currentSignals = recent[recent.length - 1].signalCount;
+      const dangerThreshold = currentSignals * 2;
+      const cyclesUntil = Math.ceil(dangerThreshold / signalSlope);
+      forecasts.push({
+        predictedStatus: 'unhealthy',
+        confidence: Math.min(signalSlope * 5, 0.8),
+        cyclesUntil: Math.max(cyclesUntil, 1),
+        driver: 'signal-growth',
+        explanation: `Health signal count growing at ${signalSlope.toFixed(2)}/cycle (currently ${currentSignals} signals)`,
+        recommendation: 'New health signals appearing — check for emerging issues with `crisismode scan --verbose`.',
+      });
+    }
+
+    // 3. Pattern recurrence — known patterns predict future issues
+    const patterns = this.detectPatterns();
+    for (const pattern of patterns) {
+      if (pattern.pattern === 'flapping' && pattern.occurrences >= 4) {
+        forecasts.push({
+          predictedStatus: 'unhealthy',
+          confidence: Math.min(pattern.occurrences * 0.15, 0.85),
+          cyclesUntil: 3,
+          driver: 'pattern-recurrence',
+          explanation: `Flapping detected (${pattern.occurrences} transitions) — system likely to become unstable again`,
+          recommendation: 'Flapping indicates an intermittent root cause. Investigate before the next failure cycle.',
+        });
+      }
+      if (pattern.pattern === 'degradation-cycle' && pattern.occurrences >= 2) {
+        forecasts.push({
+          predictedStatus: 'unhealthy',
+          confidence: Math.min(pattern.occurrences * 0.2, 0.9),
+          cyclesUntil: 5,
+          driver: 'pattern-recurrence',
+          explanation: `Degradation cycle detected (${pattern.occurrences}x) — system repeatedly failing and partially recovering`,
+          recommendation: 'Recurring degradation suggests incomplete recovery. Review previous recovery proposals.',
+        });
+      }
+    }
+
+    // 4. Status trajectory — if last N snapshots show a trend toward unhealthy
+    const lastN = this.snapshots.slice(-5);
+    const statusWeights: Record<string, number> = { healthy: 1, recovering: 0.5, unhealthy: 0, unknown: 0.3 };
+    const statusSlope = linearSlope(lastN.map((s) => statusWeights[s.status] ?? 0.5));
+    if (statusSlope < -0.1 && this.lastStatus !== 'unhealthy') {
+      forecasts.push({
+        predictedStatus: 'unhealthy',
+        confidence: Math.min(Math.abs(statusSlope) * 3, 0.8),
+        cyclesUntil: Math.ceil(1 / Math.abs(statusSlope)),
+        driver: 'status-trajectory',
+        explanation: 'Health status trending downward across recent cycles',
+        recommendation: 'System health deteriorating. Proactive diagnosis recommended.',
+      });
+    }
+
+    // Sort by confidence descending
+    forecasts.sort((a, b) => b.confidence - a.confidence);
+    return forecasts;
   }
 
   /** Detect recurring health patterns (e.g., flapping, degradation cycles). */
@@ -352,4 +457,32 @@ export class WatchState {
     }
     return max;
   }
+}
+
+// ── Utilities ──
+
+/**
+ * Simple linear regression slope over a sequence of values.
+ * Returns the rate of change per index step.
+ */
+function linearSlope(values: number[]): number {
+  const n = values.length;
+  if (n < 2) return 0;
+
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumX2 = 0;
+
+  for (let i = 0; i < n; i++) {
+    sumX += i;
+    sumY += values[i];
+    sumXY += i * values[i];
+    sumX2 += i * i;
+  }
+
+  const denominator = n * sumX2 - sumX * sumX;
+  if (denominator === 0) return 0;
+
+  return (n * sumXY - sumX * sumY) / denominator;
 }

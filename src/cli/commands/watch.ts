@@ -142,11 +142,16 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
           console.log('');
         }
 
-        // Print pattern alerts
+        // Print pattern and forecast alerts
         if (cycleCount > 0 && cycleCount % 10 === 0) {
           const patterns = watchState.detectPatterns();
           for (const pattern of patterns) {
             printWarning(`Pattern detected: ${pattern.description}`);
+          }
+          const forecasts = watchState.forecastDegradation();
+          for (const forecast of forecasts) {
+            printWarning(`Forecast: ${forecast.explanation}`);
+            printInfo(`  → ${forecast.recommendation}`);
           }
         }
       } catch (err) {
@@ -198,6 +203,15 @@ function printWatchSummary(state: WatchState): void {
     printInfo('Detected patterns:');
     for (const p of summary.patterns) {
       printWarning(`  [${p.pattern}] ${p.description}`);
+    }
+  }
+
+  if (card.forecasts.length > 0) {
+    console.log('');
+    printInfo('Degradation forecasts:');
+    for (const f of card.forecasts) {
+      printWarning(`  [${f.driver}] ${f.explanation}`);
+      printInfo(`    → ${f.recommendation}`);
     }
   }
 

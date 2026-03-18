@@ -97,6 +97,7 @@ function makeHealthCard(): HealthCard {
     transitionCount: 3,
     proposalCount: 1,
     patterns: [],
+    forecasts: [],
     lastChecked: '2026-03-17T12:00:00.000Z',
     watchingSince: '2026-03-17T06:00:00.000Z',
   };
