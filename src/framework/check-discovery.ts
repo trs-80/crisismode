@@ -108,7 +108,7 @@ async function scanDirectory(
 
   let entries: string[];
   try {
-    entries = await readdir(dir);
+    entries = (await readdir(dir)).sort();
   } catch {
     warnings.push({ path: dir, reason: 'Failed to read directory' });
     return;
