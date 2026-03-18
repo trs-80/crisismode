@@ -33,6 +33,8 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
+    "build:bundle": "node scripts/esbuild.config.mjs",
+    "build:binary": "bash scripts/build-binary.sh",
     "start": "node dist/index.js",
     "live": "tsx src/live.ts",
     "webhook": "tsx src/webhook.ts",
@@ -48,6 +50,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
     "@langchain/core": "^1.1.32",
     "@langchain/langgraph": "^1.2.2",
     "chalk": "^5.3.0",
@@ -57,7 +60,8 @@
     "yaml": "^2.8.2"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
+    "esbuild": "^0.25.0",
+    "postject": "^1.0.0-alpha.6",
     "@types/node": "^20.11.0",
     "@types/pg": "^8.18.0",
     "@types/semver": "^7.7.1",
