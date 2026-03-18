@@ -15,9 +15,13 @@ if ! command -v df >/dev/null 2>&1; then
 fi
 
 # Get disk usage data: filesystem, use%, mounted-on
-# Skip header line, filter out virtual/special filesystems
+# Skip header line, filter out virtual/special filesystems and read-only system mounts
 get_disk_data() {
-  df -P 2>/dev/null | tail -n +2 | grep -v -E '^(tmpfs|devtmpfs|devfs|none|map )' | awk '{print $1, $5, $6}' | sed 's/%//g'
+  df -P 2>/dev/null | tail -n +2 \
+    | grep -v -E '^(tmpfs|devtmpfs|devfs|none|map )' \
+    | grep -v -E '/private/var/run/com\.apple\.' \
+    | grep -v -E '/System/Volumes/(Data|VM|Preboot|Update|xarts|iSCPreboot|Hardware)' \
+    | awk '{print $1, $5, $6}' | sed 's/%//g'
 }
 
 # Find the highest usage percentage
