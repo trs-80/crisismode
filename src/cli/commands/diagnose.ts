@@ -175,10 +175,10 @@ async function runPluginDiagnose(pluginIndex: number): Promise<void> {
     printWarning(`Unhealthy: ${result.summary}`);
   }
 
-  if (result.findings.length > 0) {
+  if ((result.findings ?? []).length > 0) {
     console.log('');
     printInfo('Findings:');
-    for (const f of result.findings) {
+    for (const f of result.findings ?? []) {
       const icon = f.severity === 'critical' ? '🔴' : f.severity === 'warning' ? '🟡' : 'ℹ️ ';
       console.log(`  ${icon}  [${f.severity}] ${f.title}`);
       console.log(`       ${f.detail}`);
