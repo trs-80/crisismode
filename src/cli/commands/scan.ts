@@ -211,7 +211,8 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
         );
 
         const healthResult = execResult.result as CheckHealthResult | null;
-        const status = healthResult?.status ?? exitStatusToHealth(execResult.exitStatus);
+        const rawStatus = healthResult?.status ?? exitStatusToHealth(execResult.exitStatus);
+        const status = normalizePluginStatus(rawStatus);
         const summary = healthResult?.summary ?? `Plugin exited with status: ${execResult.exitStatus}`;
         const confidence = healthResult?.confidence ?? (status === 'unknown' ? 0 : 0.5);
         const signals = (healthResult?.signals ?? []).map((s) => ({
@@ -330,4 +331,19 @@ function buildConfigFromDetection(detected: Array<{ kind: string; host: string; 
 
 function timeoutPromise<T>(ms: number, fallback: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(fallback), ms));
+}
+
+/**
+ * Normalize plugin-reported status values to the HealthStatus union.
+ * Plugins may return 'critical' or 'warning' which are not HealthStatus values.
+ */
+function normalizePluginStatus(status: string): import('../../types/health.js').HealthStatus {
+  switch (status) {
+    case 'healthy': return 'healthy';
+    case 'recovering': return 'recovering';
+    case 'unhealthy': return 'unhealthy';
+    case 'critical': return 'unhealthy';
+    case 'warning': return 'recovering';
+    default: return 'unknown';
+  }
 }
