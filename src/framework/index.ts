@@ -12,7 +12,12 @@ export {
 } from './provider-registry.js';
 export { buildOperatorSummary } from './operator-summary.js';
 export { validatePlan } from './validator.js';
-export { executeCapture, validateBlastRadius, shouldRequireApproval } from './safety.js';
+export { executeCapture, executeCaptureAsync, validateBlastRadius, shouldRequireApproval } from './safety.js';
+export type { CaptureResult, CaptureExecutionOptions } from './safety.js';
+export { CaptureStore, parseDuration } from './capture-store.js';
+export type { CaptureMetadata, StoredCapture } from './capture-store.js';
+export { generateCaptureRollbackCommands } from './graph-rollback.js';
+export type { CaptureRollbackCommand } from './graph-rollback.js';
 export { getCatalogEntry, matchCatalog, isCatalogCovered } from './catalog.js';
 export { requestApproval, shouldAutoApprove } from './coordinator.js';
 export { ForensicRecorder, StreamingForensicRecorder } from './forensics.js';
