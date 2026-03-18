@@ -117,7 +117,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   let pluginFindingCounter = 0;
 
   // Run health checks in parallel with per-agent timeout
-  const healthPromises = targets.map(async (target) => {
+  const healthPromises = targets.map(async (target): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string }> => {
     let instance: AgentInstance | undefined;
     try {
       instance = await registry.createForTarget(target.name);
@@ -151,41 +151,45 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
       await backend.close();
 
-      const id = findingId(target.kind, findingCounter++);
-      findings.push({
-        id,
-        service: `${target.kind} (${target.name})`,
-        status: health.status,
-        summary: health.summary,
-        confidence: health.confidence,
-        escalationLevel: health.status === 'healthy' ? 1 : 2,
-        signals: health.signals.map((s) => ({ status: s.status, detail: s.detail })),
-      });
-
-      return health;
+      return {
+        kind: target.kind,
+        finding: {
+          service: `${target.kind} (${target.name})`,
+          status: health.status,
+          summary: health.summary,
+          confidence: health.confidence,
+          escalationLevel: health.status === 'healthy' ? 1 : 2,
+          signals: health.signals.map((s) => ({ status: s.status, detail: s.detail })),
+        },
+      };
     } catch (err) {
       if (instance) {
         await instance.backend.close().catch(() => {});
       }
-      const id = findingId(target.kind, findingCounter++);
-      findings.push({
-        id,
-        service: `${target.kind} (${target.name})`,
-        status: 'unknown',
-        summary: `Error: ${err instanceof Error ? err.message : String(err)}`,
-        confidence: 0,
-        escalationLevel: 2,
-        signals: [],
-      });
-      return null;
+      return {
+        kind: target.kind,
+        finding: {
+          service: `${target.kind} (${target.name})`,
+          status: 'unknown',
+          summary: `Error: ${err instanceof Error ? err.message : String(err)}`,
+          confidence: 0,
+          escalationLevel: 2,
+          signals: [],
+        },
+      };
     }
   });
 
   // Await plugin discovery alongside built-in health checks
-  const [, discoveryResult] = await Promise.all([
+  const [agentResults, discoveryResult] = await Promise.all([
     Promise.all(healthPromises),
     pluginDiscovery,
   ]);
+
+  // Push agent findings in target order (not completion order)
+  for (const { finding, kind } of agentResults) {
+    findings.push({ id: findingId(kind, findingCounter++), ...finding });
+  }
 
   // Phase 2b: External check plugin health checks
   const healthPlugins = discoveryResult.plugins.filter(
@@ -195,7 +199,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   if (healthPlugins.length > 0) {
     printInfo(`Found ${healthPlugins.length} external check plugin(s)`);
 
-    const pluginPromises = healthPlugins.map(async (plugin: DiscoveredPlugin) => {
+    const pluginPromises = healthPlugins.map(async (plugin: DiscoveredPlugin): Promise<Omit<ScanFinding, 'id'>> => {
       try {
         const request: CheckRequest = {
           verb: 'health',
@@ -221,31 +225,31 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
           detail: s.detail,
         }));
 
-        const id = findingId('plugin', pluginFindingCounter++);
-        findings.push({
-          id,
+        return {
           service: `plugin (${plugin.manifest.name})`,
           status,
           summary,
           confidence,
           escalationLevel: status === 'healthy' ? 1 : 2,
           signals,
-        });
+        };
       } catch (err) {
-        const id = findingId('plugin', pluginFindingCounter++);
-        findings.push({
-          id,
+        return {
           service: `plugin (${plugin.manifest.name})`,
           status: 'unknown',
           summary: `Error: ${err instanceof Error ? err.message : String(err)}`,
           confidence: 0,
           escalationLevel: 2,
           signals: [],
-        });
+        };
       }
     });
 
-    await Promise.all(pluginPromises);
+    // Await all in parallel, then push in discovery order so IDs are deterministic
+    const pluginResults = await Promise.all(pluginPromises);
+    for (const result of pluginResults) {
+      findings.push({ id: findingId('plugin', pluginFindingCounter++), ...result });
+    }
   }
 
   // Phase 3: Compute score
