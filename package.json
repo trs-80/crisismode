@@ -40,6 +40,7 @@
     "webhook": "tsx src/webhook.ts",
     "init": "tsx src/init.ts",
     "test": "vitest run",
+    "test:cli": "bash test/cli/smoke.sh",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
