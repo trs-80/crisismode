@@ -138,7 +138,7 @@ async function main(): Promise<void> {
       const { runDiagnose } = await import('./commands/diagnose.js');
       await runDiagnose({
         configPath: values.config as string | undefined,
-        targetName: values.target as string | undefined,
+        targetName: (values.target as string | undefined) ?? positionals[0],
       });
       break;
     }

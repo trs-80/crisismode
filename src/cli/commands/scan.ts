@@ -114,6 +114,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   const registry = new AgentRegistry({ ...config, targets });
   const findings: ScanFinding[] = [];
   let findingCounter = 0;
+  let pluginFindingCounter = 0;
 
   // Run health checks in parallel with per-agent timeout
   const healthPromises = targets.map(async (target) => {
@@ -220,7 +221,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
           detail: s.detail,
         }));
 
-        const id = findingId('plugin', findingCounter++);
+        const id = findingId('plugin', pluginFindingCounter++);
         findings.push({
           id,
           service: `plugin (${plugin.manifest.name})`,
@@ -231,7 +232,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
           signals,
         });
       } catch (err) {
-        const id = findingId('plugin', findingCounter++);
+        const id = findingId('plugin', pluginFindingCounter++);
         findings.push({
           id,
           service: `plugin (${plugin.manifest.name})`,
