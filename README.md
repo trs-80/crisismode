@@ -128,6 +128,8 @@ site/                               # Marketing site (crisismode.ai)
 
 ## Quick Start
 
+**New here?** See [QUICKSTART.md](QUICKSTART.md) for a 5-minute end-to-end walkthrough.
+
 ```bash
 pnpm install
 ```
