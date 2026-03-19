@@ -61,14 +61,15 @@
     "yaml": "^2.8.2"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0",
-    "postject": "^1.0.0-alpha.6",
     "@types/node": "^20.11.0",
     "@types/pg": "^8.18.0",
     "@types/semver": "^7.7.1",
     "@vitest/coverage-v8": "^4.1.0",
+    "esbuild": "^0.25.0",
+    "fast-check": "^4.6.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
+    "postject": "^1.0.0-alpha.6",
     "tsx": "^4.7.0",
     "typescript": "^5.4.0",
     "vitest": "^4.1.0"
