@@ -216,6 +216,177 @@ let CAPABILITIES: CapabilityDefinition[] = [
     manualFallback: 'Set the pool quota manually using `ceph osd pool set-quota <pool> max_bytes <value>`.',
   },
 
+  // ── AI Provider ──
+  {
+    id: 'provider.status.read',
+    actionKind: 'read',
+    description: 'Read the health status of AI inference providers.',
+    targetKinds: ['ai-provider'],
+    manualFallback: 'Check provider status dashboards manually.',
+  },
+  {
+    id: 'provider.metrics.read',
+    actionKind: 'read',
+    description: 'Read request metrics (latency, error rates) from AI providers.',
+    targetKinds: ['ai-provider'],
+    manualFallback: 'Query provider metrics from your monitoring system manually.',
+  },
+  {
+    id: 'provider.circuit_breaker.trip',
+    actionKind: 'mutate',
+    description: 'Trip the circuit breaker on a degraded AI provider to stop sending traffic.',
+    targetKinds: ['ai-provider'],
+    manualFallback: 'Trip the circuit breaker manually via the provider gateway API.',
+  },
+  {
+    id: 'provider.fallback.activate',
+    actionKind: 'mutate',
+    description: 'Activate the fallback provider chain to route requests through healthy providers.',
+    targetKinds: ['ai-provider'],
+    manualFallback: 'Activate the fallback chain manually via the provider gateway configuration.',
+  },
+  {
+    id: 'provider.traffic.shift',
+    actionKind: 'mutate',
+    description: 'Shift traffic between AI providers.',
+    targetKinds: ['ai-provider'],
+    manualFallback: 'Shift traffic manually via the provider gateway routing configuration.',
+  },
+
+  // ── Config Drift ──
+  {
+    id: 'config.env.read',
+    actionKind: 'read',
+    description: 'Read environment configuration state for drift detection.',
+    targetKinds: ['linux', 'kubernetes'],
+    manualFallback: 'Inspect environment configuration manually.',
+  },
+  {
+    id: 'config.secrets.read',
+    actionKind: 'read',
+    description: 'Read secrets metadata for drift detection (not secret values).',
+    targetKinds: ['linux', 'kubernetes'],
+    manualFallback: 'Inspect secrets metadata manually via your secrets manager.',
+  },
+  {
+    id: 'config.env.restore',
+    actionKind: 'mutate',
+    description: 'Restore environment configuration to its expected state.',
+    targetKinds: ['linux', 'kubernetes'],
+    manualFallback: 'Restore the environment configuration manually from version control or backup.',
+  },
+  {
+    id: 'config.secrets.rotate',
+    actionKind: 'mutate',
+    description: 'Rotate secrets that have drifted or been compromised.',
+    targetKinds: ['linux', 'kubernetes'],
+    manualFallback: 'Rotate the affected secrets manually via your secrets manager.',
+  },
+  {
+    id: 'config.file.restore',
+    actionKind: 'mutate',
+    description: 'Restore a configuration file to its expected state from version control.',
+    targetKinds: ['linux', 'kubernetes'],
+    manualFallback: 'Restore the configuration file manually from version control or backup.',
+  },
+
+  // ── DB Migration ──
+  {
+    id: 'db.connections.read',
+    actionKind: 'read',
+    description: 'Read active database connections and their state.',
+    targetKinds: ['postgresql', 'mysql'],
+    manualFallback: 'Query active connections manually using pg_stat_activity or equivalent.',
+  },
+  {
+    id: 'db.connections.terminate',
+    actionKind: 'mutate',
+    description: 'Terminate blocking database connections.',
+    targetKinds: ['postgresql', 'mysql'],
+    manualFallback: 'Terminate blocking connections manually using pg_terminate_backend or equivalent.',
+  },
+  {
+    id: 'db.migration.rollback',
+    actionKind: 'mutate',
+    description: 'Roll back a stuck or failed database migration.',
+    targetKinds: ['postgresql', 'mysql'],
+    manualFallback: 'Roll back the migration manually using your migration tool (e.g. flyway, liquibase).',
+  },
+
+  // ── Deploy Rollback ──
+  {
+    id: 'deploy.status.read',
+    actionKind: 'read',
+    description: 'Read the current deployment status and health.',
+    targetKinds: ['kubernetes', 'linux'],
+    manualFallback: 'Check deployment status manually via kubectl or your deployment tool.',
+  },
+  {
+    id: 'deploy.history.read',
+    actionKind: 'read',
+    description: 'Read deployment history and previous versions.',
+    targetKinds: ['kubernetes', 'linux'],
+    manualFallback: 'Check deployment history manually via kubectl rollout history or your deployment tool.',
+  },
+  {
+    id: 'deploy.rollback',
+    actionKind: 'mutate',
+    description: 'Roll back a deployment to a previous known-good version.',
+    targetKinds: ['kubernetes', 'linux'],
+    manualFallback: 'Roll back the deployment manually using kubectl rollout undo or your deployment tool.',
+  },
+  {
+    id: 'traffic.shift',
+    actionKind: 'mutate',
+    description: 'Shift traffic between deployment versions (e.g. canary, blue-green).',
+    targetKinds: ['kubernetes', 'linux', 'load_balancer'],
+    manualFallback: 'Shift traffic manually via your load balancer or service mesh configuration.',
+  },
+
+  // ── Queue Backlog ──
+  {
+    id: 'queue.stats.read',
+    actionKind: 'read',
+    description: 'Read queue depth, throughput, and backlog metrics.',
+    targetKinds: ['rabbitmq', 'sqs', 'redis'],
+    manualFallback: 'Check queue statistics manually via the queue management UI or CLI.',
+  },
+  {
+    id: 'queue.workers.read',
+    actionKind: 'read',
+    description: 'Read worker/consumer status and processing rates.',
+    targetKinds: ['rabbitmq', 'sqs', 'redis'],
+    manualFallback: 'Check worker status manually via the queue management UI or CLI.',
+  },
+  {
+    id: 'queue.pause',
+    actionKind: 'mutate',
+    description: 'Pause message consumption on a queue to relieve backpressure.',
+    targetKinds: ['rabbitmq', 'sqs', 'redis'],
+    manualFallback: 'Pause the queue manually via the queue management API or CLI.',
+  },
+  {
+    id: 'queue.workers.restart',
+    actionKind: 'mutate',
+    description: 'Restart queue worker processes to recover from stuck state.',
+    targetKinds: ['rabbitmq', 'sqs', 'redis'],
+    manualFallback: 'Restart worker processes manually via your process manager or orchestrator.',
+  },
+  {
+    id: 'queue.dlq.retry',
+    actionKind: 'mutate',
+    description: 'Retry messages from the dead-letter queue.',
+    targetKinds: ['rabbitmq', 'sqs', 'redis'],
+    manualFallback: 'Retry DLQ messages manually via the queue management API.',
+  },
+  {
+    id: 'queue.workers.scale',
+    actionKind: 'mutate',
+    description: 'Scale queue workers up or down to match backlog demand.',
+    targetKinds: ['rabbitmq', 'sqs', 'redis'],
+    manualFallback: 'Scale workers manually via your orchestrator or process manager.',
+  },
+
   // ── Stream (Flink) ──
   {
     id: 'stream.job.restart',

@@ -1,0 +1,141 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CLI snapshot — error formatting > CrisisModeError with suggestion 1`] = `
+"Error: Database connection lost
+  Suggestion: Check pg_hba.conf and restart"
+`;
+
+exports[`CLI snapshot — error formatting > agentNotFound 1`] = `
+"Error: No agent handles "mysql"
+  Suggestion: Supported systems: postgresql, redis, etcd, kafka, kubernetes, ceph, flink, application, ai-provider, managed-database, message-queue, application-config"
+`;
+
+exports[`CLI snapshot — error formatting > connectionRefused — postgresql 1`] = `
+"Error: Connection refused: db.local:5432 (postgresql)
+  Suggestion: Is PostgreSQL running? Try: docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=secret postgres:16"
+`;
+
+exports[`CLI snapshot — error formatting > connectionRefused — unknown kind 1`] = `
+"Error: Connection refused: db.local:3306 (mysql)
+  Suggestion: Ensure mysql is running on db.local:3306"
+`;
+
+exports[`CLI snapshot — error formatting > missingEnvVar 1`] = `
+"Error: Missing environment variable: PG_PASSWORD
+  Suggestion: Set PG_PASSWORD: export PG_PASSWORD=<value>  (database authentication)"
+`;
+
+exports[`CLI snapshot — error formatting > noConfig 1`] = `
+"Error: No configuration found and no services detected on localhost
+  Suggestion: Run \`crisismode init\` to generate crisismode.yaml, or start a database first."
+`;
+
+exports[`CLI snapshot — error formatting > non-Error value 1`] = `"Error: 42"`;
+
+exports[`CLI snapshot — error formatting > plain Error 1`] = `"Error: unexpected EOF"`;
+
+exports[`CLI snapshot — escalation badges > level 1 — Observe 1`] = `"Observe"`;
+
+exports[`CLI snapshot — escalation badges > level 2 — Diagnose 1`] = `"Diagnose"`;
+
+exports[`CLI snapshot — escalation badges > level 3 — Suggest 1`] = `"Suggest"`;
+
+exports[`CLI snapshot — escalation badges > level 4 — Repair 1`] = `"Repair"`;
+
+exports[`CLI snapshot — escalation badges > level 5 — Repair! 1`] = `"Repair!"`;
+
+exports[`CLI snapshot — health status JSON > health assessment in JSON mode 1`] = `
+{
+  "assessment": {
+    "confidence": 0.85,
+    "observedAt": "<<TIMESTAMP>>",
+    "recommendedActions": [
+      "Investigate replica lag",
+      "Check WAL archiving",
+    ],
+    "signals": [
+      {
+        "detail": "lag at 45s",
+        "observedAt": "<<TIMESTAMP>>",
+        "source": "replication_check",
+        "status": "critical",
+      },
+      {
+        "detail": "pool utilization 30%",
+        "observedAt": "<<TIMESTAMP>>",
+        "source": "connection_pool",
+        "status": "healthy",
+      },
+      {
+        "detail": "WAL directory 78% full",
+        "observedAt": "<<TIMESTAMP>>",
+        "source": "disk_usage",
+        "status": "warning",
+      },
+    ],
+    "status": "unhealthy",
+    "summary": "Replication lag exceeds threshold",
+  },
+  "type": "health",
+}
+`;
+
+exports[`CLI snapshot — scan JSON mode > scan summary in JSON mode 1`] = `
+{
+  "durationMs": 234,
+  "findings": [
+    {
+      "confidence": 0.95,
+      "escalationLevel": 1,
+      "id": "PG-001",
+      "service": "postgresql",
+      "signals": [
+        {
+          "detail": "lag < 1s",
+          "status": "healthy",
+        },
+      ],
+      "status": "healthy",
+      "summary": "Replication OK",
+    },
+    {
+      "confidence": 0.8,
+      "escalationLevel": 4,
+      "id": "REDIS-001",
+      "service": "redis",
+      "signals": [
+        {
+          "detail": "used_memory > maxmemory",
+          "status": "critical",
+        },
+      ],
+      "status": "unhealthy",
+      "summary": "Memory pressure detected",
+    },
+    {
+      "confidence": 0.6,
+      "escalationLevel": 2,
+      "id": "ETCD-001",
+      "service": "etcd",
+      "signals": [
+        {
+          "detail": "raft term changed",
+          "status": "warning",
+        },
+      ],
+      "status": "recovering",
+      "summary": "Leader election in progress",
+    },
+  ],
+  "scannedAt": "<<TIMESTAMP>>",
+  "score": 72,
+  "type": "scan",
+}
+`;
+
+exports[`CLI snapshot — scan pipe mode > scan summary in pipe mode 1`] = `
+"scan	72	<<TIMESTAMP>>	234
+finding	PG-001	postgresql	healthy	0.95	Replication OK
+finding	REDIS-001	redis	unhealthy	0.8	Memory pressure detected
+finding	ETCD-001	etcd	recovering	0.6	Leader election in progress"
+`;
