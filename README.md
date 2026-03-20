@@ -6,18 +6,22 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node](https://img.shields.io/badge/Node-%3E%3D18-green?logo=node.js&logoColor=white)](https://nodejs.org/)
 
-Runbooks tell humans what to do. CrisisMode agents *do it* — with safety guarantees that runbooks can't enforce. Every action is validated against a blast radius, every mutation is preceded by a state capture, every risky step requires approval, and every execution produces an immutable forensic record. AI-powered diagnosis identifies failure patterns that rule-based monitoring misses.
+CrisisMode is the recovery layer for your infrastructure. Monitoring tells you something is wrong. CrisisMode tells you what to do about it — safely.
+
+It diagnoses issues using AI, builds validated recovery plans with blast-radius controls, and executes them with human-in-the-loop oversight. Every action is preceded by a state capture. Every execution produces an immutable forensic record. Domain experts contribute recovery knowledge as agents and check plugins — the framework ensures that knowledge is applied safely when infrastructure is degraded and the cost of wrong actions is highest.
 
 **Website:** [crisismode.ai](https://crisismode.ai)
 
-## What is this?
+## Who This Is For
 
-CrisisMode is the tool an organization reaches for when normal operational tooling has failed or is insufficient. Recovery agents connect to real infrastructure, use AI to diagnose what's wrong, build validated recovery plans, and execute them with human-in-the-loop safety — all while producing a complete forensic trail.
+- SREs and platform engineers who get paged and need to act under pressure.
+- AI app builders operating managed infrastructure with limited ops depth.
+- On-call engineers who inherit systems they didn't build.
+- Domain experts (database specialists, Kafka engineers, storage admins) who want to codify recovery knowledge.
 
-The framework uses a **hub-and-spoke architecture**: spokes run close to target systems and handle execution (Layers 1-2), while the hub provides coordination, analytics, and management (Layers 3-4). Spokes operate autonomously when the hub is unreachable.
+## From Alert to Recovery
 
-<details>
-<summary><strong>See it in action</strong> — live mode diagnosing real PostgreSQL replication lag</summary>
+Live mode diagnosing real PostgreSQL replication lag:
 
 ```
   Connecting to PostgreSQL...
@@ -64,172 +68,82 @@ The framework uses a **hub-and-spoke architecture**: spokes run close to target 
      ● SUCCESS (6ms)
 ```
 
-</details>
-
-## Project Structure
-
-```
-specs/
-  foundational/
-    recovery-agent-contract.md      # Agent contract specification (v0.2.1)
-  deployment/
-    operations.md                   # Hub-and-spoke deployment & operations spec
-  architecture/
-    plugin-platform.md              # Plugin platform architecture guide
-    operator-health-and-ai-services.md  # Operator summary, AI services spec
-
-src/
-  cli/                              # Unified CLI interface
-    commands/                       #   scan, diagnose, recover, status, ask, demo, init, webhook, watch
-    detect.ts                       #   System detection and auto-discovery
-    autodiscovery.ts                #   Zero-config agent detection
-    output.ts                       #   Structured output formatting
-  types/                            # TypeScript type definitions for the contract
-  framework/                        # Execution engine, safety, forensics, coordination, hub client
-    graph-engine.ts                 #   LangGraph-based graph execution engine
-    symptom-router.ts               #   Routes symptoms to appropriate agents
-    ai-diagnosis-universal.ts       #   Universal AI-powered diagnosis
-    incident-report.ts              #   Incident report generation
-    network-profile.ts              #   Network diagnostics and profiling
-  agent/
-    interface.ts                    # RecoveryAgent contract interface
-    pg-replication/                 # PostgreSQL replication recovery agent
-    redis/                          # Redis memory pressure recovery agent
-    etcd/                           # etcd consensus recovery agent
-    kafka/                          # Kafka broker recovery agent
-    kubernetes/                     # Kubernetes cluster recovery agent
-    ceph/                           # Ceph storage recovery agent
-    flink/                          # Flink stream processing recovery agent
-    ai-provider/                    # AI service failover and fallback agent
-    config-drift/                   # Configuration drift detection agent
-    db-migration/                   # Database migration safety agent
-    deploy-rollback/                # Deployment rollback orchestration agent
-    queue-backlog/                  # Queue backlog and lag recovery agent
-  config/                           # Agent registry, built-in agents, credentials
-  integrations/                     # External integrations (GitHub, Sentry)
-  hub/                              # Hub coordination and multi-spoke orchestration
-  demo/                             # Interactive CLI demo (simulator mode)
-  live.ts                           # Live mode — runs against real infrastructure
-  webhook.ts                        # Webhook receiver for AlertManager integration
-
-test/
-  podman/                           # Containerized test environment
-    compose.yaml                    #   PG primary/replica, Prometheus, AlertManager, mock hub
-    mock-hub/                       #   Mock hub API server
-  failures/                         # Failure injection scripts
-  smoke/                            # Automated validation tests
-  local/                            # Native macOS test setup (no containers)
-
-deploy/
-  helm/crisismode-spoke/            # Helm chart for Kubernetes deployment
-
-site/                               # Marketing site (crisismode.ai)
-```
-
 ## Quick Start
 
-**New here?** See [QUICKSTART.md](QUICKSTART.md) for a 5-minute end-to-end walkthrough.
+**Demo mode** (no infrastructure required):
 
 ```bash
-pnpm install
+pnpm install && pnpm dev
 ```
 
-### Demo mode (simulated)
+**Real PostgreSQL** (requires [test environment setup](test/podman/scripts/start.sh)):
 
 ```bash
-pnpm dev
+pnpm run live                  # Dry-run — reads real PG, logs mutations
+pnpm run live -- --execute     # Execute mode — runs recovery commands
 ```
 
-Walks through the full recovery pipeline with simulated PostgreSQL data. No infrastructure required.
-
-### Live mode (real PostgreSQL)
-
-Requires the test environment running (see below):
+**AlertManager webhook:**
 
 ```bash
-# Dry-run — reads from real PG, mutations are logged but not executed
-pnpm run live
-
-# Execute mode — actually runs supported recovery commands against PostgreSQL
-pnpm run live -- --execute
+pnpm run webhook               # Dry-run, listens on :3000
+pnpm run webhook --execute     # Execute mode
 ```
 
-Today the PostgreSQL live client executes SQL-backed steps against PostgreSQL directly. Plan steps that depend on external `structured_command` handlers, such as load balancer changes or `pg_basebackup` orchestration, are surfaced as unsupported in live mode until a real handler is implemented.
+See [QUICKSTART.md](QUICKSTART.md) for a full walkthrough.
 
-### Webhook receiver (AlertManager integration)
+## What CrisisMode Recovers
 
-```bash
-# Start the spoke webhook server (dry-run)
-pnpm run webhook
+### Modern Application Incidents
 
-# Start with mutations enabled
-pnpm run webhook --execute
+| Scenario | Agent | Status |
+|---|---|---|
+| Bad deploy rollback | Deploy Rollback | Simulator ready |
+| AI provider degradation / failover | AI Provider | Simulator ready |
+| Database migration failures | DB Migration | Simulator ready |
+| Queue and worker backlog | Queue Backlog | Simulator ready |
+| Config and environment drift | Config Drift | Simulator ready |
+
+### Stateful Infrastructure Recovery
+
+| System | Scenarios | Status |
+|---|---|---|
+| PostgreSQL | Replication lag, slot overflow, replica divergence | Live -- tested against real PG |
+| Redis | Memory pressure, client exhaustion, slow queries | Simulator ready |
+| etcd | Leader election loop, member thrashing, snapshot corruption | Simulator ready |
+| Kafka | Under-replicated partitions, consumer lag cascade | Simulator ready |
+| Kubernetes | Node not-ready cascade, pod crashloop, stuck reconciliation | Simulator ready |
+| Ceph | OSD down cascade, degraded PGs, pool near-full | Simulator ready |
+| Flink | Checkpoint failure cascade, TaskManager loss, backpressure | Simulator ready |
+
+## How It Works
+
+```
+Alert Source (Prometheus) → Spoke Webhook Receiver
+                              ↓
+                           Diagnose (query real systems)
+                              ↓
+                           Plan (build recovery steps)
+                              ↓
+                           Validate (manifest + policy checks)
+                              ↓
+                           Execute (dry-run or live)
+                              ↓
+                           Forensic Record → Hub API
 ```
 
-AlertManager sends alerts to `http://localhost:3000/api/v1/alerts`. The spoke runs the full pipeline: diagnose → plan → validate → execute → submit forensic record to hub.
+CrisisMode uses a hub-and-spoke architecture: spokes run close to target systems and handle execution, while the hub provides coordination, analytics, and management. Recovery actions progress through five escalation levels: observe, diagnose, suggest, repair-safe, and repair-destructive.
 
-## Test Environment
+## Safety Model
 
-### Podman (full stack with replication)
+- Blast radius validation on every system action
+- Pre-mutation state capture (checkpoint before any change)
+- Human approval gates for elevated-risk operations
+- Dry-run mode by default (reads real systems, logs mutations without executing)
+- Five-level progressive escalation (observe → diagnose → suggest → repair-safe → repair-destructive)
+- Immutable forensic record for every execution
 
-Requires [Podman](https://podman.io/):
-
-```bash
-# Start: PG primary/replica, Prometheus, AlertManager, mock hub
-./test/podman/scripts/start.sh
-
-# Validate
-./test/smoke/run-all.sh
-
-# Inject failures
-./test/failures/inject-replication-lag.sh
-./test/failures/inject-connection-flood.sh
-./test/failures/inject-slot-overflow.sh
-./test/failures/inject-long-queries.sh
-
-# Reset to healthy
-./test/failures/reset.sh
-
-# Status check
-./test/podman/scripts/status.sh
-
-# Tear down
-./test/podman/scripts/stop.sh
-```
-
-### Local mode (no containers)
-
-```bash
-./test/local/setup.sh    # One-time: brew install PG, Prometheus, AlertManager
-./test/local/start.sh    # Start services as native processes
-./test/local/stop.sh     # Stop everything
-```
-
-## Agents
-
-### Stateful System Agents
-
-| Agent | System | Scenarios | Status |
-|---|---|---|---|
-| **PostgreSQL Replication** | PostgreSQL >=14 | Replication lag cascade, slot overflow, replica divergence, WAL sender timeout | Live — tested against real PG |
-| **Redis Memory** | Redis >=6 | Memory pressure, client exhaustion, slow query storms | Simulator complete |
-| **etcd Recovery** | etcd >=3.4 | Leader election loop, member thrashing, snapshot corruption, disk latency | Simulator complete |
-| **Kafka Recovery** | Kafka >=3.0 | Under-replicated partitions, leader imbalance, consumer lag cascade, ISR shrink | Simulator complete |
-| **Kubernetes Recovery** | K8s >=1.27 | Node not ready cascade, pod crashloop cascade, stuck reconciliation, PVC terminating | Simulator complete |
-| **Ceph Storage** | Ceph >=17 (Quincy) | OSD down cascade, degraded PGs, slow OSD ops, pool near-full | Simulator complete |
-| **Flink Stream Processing** | Flink >=1.16 | Checkpoint failure cascade, savepoint corruption, TaskManager loss, backpressure | Simulator complete |
-
-### Cross-Cutting Concern Agents
-
-| Agent | Domain | Scenarios | Status |
-|---|---|---|---|
-| **AI Provider** | AI/ML services | Provider failover, fallback routing, rate limit management | Simulator complete |
-| **Config Drift** | Configuration | Drift detection, remediation, compliance enforcement | Simulator complete |
-| **DB Migration** | Database ops | Migration safety checks, rollback orchestration | Simulator complete |
-| **Deploy Rollback** | Deployments | Deployment rollback, canary failure response | Simulator complete |
-| **Queue Backlog** | Message queues | Backlog reduction, consumer lag recovery | Simulator complete |
-
-### CLI Commands
+## CLI Reference
 
 ```bash
 crisismode             # Zero-config health scan (default)
@@ -246,9 +160,22 @@ crisismode watch       # Continuous shadow observation
 
 Output modes: `--json` for machine-readable JSON, plain text auto-detected when piped, colored TTY output by default.
 
-### Building a new agent
+## Check Plugin Ecosystem
 
-Implement the `RecoveryAgent` interface (`src/agent/interface.ts`):
+CrisisMode consumes external health checks through a unified adapter layer, making thousands of existing checks available without rewriting them:
+
+- **Native check plugins** — JSON wire protocol for purpose-built CrisisMode checks
+- **Nagios/Icinga/Checkmk plugins** — thousands of battle-tested infrastructure checks
+- **Goss YAML health assertions** — declarative system state validation
+- **Sensu checks** — Graphite, InfluxDB, OpenTSDB, and Prometheus metric formats
+
+See [docs/guides/creating-a-check-plugin.md](docs/guides/creating-a-check-plugin.md) for the check plugin authoring guide.
+
+## Contributing
+
+Recovery knowledge lives in agents and check plugins. Domain experts contribute what they know about how systems fail — the framework handles safety, validation, and execution. See [GETTING_STARTED.md](GETTING_STARTED.md) for the developer setup and the 6-file agent pattern.
+
+Every agent implements the `RecoveryAgent` interface (`src/agent/interface.ts`):
 
 ```typescript
 interface RecoveryAgent {
@@ -259,11 +186,7 @@ interface RecoveryAgent {
 }
 ```
 
-Follow the backend pattern: create a `Backend` interface, a `Simulator` for testing, and a `LiveClient` for real infrastructure. See `src/agent/pg-replication/` for the reference implementation.
-
-At the framework boundary, the execution engine depends on a shared `ExecutionBackend` contract (`src/framework/backend.ts`) with `executeCommand()` and `evaluateCheck()` hooks. Agent-specific backends such as `PgBackend` and `RedisBackend` extend that shared contract with system-specific diagnosis methods.
-
-## Kubernetes Deployment
+## Deployment
 
 ```bash
 helm install crisis-spoke deploy/helm/crisismode-spoke/ \
@@ -273,27 +196,7 @@ helm install crisis-spoke deploy/helm/crisismode-spoke/ \
   --set targetNamespaces='{default,production}'
 ```
 
-## Architecture
-
-```
-Alert Source (Prometheus) → Spoke Webhook Receiver
-                              ↓
-                           Diagnose (query real systems)
-                              ↓
-                           Plan (build recovery steps)
-                              ↓
-                           Validate (manifest + policy checks)
-                              ↓
-                           Execute (dry-run or live)
-                              ↓
-                           Forensic Record → Hub API
-```
-
-**Execution modes:**
-- `dry-run` (default) — reads from real systems, logs mutations without executing
-- `execute` — runs supported live commands through the active backend and fails unsupported commands explicitly
-
-**Safety layers:** manifest validation, blast radius checks, precondition evaluation, success criteria, approval workflows, forensic recording.
+The spoke runs in 256Mi and operates autonomously when the hub is unreachable.
 
 ## Specifications
 
@@ -301,19 +204,6 @@ Alert Source (Prometheus) → Spoke Webhook Receiver
 - [Deployment & Operations](specs/deployment/operations.md) — hub-and-spoke architecture, integration patterns, operational management
 - [Plugin Platform Architecture Guide](specs/architecture/plugin-platform.md) — how the repo evolves from bespoke agents to a scalable plugin ecosystem
 - [Operator Health & AI Services](specs/architecture/operator-health-and-ai-services.md) — operator summary, AI diagnosis, and site config spec
-
-## Development
-
-See [GETTING_STARTED.md](GETTING_STARTED.md) for development setup, testing workflows, and contribution guidelines.
-
-## Pre-commit Hooks
-
-Enforced automatically via husky:
-- TypeScript type checking
-- Secret detection (gitleaks)
-- Shell script linting (shellcheck)
-- Large file prevention, merge conflict markers, .env protection
-- Conventional commit message format
 
 ## License
 
