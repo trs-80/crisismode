@@ -20,6 +20,7 @@
 import { spawn } from 'node:child_process';
 import type { HealthStatus } from '../types/health.js';
 import type { RiskLevel } from '../types/common.js';
+import { parseNagiosOutput, nagiosToHealthResult, nagiosToDiagnoseResult } from './nagios-adapter.js';
 
 // ── Wire types (stdin → plugin) ──
 
@@ -104,6 +105,14 @@ export interface CheckPluginManifest {
   verbs: CheckVerb[];
   /** Path to the executable (relative to plugin dir or absolute) */
   executable: string;
+  /**
+   * Plugin output format.
+   *   - 'crisismode' (default): JSON wire protocol on stdin/stdout
+   *   - 'nagios': Nagios plugin format (exit code + text line + optional perfdata)
+   *     Nagios-format plugins receive no stdin input and are called with no arguments.
+   *     They output a single status line optionally followed by | and performance data.
+   */
+  format?: 'crisismode' | 'nagios';
   /** Max risk level of any plan step this plugin can generate */
   maxRiskLevel?: RiskLevel;
   /** Timeout in ms (default: 10000) */
@@ -222,5 +231,79 @@ export function executeCheckPlugin(
     // Write the request and close stdin
     child.stdin.write(JSON.stringify(request));
     child.stdin.end();
+  });
+}
+
+/**
+ * Execute a Nagios-format check plugin.
+ *
+ * Nagios plugins receive no stdin input. They are called with optional arguments
+ * and produce a single status line on stdout, optionally followed by `|` and
+ * performance data. The exit code encodes the check status.
+ *
+ * The raw Nagios output is parsed and converted to CrisisMode check results.
+ */
+export function executeNagiosPlugin(
+  executablePath: string,
+  verb: CheckVerb,
+  options?: { timeoutMs?: number; cwd?: string; env?: Record<string, string>; args?: string[] },
+): Promise<PluginExecutionResult> {
+  const timeoutMs = options?.timeoutMs ?? 10_000;
+
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const child = spawn(executablePath, options?.args ?? [], {
+      cwd: options?.cwd,
+      env: { ...process.env, ...options?.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+    });
+
+    child.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    child.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+
+      const exitCode = code ?? 3;
+      const exitStatus = exitCodeToStatus(exitCode);
+      const durationMs = Date.now() - startTime;
+
+      const parsed = parseNagiosOutput(stdout, exitCode);
+      let result: CheckResult | null;
+
+      if (verb === 'diagnose') {
+        result = nagiosToDiagnoseResult(parsed);
+      } else {
+        // For 'health' and 'plan', return a health result
+        // (Nagios plugins don't generate recovery plans)
+        result = nagiosToHealthResult(parsed);
+      }
+
+      resolve({ exitStatus, exitCode, result, stderr, durationMs });
+    });
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+
+      resolve({
+        exitStatus: 'unknown',
+        exitCode: 3,
+        result: null,
+        stderr: err.message,
+        durationMs: Date.now() - startTime,
+      });
+    });
   });
 }

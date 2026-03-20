@@ -17,7 +17,7 @@ import { loadConfig } from '../../config/loader.js';
 import { detectServices } from '../detect.js';
 import { discoverStack } from '../autodiscovery.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
-import { executeCheckPlugin, exitStatusToHealth } from '../../framework/check-plugin.js';
+import { executeCheckPlugin, executeNagiosPlugin, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
   printBanner, printScanSummary, printNextAction,
   printInfo, printDetection, printError,
@@ -209,11 +209,10 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
           },
         };
 
-        const execResult = await executeCheckPlugin(
-          plugin.executablePath,
-          request,
-          { timeoutMs: plugin.manifest.timeoutMs ?? 10_000, cwd: plugin.pluginDir },
-        );
+        const execOpts = { timeoutMs: plugin.manifest.timeoutMs ?? 10_000, cwd: plugin.pluginDir };
+        const execResult = plugin.manifest.format === 'nagios'
+          ? await executeNagiosPlugin(plugin.executablePath, 'health', execOpts)
+          : await executeCheckPlugin(plugin.executablePath, request, execOpts);
 
         const healthResult = execResult.result as CheckHealthResult | null;
         const rawStatus = healthResult?.status ?? exitStatusToHealth(execResult.exitStatus);
