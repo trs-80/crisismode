@@ -11,9 +11,8 @@
 
 import type { RecoveryAgent } from '../agent/interface.js';
 import type { AgentContext } from '../types/agent-context.js';
-import type { CheckPluginManifest } from './check-plugin.js';
-import { executeCheckPlugin } from './check-plugin.js';
-import type { CheckRequest } from './check-plugin.js';
+import type { CheckPluginManifest, CheckRequest, CheckVerb } from './check-plugin.js';
+import { executeCheckPlugin, executeNagiosPlugin, executeGossPlugin, executeSensuPlugin } from './check-plugin.js';
 
 // ── Public types ──
 
@@ -255,6 +254,7 @@ function checkMethodsAsync(agent: RecoveryAgent, context: AgentContext): Harness
 export async function validateCheckPlugin(
   executablePath: string,
   manifest: CheckPluginManifest,
+  options?: { cwd?: string },
 ): Promise<HarnessResult> {
   const checks: HarnessCheck[] = [];
 
@@ -263,7 +263,7 @@ export async function validateCheckPlugin(
 
   // 2. Execute each verb and validate output
   for (const verb of manifest.verbs ?? []) {
-    checks.push(await checkPluginVerb(executablePath, verb, manifest));
+    checks.push(await checkPluginVerb(executablePath, verb, manifest, options));
   }
 
   return {
@@ -293,16 +293,22 @@ async function checkPluginVerb(
   executablePath: string,
   verb: string,
   manifest: CheckPluginManifest,
+  options?: { cwd?: string },
 ): Promise<HarnessCheck> {
-  const request: CheckRequest = {
-    verb: verb as CheckRequest['verb'],
-    target: { name: 'harness-test', kind: manifest.targetKinds[0] ?? 'generic' },
-  };
+  const execOpts = { timeoutMs: manifest.timeoutMs ?? 10_000, cwd: options?.cwd };
 
   try {
-    const res = await executeCheckPlugin(executablePath, request, {
-      timeoutMs: manifest.timeoutMs ?? 10_000,
-    });
+    const res = manifest.format === 'nagios'
+      ? await executeNagiosPlugin(executablePath, verb as CheckVerb, execOpts)
+      : manifest.format === 'goss'
+        ? await executeGossPlugin(executablePath, verb as CheckVerb, execOpts)
+        : manifest.format === 'sensu'
+          ? await executeSensuPlugin(executablePath, verb as CheckVerb, { ...execOpts, sensuMetricFormat: manifest.sensuMetricFormat })
+          : await executeCheckPlugin(
+            executablePath,
+            { verb: verb as CheckVerb, target: { name: 'harness-test', kind: manifest.targetKinds[0] ?? 'generic' } },
+            execOpts,
+          );
 
     // Exit code must be 0-3
     if (res.exitCode < 0 || res.exitCode > 3) {
