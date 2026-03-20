@@ -1,0 +1,12 @@
+{
+  "name": "example-sensu-metrics",
+  "description": "System metrics in Prometheus exposition format (Sensu format example)",
+  "version": "1.0.0",
+  "targetKinds": ["linux", "generic"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh",
+  "format": "sensu",
+  "sensuMetricFormat": "prometheus_text",
+  "author": "CrisisMode Contributors",
+  "license": "Apache-2.0"
+}

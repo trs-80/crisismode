@@ -1,0 +1,25 @@
+# Example Goss health assertions.
+#
+# Goss validates system state declaratively — services, files, ports,
+# packages, commands, and more. Edit this file to match your system.
+#
+# Generate assertions from the current system with:
+#   goss add file /etc/resolv.conf
+#   goss add port 22
+#   goss add service sshd
+#
+# Reference: https://github.com/goss-org/goss
+
+file:
+  /etc/resolv.conf:
+    exists: true
+  /etc/hosts:
+    exists: true
+    contains:
+      - "localhost"
+
+command:
+  uname -s:
+    exit-status: 0
+  date +%Z:
+    exit-status: 0
