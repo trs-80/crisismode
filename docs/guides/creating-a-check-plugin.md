@@ -387,6 +387,119 @@ Each `CheckPlanStep` has:
 | `command` | `string?` | Optional command to execute |
 | `rollback` | `string?` | Optional rollback command |
 
+## Using External Check Formats
+
+CrisisMode can consume checks from existing monitoring ecosystems without rewriting them. Set the `format` field in `manifest.json` to tell the framework which adapter to use.
+
+### Nagios Plugin Format
+
+Thousands of Nagios/Icinga/Checkmk plugins exist. Wrap any of them:
+
+**`checks/example-nagios-uptime/manifest.json`:**
+```json
+{
+  "name": "example-nagios-uptime",
+  "description": "System uptime and load (Nagios plugin format example)",
+  "version": "1.0.0",
+  "targetKinds": ["linux", "generic"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh",
+  "format": "nagios"
+}
+```
+
+Nagios plugins receive **no stdin**. They output a status line optionally followed by `|` and performance data:
+
+```
+OK - Load 0.85 (16 CPUs), up 5d 3h | load=0.85;32;64;0; uptime=445736s;;;;
+```
+
+Exit codes: 0=OK, 1=WARNING, 2=CRITICAL, 3=UNKNOWN.
+
+The adapter parses the text output and performance data into CrisisMode health signals and diagnose findings automatically. Performance data items that exceed their warn/crit thresholds become findings.
+
+See `checks/example-nagios-uptime/` for a complete working example.
+
+### Goss YAML Assertion Format
+
+[Goss](https://github.com/goss-org/goss) validates system state declaratively using YAML. Wrap it:
+
+**`checks/example-goss-system/manifest.json`:**
+```json
+{
+  "name": "example-goss-system",
+  "description": "System state validation via Goss YAML assertions",
+  "version": "1.0.0",
+  "targetKinds": ["linux", "generic"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh",
+  "format": "goss"
+}
+```
+
+**`checks/example-goss-system/goss.yaml`:**
+```yaml
+file:
+  /etc/resolv.conf:
+    exists: true
+  /etc/hosts:
+    exists: true
+    contains:
+      - "localhost"
+command:
+  uname -s:
+    exit-status: 0
+```
+
+**`checks/example-goss-system/check.sh`:**
+```bash
+#!/usr/bin/env bash
+exec goss -g "$(dirname "$0")/goss.yaml" validate --format json
+```
+
+Goss plugins receive **no stdin**. They output structured JSON with a `results` array and `summary` object. Failed assertions become diagnose findings; passed assertions are reported as healthy signals.
+
+Use `goss add` to auto-generate assertions from the current system state. See `checks/example-goss-system/` for a complete working example.
+
+### Sensu Check Format
+
+[Sensu](https://sensu.io/) checks use Nagios-compatible exit codes but support additional metric output formats. Set `sensuMetricFormat` in the manifest:
+
+**`checks/example-sensu-metrics/manifest.json`:**
+```json
+{
+  "name": "example-sensu-metrics",
+  "description": "System metrics in Prometheus exposition format",
+  "version": "1.0.0",
+  "targetKinds": ["linux", "generic"],
+  "verbs": ["health", "diagnose"],
+  "executable": "./check.sh",
+  "format": "sensu",
+  "sensuMetricFormat": "prometheus_text"
+}
+```
+
+Supported metric formats:
+
+| Format | `sensuMetricFormat` value | Example line |
+|---|---|---|
+| Nagios perfdata | `nagios_perfdata` (default) | `label=value;warn;crit;min;max` |
+| Graphite plaintext | `graphite_plaintext` | `metric.name value timestamp` |
+| InfluxDB line protocol | `influxdb_line` | `measurement,tag=val field=val timestamp` |
+| OpenTSDB | `opentsdb_line` | `metric timestamp value tag=val` |
+| Prometheus exposition | `prometheus_text` | `metric{label="val"} value [timestamp]` |
+
+Sensu plugins receive **no stdin**. See `checks/example-sensu-metrics/` for a complete working example that emits Prometheus-format metrics.
+
+### Format Reference
+
+| `format` value | Stdin | Output | Adapter |
+|---|---|---|---|
+| *(unset)* | JSON `CheckRequest` | JSON `CheckResult` | Native CrisisMode protocol |
+| `nagios` | None | Status text + optional perfdata | Nagios adapter |
+| `goss` | None | `goss validate --format json` output | Goss adapter |
+| `sensu` | None | Metric text in the specified format | Sensu adapter |
+
 ## Tips
 
 **Portability.** Avoid bash-specific features if you want your check to run on minimal containers. Stick to POSIX shell (`#!/usr/bin/env sh`) where possible, or use `#!/usr/bin/env bash` and document the dependency.
