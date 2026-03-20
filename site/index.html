@@ -700,6 +700,110 @@
       letter-spacing: 0.05em;
     }
 
+    /* ── READY TODAY SECTION ── */
+    .ready-section {
+      border-top: 1px solid var(--border-subtle);
+      background: var(--bg-secondary);
+    }
+
+    .inline-code {
+      font-family: var(--font-mono);
+      font-size: 0.875em;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      padding: 0.15em 0.4em;
+      color: var(--amber);
+    }
+
+    .ready-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1px;
+      background: var(--border-subtle);
+      border: 1px solid var(--border-subtle);
+      margin-bottom: 3rem;
+    }
+
+    .ready-stat {
+      background: var(--bg-primary);
+      padding: 1.75rem;
+      transition: background 0.3s;
+    }
+
+    .ready-stat:hover {
+      background: var(--bg-tertiary);
+    }
+
+    .ready-stat-value {
+      font-family: var(--font-mono);
+      font-size: 2.5rem;
+      font-weight: 300;
+      color: var(--amber);
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+
+    .ready-stat-label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-primary);
+      margin-bottom: 0.75rem;
+    }
+
+    .ready-stat-detail {
+      font-size: 0.8125rem;
+      color: var(--text-tertiary);
+      line-height: 1.55;
+    }
+
+    .ready-scenarios {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 2rem;
+    }
+
+    .ready-col-title {
+      font-family: var(--font-mono);
+      font-size: 0.6875rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--amber-dim);
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .ready-list {
+      list-style: none;
+    }
+
+    .ready-list li {
+      font-family: var(--font-mono);
+      font-size: 0.8125rem;
+      color: var(--text-secondary);
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .ready-list li::before {
+      content: '';
+      display: block;
+      width: 4px;
+      height: 4px;
+      background: var(--text-muted);
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .ready-list li:last-child {
+      border-bottom: none;
+    }
+
     /* ── SCROLL ANIMATIONS ── */
     .reveal {
       opacity: 0;
@@ -722,6 +826,8 @@
       .features-grid { grid-template-columns: 1fr; }
       .flow-step { grid-template-columns: 50px 1fr; }
       .spec-stats { grid-template-columns: repeat(2, 1fr); }
+      .ready-stats { grid-template-columns: 1fr; }
+      .ready-scenarios { grid-template-columns: 1fr; }
       .terminal-body { font-size: 0.6875rem; min-height: 300px; }
     }
   </style>
@@ -735,6 +841,7 @@
       CRISISMODE
     </div>
     <ul class="nav-links">
+      <li><a href="#ready-today">Ready Today</a></li>
       <li><a href="#how-it-works">How It Works</a></li>
       <li><a href="#architecture">Architecture</a></li>
       <li><a href="#spec">Specification</a></li>
@@ -752,7 +859,7 @@
         <span class="highlight">agents recover.</span>
       </h1>
       <p class="hero-description">
-        CrisisMode is an open framework for building autonomous recovery agents that restore IT systems during severe incidents. Safety guarantees, forensic state preservation, and human-in-the-loop coordination — as first-class primitives.
+        CrisisMode is the recovery layer for your infrastructure. Monitoring tells you something is wrong. CrisisMode tells you what to do about it — safely. AI-powered diagnosis, validated recovery plans, and human-in-the-loop execution with an immutable forensic trail.
       </p>
       <div class="hero-actions">
         <a href="https://github.com/trs-80/crisismode" class="btn btn-primary" target="_blank" rel="noopener">View on GitHub</a>
@@ -772,6 +879,60 @@
           <span class="terminal-title">crisismode — pnpm dev</span>
         </div>
         <div class="terminal-body" id="terminal-body"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- READY TODAY -->
+  <section class="ready-section" id="ready-today">
+    <div class="section-inner">
+      <div class="section-label reveal">What Ships Today</div>
+      <h2 class="section-title reveal">Not a spec. A working tool.</h2>
+      <p class="section-description reveal">
+        Run <code class="inline-code">crisismode scan</code> with zero configuration. It detects what's running, checks health, and tells you what to look at first. No YAML, no credentials, no setup ceremony.
+      </p>
+
+      <div class="ready-stats reveal">
+        <div class="ready-stat">
+          <div class="ready-stat-value">12</div>
+          <div class="ready-stat-label">Recovery Agents</div>
+          <div class="ready-stat-detail">PostgreSQL, Redis, etcd, Kafka, Kubernetes, Ceph, Flink, and 5 cross-cutting concern agents</div>
+        </div>
+        <div class="ready-stat">
+          <div class="ready-stat-value">5</div>
+          <div class="ready-stat-label">Escalation Levels</div>
+          <div class="ready-stat-detail">Observe, diagnose, suggest, repair-safe, repair-destructive — progressive depth under operator control</div>
+        </div>
+        <div class="ready-stat">
+          <div class="ready-stat-value">4</div>
+          <div class="ready-stat-label">Check Formats</div>
+          <div class="ready-stat-detail">Native JSON, Nagios/Icinga, Goss YAML, and Sensu — thousands of existing checks work out of the box</div>
+        </div>
+      </div>
+
+      <div class="ready-scenarios reveal">
+        <div class="ready-col">
+          <h3 class="ready-col-title">Modern Application Incidents</h3>
+          <ul class="ready-list">
+            <li>Bad deploy rollback</li>
+            <li>AI provider degradation and failover</li>
+            <li>Database migration failures</li>
+            <li>Queue and worker backlog</li>
+            <li>Config and environment drift</li>
+          </ul>
+        </div>
+        <div class="ready-col">
+          <h3 class="ready-col-title">Stateful Infrastructure Recovery</h3>
+          <ul class="ready-list">
+            <li><span class="t-green">Live</span> PostgreSQL replication</li>
+            <li>Redis memory pressure</li>
+            <li>etcd consensus recovery</li>
+            <li>Kafka partition rebalance</li>
+            <li>Kubernetes node cascades</li>
+            <li>Ceph OSD recovery</li>
+            <li>Flink checkpoint failures</li>
+          </ul>
+        </div>
       </div>
     </div>
   </section>
