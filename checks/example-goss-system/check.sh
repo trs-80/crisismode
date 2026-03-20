@@ -6,8 +6,8 @@
 # and CrisisMode parses the structured JSON output.
 #
 # Requires: goss (https://github.com/goss-org/goss)
-#   Install: brew install goss  (macOS)
-#            curl -fsSL https://goss.rocks/install | sh  (Linux)
+#   Install: curl -fsSL https://goss.rocks/install | sh
+#   Or download from: https://github.com/goss-org/goss/releases
 #
 # If goss is not installed, this check emits a synthetic JSON response
 # so the plugin still passes contract validation.
