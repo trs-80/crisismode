@@ -175,7 +175,10 @@ async function readManifest(pluginDir: string): Promise<CheckPluginManifest> {
     throw new Error(`manifest.json missing "targetKinds" in ${pluginDir}`);
   }
 
-  const format = m.format === 'nagios' ? 'nagios' as const : undefined;
+  const format = m.format === 'nagios' ? 'nagios' as const
+    : m.format === 'goss' ? 'goss' as const
+      : m.format === 'sensu' ? 'sensu' as const
+        : undefined;
 
   return {
     name: m.name as string,
@@ -185,6 +188,9 @@ async function readManifest(pluginDir: string): Promise<CheckPluginManifest> {
     verbs: m.verbs as CheckPluginManifest['verbs'],
     executable: m.executable as string,
     format,
+    sensuMetricFormat: typeof m.sensuMetricFormat === 'string'
+      ? m.sensuMetricFormat as CheckPluginManifest['sensuMetricFormat']
+      : undefined,
     maxRiskLevel: m.maxRiskLevel as CheckPluginManifest['maxRiskLevel'],
     timeoutMs: typeof m.timeoutMs === 'number' ? m.timeoutMs : undefined,
     author: typeof m.author === 'string' ? m.author : undefined,
