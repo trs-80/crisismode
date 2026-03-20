@@ -36,16 +36,16 @@ resolve_dns() {
 
   case "$DNS_TOOL" in
     dig)
-      RESOLVED_IPS=$(dig +short "$LOOKUP_HOST" A 2>/dev/null | grep -E '^[0-9]+\.' | head -5)
+      RESOLVED_IPS=$(dig +short "$LOOKUP_HOST" A 2>/dev/null | grep -E '^[0-9]+\.' | head -5 || true)
       ;;
     nslookup)
-      RESOLVED_IPS=$(nslookup "$LOOKUP_HOST" 2>/dev/null | sed -n '/^Address/s/^Address[^:]*: *//p' | grep -v '#' | head -5)
+      RESOLVED_IPS=$(nslookup "$LOOKUP_HOST" 2>/dev/null | sed -n '/^Address/s/^Address[^:]*: *//p' | grep -v '#' | head -5 || true)
       ;;
     host)
-      RESOLVED_IPS=$(host "$LOOKUP_HOST" 2>/dev/null | sed -n 's/.* has address \(.*\)/\1/p' | head -5)
+      RESOLVED_IPS=$(host "$LOOKUP_HOST" 2>/dev/null | sed -n 's/.* has address \(.*\)/\1/p' | head -5 || true)
       ;;
     getent)
-      RESOLVED_IPS=$(getent hosts "$LOOKUP_HOST" 2>/dev/null | awk '{print $1}' | head -5)
+      RESOLVED_IPS=$(getent hosts "$LOOKUP_HOST" 2>/dev/null | awk '{print $1}' | head -5 || true)
       ;;
   esac
 

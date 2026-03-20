@@ -23,8 +23,13 @@ fi
 CERT_INFO=$(echo | openssl s_client -servername "$HOST" -connect "$HOST:$PORT" 2>/dev/null) || true
 
 if [ -z "$CERT_INFO" ]; then
-  printf '{"status":"critical","summary":"Could not connect to %s:%s to check certificate","confidence":0.8,"signals":[{"source":"openssl","status":"critical","detail":"TLS connection failed to %s:%s"}],"recommendedActions":["Verify the service is running and accepting TLS connections"]}\n' \
-    "$HOST" "$PORT" "$HOST" "$PORT"
+  if [ "$VERB" = "diagnose" ]; then
+    printf '{"healthy":false,"summary":"Could not connect to %s:%s to check certificate","findings":[{"id":"cert-conn-fail","severity":"critical","title":"TLS Connection Failed","detail":"Could not connect to %s:%s"}]}\n' \
+      "$HOST" "$PORT" "$HOST" "$PORT"
+  else
+    printf '{"status":"critical","summary":"Could not connect to %s:%s to check certificate","confidence":0.8,"signals":[{"source":"openssl","status":"critical","detail":"TLS connection failed to %s:%s"}],"recommendedActions":["Verify the service is running and accepting TLS connections"]}\n' \
+      "$HOST" "$PORT" "$HOST" "$PORT"
+  fi
   exit 2
 fi
 
@@ -32,8 +37,13 @@ fi
 EXPIRY_DATE=$(echo "$CERT_INFO" | openssl x509 -noout -enddate 2>/dev/null | sed 's/notAfter=//')
 
 if [ -z "$EXPIRY_DATE" ]; then
-  printf '{"status":"unknown","summary":"Could not parse certificate from %s:%s","confidence":0.5,"signals":[],"recommendedActions":["Verify the endpoint serves a valid TLS certificate"]}\n' \
-    "$HOST" "$PORT"
+  if [ "$VERB" = "diagnose" ]; then
+    printf '{"healthy":false,"summary":"Could not parse certificate from %s:%s","findings":[{"id":"cert-parse-fail","severity":"warning","title":"Certificate Parse Failed","detail":"Could not parse certificate from %s:%s"}]}\n' \
+      "$HOST" "$PORT" "$HOST" "$PORT"
+  else
+    printf '{"status":"unknown","summary":"Could not parse certificate from %s:%s","confidence":0.5,"signals":[],"recommendedActions":["Verify the endpoint serves a valid TLS certificate"]}\n' \
+      "$HOST" "$PORT"
+  fi
   exit 3
 fi
 
