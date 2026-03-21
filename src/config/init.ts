@@ -61,6 +61,26 @@ targets:
   #   credentials:
   #     type: env
   #     password: REDIS_PASSWORD
+
+  # TLS certificate monitoring (uncomment and set host to your endpoint):
+  # - name: api-tls
+  #   kind: tls
+  #   primary:
+  #     host: api.example.com
+  #     port: 443
+
+  # Note: DNS and disk health checks run automatically without configuration.
+  # To customize which mount points or resolvers are checked, add explicit targets:
+  # - name: custom-dns
+  #   kind: dns
+  #   primary:
+  #     host: auto          # auto-detect from /etc/resolv.conf
+  #     port: 53
+  # - name: custom-disk
+  #   kind: disk
+  #   primary:
+  #     host: /,/var/log    # comma-separated mount points
+  #     port: 0
 `;
 
 export function generateTemplate(): string {
