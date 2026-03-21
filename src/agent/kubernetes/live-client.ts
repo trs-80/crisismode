@@ -195,10 +195,9 @@ export class K8sLiveClient implements K8sBackend {
   async getPVCStatus(namespace: string): Promise<K8sPVCStatus[]> {
     const response = await this.coreApi.listNamespacedPersistentVolumeClaim({ namespace });
     return (response.items ?? []).map((pvc) => {
-      const phase = pvc.status?.phase ?? 'Pending';
       let status: K8sPVCStatus['status'] = 'Pending';
-      if (phase === 'Bound') status = 'Bound';
-      else if (pvc.metadata?.deletionTimestamp) status = 'Terminating';
+      if (pvc.metadata?.deletionTimestamp) status = 'Terminating';
+      else if (pvc.status?.phase === 'Bound') status = 'Bound';
 
       return {
         name: pvc.metadata?.name ?? 'unknown',
