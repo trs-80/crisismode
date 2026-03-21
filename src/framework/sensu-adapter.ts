@@ -325,7 +325,12 @@ export function parseSensuOutput(
   // For non-nagios formats: parse all lines as metrics
   const metrics = parseSensuMetrics(stdout, format);
   const lines = stdout.split('\n').filter((l) => l.trim() !== '');
-  const statusText = lines.length > 0 ? lines[0].trim() : '';
+
+  // Skip comment/metadata lines (e.g. Prometheus # HELP / # TYPE) when picking status text.
+  // These formats are pure metric data — use the first data line, or synthesise a summary.
+  const firstDataLine = lines.find((l) => !l.trim().startsWith('#'))?.trim() ?? '';
+  const statusText = firstDataLine
+    || (metrics.length > 0 ? `${metrics.length} metric(s) collected` : '');
 
   return {
     statusText,
@@ -407,9 +412,14 @@ export function sensuToHealthResult(parsed: SensuParseResult): CheckHealthResult
     detail: `${parsed.statusText || 'Sensu check'} — ${metricSummary}`,
   });
 
+  // Prefer a metric-count summary over a raw data line for non-nagios formats
+  const summary = parsed.metrics.length > 0
+    ? `${parsed.metrics.length} metric(s) collected — ${parsed.exitStatus}`
+    : parsed.statusText || `Sensu check exited with status: ${parsed.exitStatus}`;
+
   return {
     status: parsed.healthStatus,
-    summary: parsed.statusText || `Sensu check exited with status: ${parsed.exitStatus}`,
+    summary,
     confidence: 0.8,
     signals,
     recommendedActions: [],
@@ -497,9 +507,14 @@ export function sensuToDiagnoseResult(parsed: SensuParseResult): CheckDiagnoseRe
     });
   }
 
+  // Prefer a metric-count summary over a raw data line for non-nagios formats
+  const summary = parsed.metrics.length > 0
+    ? `${parsed.metrics.length} metric(s) collected — ${parsed.exitStatus}`
+    : parsed.statusText || `Sensu check exited with status: ${parsed.exitStatus}`;
+
   return {
     healthy: parsed.exitStatus === 'ok',
-    summary: parsed.statusText || `Sensu check exited with status: ${parsed.exitStatus}`,
+    summary,
     findings,
   };
 }

@@ -293,6 +293,35 @@ describe('parseSensuOutput', () => {
     expect(result.metrics).toHaveLength(0);
     expect(result.exitStatus).toBe('ok');
   });
+
+  it('prometheus_text skips HELP/TYPE comment lines for statusText', () => {
+    const result = parseSensuOutput(
+      '# HELP node_load1 1-minute load average\n# TYPE node_load1 gauge\nnode_load1 0.85\n',
+      1,
+      'prometheus_text',
+    );
+
+    expect(result.format).toBe('prometheus_text');
+    expect(result.exitStatus).toBe('warning');
+    expect(result.metrics).toHaveLength(1);
+    expect(result.metrics[0].name).toBe('node_load1');
+    // statusText should be the first data line, NOT the # HELP comment
+    expect(result.statusText).toBe('node_load1 0.85');
+    expect(result.statusText).not.toContain('# HELP');
+  });
+
+  it('prometheus_text with only comments synthesises statusText from metric count', () => {
+    // Edge case: all lines are comments, no actual data lines
+    const result = parseSensuOutput(
+      '# HELP node_load1 1-minute load average\n# TYPE node_load1 gauge\n',
+      1,
+      'prometheus_text',
+    );
+
+    expect(result.metrics).toHaveLength(0);
+    expect(result.statusText).toBe('');
+    expect(result.statusText).not.toContain('# HELP');
+  });
 });
 
 describe('sensuToHealthResult', () => {
@@ -425,5 +454,18 @@ describe('sensuToDiagnoseResult', () => {
     expect(result.findings[0].id).toBe('sensu-status');
     expect(result.findings[0].severity).toBe('warning');
     expect(result.findings[0].title).toBe('WARNING - High load');
+  });
+
+  it('prometheus_text summary does not contain HELP comments', () => {
+    const parsed = parseSensuOutput(
+      '# HELP node_load1 1-minute load average\n# TYPE node_load1 gauge\nnode_load1 0.85\n',
+      1,
+      'prometheus_text',
+    );
+    const result = sensuToDiagnoseResult(parsed);
+
+    expect(result.healthy).toBe(false);
+    expect(result.summary).not.toContain('# HELP');
+    expect(result.summary).toContain('1 metric(s) collected');
   });
 });
