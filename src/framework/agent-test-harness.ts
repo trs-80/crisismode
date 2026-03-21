@@ -12,7 +12,7 @@
 import type { RecoveryAgent } from '../agent/interface.js';
 import type { AgentContext } from '../types/agent-context.js';
 import type { CheckPluginManifest, CheckRequest, CheckVerb } from './check-plugin.js';
-import { executeCheckPlugin, executeNagiosPlugin, executeGossPlugin, executeSensuPlugin } from './check-plugin.js';
+import { dispatchPluginExecution } from './check-plugin.js';
 
 // ── Public types ──
 
@@ -298,17 +298,13 @@ async function checkPluginVerb(
   const execOpts = { timeoutMs: manifest.timeoutMs ?? 10_000, cwd: options?.cwd };
 
   try {
-    const res = manifest.format === 'nagios'
-      ? await executeNagiosPlugin(executablePath, verb as CheckVerb, execOpts)
-      : manifest.format === 'goss'
-        ? await executeGossPlugin(executablePath, verb as CheckVerb, execOpts)
-        : manifest.format === 'sensu'
-          ? await executeSensuPlugin(executablePath, verb as CheckVerb, { ...execOpts, sensuMetricFormat: manifest.sensuMetricFormat })
-          : await executeCheckPlugin(
-            executablePath,
-            { verb: verb as CheckVerb, target: { name: 'harness-test', kind: manifest.targetKinds[0] ?? 'generic' } },
-            execOpts,
-          );
+    const request: CheckRequest = { verb: verb as CheckVerb, target: { name: 'harness-test', kind: manifest.targetKinds[0] ?? 'generic' } };
+    const res = await dispatchPluginExecution(
+      { executablePath, manifest },
+      verb as CheckVerb,
+      execOpts,
+      request,
+    );
 
     // Exit code must be 0-3
     if (res.exitCode < 0 || res.exitCode > 3) {

@@ -468,3 +468,32 @@ export function executeSensuPlugin(
     });
   });
 }
+
+/**
+ * Dispatch plugin execution based on manifest format.
+ * Centralises the format-to-executor mapping so callers don't need to branch.
+ */
+export function dispatchPluginExecution(
+  plugin: { executablePath: string; manifest: Pick<CheckPluginManifest, 'format' | 'sensuMetricFormat'> },
+  verb: CheckVerb,
+  options?: { timeoutMs?: number; cwd?: string; env?: Record<string, string> },
+  request?: CheckRequest,
+): Promise<PluginExecutionResult> {
+  switch (plugin.manifest.format) {
+    case 'nagios':
+      return executeNagiosPlugin(plugin.executablePath, verb, options);
+    case 'goss':
+      return executeGossPlugin(plugin.executablePath, verb, options);
+    case 'sensu':
+      return executeSensuPlugin(plugin.executablePath, verb, {
+        ...options,
+        sensuMetricFormat: plugin.manifest.sensuMetricFormat,
+      });
+    default:
+      return executeCheckPlugin(
+        plugin.executablePath,
+        request ?? { verb, target: { name: 'check', kind: 'generic' } },
+        options,
+      );
+  }
+}

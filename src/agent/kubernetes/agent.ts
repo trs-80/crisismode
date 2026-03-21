@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { RecoveryAgent, ReplanResult } from '../interface.js';
+import { defaultReplan } from '../interface.js';
+import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { k8sRecoveryManifest } from './manifest.js';
 import type { K8sBackend } from './backend.js';
 import { K8sSimulator } from './simulator.js';
@@ -44,7 +46,7 @@ export class K8sRecoveryAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'k8s_node_status',
-        status: nodesCritical ? 'critical' : 'healthy',
+        status: signalStatus(nodesCritical),
         detail: nodesCritical
           ? `${notReadyNodes.length} node(s) NotReady: ${notReadyNodes.map((n) => n.name).join(', ')}.`
           : `All ${nodes.length} node(s) are Ready.`,
@@ -52,7 +54,7 @@ export class K8sRecoveryAgent implements RecoveryAgent {
       },
       {
         source: 'k8s_pod_health',
-        status: podsCritical ? 'critical' : podsWarning ? 'warning' : 'healthy',
+        status: signalStatus(podsCritical, podsWarning),
         detail: crashloopPods.length > 0
           ? `${crashloopPods.length} pod(s) in CrashLoopBackOff: ${crashloopPods.map((p) => p.name).join(', ')}.`
           : 'No pods in CrashLoopBackOff.',
@@ -60,7 +62,7 @@ export class K8sRecoveryAgent implements RecoveryAgent {
       },
       {
         source: 'k8s_deployment_status',
-        status: deploymentsCritical ? 'warning' : 'healthy',
+        status: signalStatus(false, deploymentsCritical),
         detail: unhealthyDeployments.length > 0
           ? `${unhealthyDeployments.length} deployment(s) not at full replicas: ${unhealthyDeployments.map((d) => `${d.name} (${d.readyReplicas}/${d.replicas})`).join(', ')}.`
           : 'All deployments at full replicas.',
@@ -68,26 +70,21 @@ export class K8sRecoveryAgent implements RecoveryAgent {
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'Kubernetes cluster is healthy. All nodes ready, no crashlooping pods, all deployments at full replicas.'
-      : status === 'recovering'
-        ? 'Kubernetes cluster is recovering. Some pods or deployments are not yet at desired state.'
-        : 'Kubernetes cluster is unhealthy. Node failures or widespread pod crash loops require immediate action.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring cluster health.']
-      : status === 'recovering'
-        ? ['Continue monitoring until all deployments reach full replica count and no pods are in error states.']
-        : ['Run the Kubernetes recovery workflow in dry-run mode to cordon failing nodes and reschedule workloads.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.95,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.95,
+      summary: {
+        healthy: 'Kubernetes cluster is healthy. All nodes ready, no crashlooping pods, all deployments at full replicas.',
+        recovering: 'Kubernetes cluster is recovering. Some pods or deployments are not yet at desired state.',
+        unhealthy: 'Kubernetes cluster is unhealthy. Node failures or widespread pod crash loops require immediate action.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring cluster health.'],
+        recovering: ['Continue monitoring until all deployments reach full replica count and no pods are in error states.'],
+        unhealthy: ['Run the Kubernetes recovery workflow in dry-run mode to cordon failing nodes and reschedule workloads.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -156,7 +153,6 @@ export class K8sRecoveryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const cluster = String(context.trigger.payload.instance || 'k8s-cluster');
 
     // Determine target node from diagnosis findings
@@ -476,18 +472,15 @@ export class K8sRecoveryAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-k8s-node-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'k8s-node',
         agentName: 'kubernetes-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'node_not_ready_cascade',
-        createdAt: now,
         estimatedDuration: 'PT15M',
         summary: `Recover Kubernetes cluster from node failure on ${targetNode}: cordon, drain, restart affected deployments.`,
         supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {
@@ -509,11 +502,5 @@ export class K8sRecoveryAgent implements RecoveryAgent {
     };
   }
 
-  async replan(
-    _context: AgentContext,
-    _diagnosis: DiagnosisResult,
-    _executionState: ExecutionState,
-  ): Promise<ReplanResult> {
-    return { action: 'continue' };
-  }
+  replan = defaultReplan;
 }

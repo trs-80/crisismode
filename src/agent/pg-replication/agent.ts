@@ -6,9 +6,11 @@ import type { RecoveryAgent, ReplanResult } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import type { ReplicaStatus } from './backend.js';
 import { pgReplicationManifest } from './manifest.js';
 import type { PgBackend } from './backend.js';
@@ -127,36 +129,31 @@ export class PgReplicationAgent implements RecoveryAgent {
         };
     const connectionSignal: HealthSignal = {
       source: 'pg_stat_activity',
-      status: connectionCount > 500 ? 'warning' : 'healthy',
+      status: signalStatus(false, connectionCount > 500),
       detail: `${connectionCount} active connection(s) on the primary.`,
       observedAt,
     };
 
-    const summary = status === 'healthy'
-      ? `PostgreSQL replication is healthy. All replicas are streaming and worst replay lag is ${worstLag}s.`
-      : status === 'recovering'
-        ? `PostgreSQL replication is recovering. All replicas are streaming, but worst replay lag is still ${worstLag}s.`
-        : `PostgreSQL replication is unhealthy. Worst replay lag is ${worstLag}s and direct health signals still show recovery is required.`;
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring direct replication health signals.']
-      : status === 'recovering'
-        ? ['Continue monitoring until replay lag drops below 2s on all replicas.']
-        : [
-            'Run the replication recovery workflow in dry-run mode to confirm the next safe action.',
-            ...(unhealthySlots.length > 0
-              ? ['Prepare manual replication-slot repair if slot health does not recover during automation.']
-              : []),
-          ];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.97,
-      summary,
-      observedAt,
       signals: [replicaSignal, slotSignal, connectionSignal],
-      recommendedActions,
-    };
+      confidence: 0.97,
+      summary: {
+        healthy: `PostgreSQL replication is healthy. All replicas are streaming and worst replay lag is ${worstLag}s.`,
+        recovering: `PostgreSQL replication is recovering. All replicas are streaming, but worst replay lag is still ${worstLag}s.`,
+        unhealthy: `PostgreSQL replication is unhealthy. Worst replay lag is ${worstLag}s and direct health signals still show recovery is required.`,
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring direct replication health signals.'],
+        recovering: ['Continue monitoring until replay lag drops below 2s on all replicas.'],
+        unhealthy: [
+          'Run the replication recovery workflow in dry-run mode to confirm the next safe action.',
+          ...(unhealthySlots.length > 0
+            ? ['Prepare manual replication-slot repair if slot health does not recover during automation.']
+            : []),
+        ],
+      },
+    });
   }
 
   async diagnose(context: AgentContext): Promise<DiagnosisResult> {
@@ -254,8 +251,6 @@ export class PgReplicationAgent implements RecoveryAgent {
   }
 
   async plan(_context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
-
     // Dynamic target resolution: find the worst-lagging replica from diagnosis
     const replicas = (diagnosis.findings[0]?.data as { replicas: ReplicaStatus[] })?.replicas ?? [];
     const target = this.findWorstReplica(replicas);
@@ -667,19 +662,14 @@ export class PgReplicationAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-pg-repl-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'pg-repl',
         agentName: 'postgresql-replication-recovery',
         agentVersion: '1.2.0',
         scenario: 'replication_lag_cascade',
-        createdAt: now,
         estimatedDuration: 'PT15M',
-        summary:
-          `Recover PostgreSQL replication by disconnecting lagging replica ${targetAddr}, stabilizing the primary, and re-syncing.`,
-        supersedes: null,
-      },
+        summary: `Recover PostgreSQL replication by disconnecting lagging replica ${targetAddr}, stabilizing the primary, and re-syncing.`,
+      }),
       impact: {
         affectedSystems: [
           {
@@ -726,7 +716,6 @@ export class PgReplicationAgent implements RecoveryAgent {
         (this.backend as PgSimulator).markSlotRecreated();
       }
 
-      const now = new Date().toISOString();
       const primaryId = String(_context.trigger.payload.instance || 'pg-primary');
       const revisedSteps: RecoveryStep[] = [
         {
@@ -810,18 +799,16 @@ export class PgReplicationAgent implements RecoveryAgent {
       return {
         action: 'revised_plan',
         plan: {
-          apiVersion: 'v0.2.1',
-          kind: 'RecoveryPlan',
-          metadata: {
-            planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-pg-repl-002`,
+          ...createPlanEnvelope({
+            planIdSuffix: 'pg-repl',
             agentName: 'postgresql-replication-recovery',
             agentVersion: '1.2.0',
             scenario: 'replication_lag_cascade',
-            createdAt: now,
             estimatedDuration: 'PT18M',
             summary: `Revised plan: drop and recreate invalid slot '${safeSlotName}' before proceeding.`,
+            sequence: 2,
             supersedes: _executionState.completedSteps.length > 0 ? 'original' : null,
-          },
+          }),
           impact: {
             affectedSystems: [
               { identifier: primaryId, technology: 'postgresql', role: 'primary', impactType: 'reduced_read_capacity' },

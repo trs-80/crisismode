@@ -10,7 +10,7 @@ import type { ExecutionBackend } from './backend.js';
 import type { RecoveryGraphStateType } from './graph-state.js';
 import type { RecoveryAgent } from '../agent/interface.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
-import type { RiskLevel } from '../types/common.js';
+import type { ExecutionMode, RiskLevel } from '../types/common.js';
 import type { ForensicLogEntry } from './graph-types.js';
 import type { ApprovalHandler } from './approval-handler.js';
 import { executeCapture, validateBlastRadius } from './safety.js';
@@ -19,8 +19,9 @@ import { isCatalogCovered } from './catalog.js';
 import { resolveStepProviders } from './provider-registry.js';
 import { derivePlanMaxRiskLevel } from './risk.js';
 import { makeTimestamp } from './graph-helpers.js';
+import { makeStepResult } from './step-result.js';
 
-export type ExecutionMode = 'dry-run' | 'execute';
+export type { ExecutionMode } from '../types/common.js';
 
 export interface GraphNodeContext {
   backend: ExecutionBackend;
@@ -39,24 +40,6 @@ function makeLogEntry(
   data?: Record<string, unknown>,
 ): ForensicLogEntry {
   return { timestamp: makeTimestamp(), type, stepId, message, data };
-}
-
-function makeStepResult(
-  step: RecoveryStep,
-  status: StepResult['status'],
-  startedAt: string,
-  startTime: number,
-  extra?: Partial<StepResult>,
-): StepResult {
-  return {
-    stepId: step.stepId,
-    step,
-    status,
-    startedAt,
-    completedAt: makeTimestamp(),
-    durationMs: Date.now() - startTime,
-    ...extra,
-  };
 }
 
 /**

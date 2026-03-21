@@ -5,9 +5,11 @@ import type { RecoveryAgent, ReplanResult } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { deployRollbackManifest } from './manifest.js';
 import type { DeployBackend } from './backend.js';
 import { DeploySimulator } from './simulator.js';
@@ -48,25 +50,25 @@ export class DeployRollbackAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'deploy_status',
-        status: deployCritical ? 'critical' : 'healthy',
+        status: signalStatus(deployCritical),
         detail: `Current deploy ${currentDeploy.sha.slice(0, 8)} is ${currentDeploy.status}. Deployed at ${currentDeploy.timestamp}.`,
         observedAt,
       },
       {
         source: 'endpoint_health',
-        status: endpointCritical ? 'critical' : endpointWarning ? 'warning' : 'healthy',
+        status: signalStatus(endpointCritical, endpointWarning),
         detail: `${endpoints.length} endpoint(s) monitored: ${downEndpoints} down, ${degradedEndpoints} degraded. Max error rate: ${maxErrorRate.toFixed(1)}%.`,
         observedAt,
       },
       {
         source: 'error_rate',
-        status: errorCritical ? 'critical' : errorWarning ? 'warning' : 'healthy',
+        status: signalStatus(errorCritical, errorWarning),
         detail: `Average error rate across endpoints: ${avgErrorRate.toFixed(1)}%. Max: ${maxErrorRate.toFixed(1)}%.`,
         observedAt,
       },
       {
         source: 'traffic_distribution',
-        status: traffic.entries.length > 1 ? 'warning' : 'healthy',
+        status: signalStatus(false, traffic.entries.length > 1),
         detail: traffic.entries
           .map((e) => `${e.target}: ${e.percentage}%`)
           .join(', '),
@@ -74,28 +76,21 @@ export class DeployRollbackAgent implements RecoveryAgent {
       },
     ];
 
-    const summary =
-      status === 'healthy'
-        ? 'Deploy health is healthy. All endpoints are responsive with error rates within normal thresholds.'
-        : status === 'recovering'
-          ? 'Deploy health is recovering. Some endpoints show elevated error rates or degradation after traffic shift.'
-          : 'Deploy health is unhealthy. Endpoint failures and high error rates indicate a bad deployment requiring rollback.';
-
-    const recommendedActions =
-      status === 'healthy'
-        ? ['No action required. Continue monitoring deploy health and error rates.']
-        : status === 'recovering'
-          ? ['Continue monitoring. Traffic has been shifted but error rates have not fully stabilized.']
-          : ['Run the deploy rollback recovery workflow to shift traffic away from the bad deployment.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.94,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.94,
+      summary: {
+        healthy: 'Deploy health is healthy. All endpoints are responsive with error rates within normal thresholds.',
+        recovering: 'Deploy health is recovering. Some endpoints show elevated error rates or degradation after traffic shift.',
+        unhealthy: 'Deploy health is unhealthy. Endpoint failures and high error rates indicate a bad deployment requiring rollback.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring deploy health and error rates.'],
+        recovering: ['Continue monitoring. Traffic has been shifted but error rates have not fully stabilized.'],
+        unhealthy: ['Run the deploy rollback recovery workflow to shift traffic away from the bad deployment.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -156,7 +151,6 @@ export class DeployRollbackAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const target = String(context.trigger.payload.instance || 'app-deployment');
 
     const steps: RecoveryStep[] = [
@@ -407,18 +401,14 @@ export class DeployRollbackAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-deploy-rb-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'deploy-rb',
         agentName: 'deploy-rollback-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'bad_deploy_high_error_rate',
-        createdAt: now,
         estimatedDuration: 'PT8M',
         summary: `Recover from bad deploy on ${target}: shift traffic to known-good version, verify error rates, complete rollback.`,
-        supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { RecoveryAgent, ReplanResult } from '../interface.js';
+import { defaultReplan } from '../interface.js';
+import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { dbMigrationManifest } from './manifest.js';
 import type { DbMigrationBackend } from './backend.js';
 import { DbMigrationSimulator } from './simulator.js';
@@ -46,7 +48,7 @@ export class DbMigrationAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'schema_migrations',
-        status: migrationStuck ? 'critical' : 'healthy',
+        status: signalStatus(migrationStuck),
         detail: migrationStuck
           ? `Migration ${migration.version} (${migration.name}) is ${migration.status}. ${migration.error ?? ''}`
           : `Latest migration ${migration.version} completed successfully.`,
@@ -54,13 +56,13 @@ export class DbMigrationAgent implements RecoveryAgent {
       },
       {
         source: 'connection_pool',
-        status: poolCritical ? 'critical' : poolWarning ? 'warning' : 'healthy',
+        status: signalStatus(poolCritical, poolWarning),
         detail: `Connection pool: ${pool.active} active, ${pool.idle} idle, ${pool.waiting} waiting (${pool.utilizationPct.toFixed(1)}% of ${pool.maxConnections} max).`,
         observedAt,
       },
       {
         source: 'pg_locks',
-        status: locksCritical ? 'critical' : 'healthy',
+        status: signalStatus(locksCritical),
         detail: locksCritical
           ? `${locks.filter((l) => !l.granted).length} blocked lock(s) detected on ${[...new Set(locks.map((l) => l.relation))].join(', ')}.`
           : 'No blocked locks detected.',
@@ -68,7 +70,7 @@ export class DbMigrationAgent implements RecoveryAgent {
       },
       {
         source: 'pg_stat_activity',
-        status: queriesCritical ? 'critical' : queriesWarning ? 'warning' : 'healthy',
+        status: signalStatus(queriesCritical, queriesWarning),
         detail: longQueries.length > 0
           ? `${longQueries.length} long-running query(ies); longest running for ${Math.max(...queries.map((q) => q.duration))}s.`
           : 'No long-running queries detected.',
@@ -76,32 +78,27 @@ export class DbMigrationAgent implements RecoveryAgent {
       },
       {
         source: 'database_size',
-        status: spaceLow ? 'warning' : 'healthy',
+        status: signalStatus(false, spaceLow),
         detail: `Database size: ${(dbSize.totalBytes / 1_073_741_824).toFixed(1)}GB. Free space: ${(dbSize.tablespaceFree / 1_073_741_824).toFixed(1)}GB. Growth rate: ${(dbSize.growthRatePerHour / 1_048_576).toFixed(0)}MB/hr.`,
         observedAt,
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'Database migration health is healthy. Migrations, connection pool, locks, and queries are all within normal thresholds.'
-      : status === 'recovering'
-        ? 'Database health is recovering. At least one pressure indicator is above the healthy target.'
-        : 'Database health is unhealthy. A stuck migration, connection pool exhaustion, or lock contention requires immediate action.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring database migration and connection pool health.']
-      : status === 'recovering'
-        ? ['Continue monitoring until connection pool utilization and query durations return to healthy thresholds.']
-        : ['Run the DB migration recovery workflow in dry-run mode to determine the next safe mitigation step.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.94,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.94,
+      summary: {
+        healthy: 'Database migration health is healthy. Migrations, connection pool, locks, and queries are all within normal thresholds.',
+        recovering: 'Database health is recovering. At least one pressure indicator is above the healthy target.',
+        unhealthy: 'Database health is unhealthy. A stuck migration, connection pool exhaustion, or lock contention requires immediate action.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring database migration and connection pool health.'],
+        recovering: ['Continue monitoring until connection pool utilization and query durations return to healthy thresholds.'],
+        unhealthy: ['Run the DB migration recovery workflow in dry-run mode to determine the next safe mitigation step.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -167,7 +164,6 @@ export class DbMigrationAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const instance = String(context.trigger.payload.instance || 'managed-db-primary');
 
     const steps: RecoveryStep[] = [
@@ -539,18 +535,14 @@ export class DbMigrationAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-db-mig-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'db-mig',
         agentName: 'db-migration-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'migration_lock_timeout',
-        createdAt: now,
         estimatedDuration: 'PT15M',
         summary: `Recover managed database from stuck migration on ${instance}: kill blocking queries, free connections, rollback failed migration.`,
-        supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {
@@ -572,20 +564,5 @@ export class DbMigrationAgent implements RecoveryAgent {
     };
   }
 
-  async replan(
-    _context: AgentContext,
-    _diagnosis: DiagnosisResult,
-    executionState: ExecutionState,
-  ): Promise<ReplanResult> {
-    const completedSteps = executionState.completedSteps ?? [];
-    const poolFreed = completedSteps.some((s) => s.stepId === 'step-005' && s.status === 'success');
-
-    if (poolFreed) {
-      // If connection pool recovered after freeing idle connections,
-      // continue — the replanning checkpoint will determine next steps
-      return { action: 'continue' };
-    }
-
-    return { action: 'continue' };
-  }
+  replan = defaultReplan;
 }

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { RecoveryAgent, ReplanResult } from '../interface.js';
+import { defaultReplan } from '../interface.js';
+import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { cephRecoveryManifest } from './manifest.js';
 import type { CephBackend } from './backend.js';
 import { CephSimulator } from './simulator.js';
@@ -47,50 +49,45 @@ export class CephRecoveryAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'ceph_cluster_health',
-        status: clusterCritical ? 'critical' : clusterWarning ? 'warning' : 'healthy',
+        status: signalStatus(clusterCritical, clusterWarning),
         detail: `Cluster health is ${cluster.health}. ${cluster.monCount} monitors, ${cluster.osdUp}/${cluster.osdCount} OSDs up.`,
         observedAt,
       },
       {
         source: 'ceph_osd_status',
-        status: osdCritical ? 'critical' : osdWarning ? 'warning' : 'healthy',
+        status: signalStatus(osdCritical, osdWarning),
         detail: `${downOSDs} OSD(s) down out of ${cluster.osdCount} total. ${cluster.osdIn} in cluster.`,
         observedAt,
       },
       {
         source: 'ceph_pg_status',
-        status: pgCritical ? 'critical' : pgWarning ? 'warning' : 'healthy',
+        status: signalStatus(pgCritical, pgWarning),
         detail: `${cluster.pgDegraded} degraded PG(s), ${cluster.pgRecovering} recovering out of ${cluster.pgCount} total.`,
         observedAt,
       },
       {
         source: 'ceph_pool_usage',
-        status: poolCritical ? 'critical' : poolWarning ? 'warning' : 'healthy',
+        status: signalStatus(poolCritical, poolWarning),
         detail: `Highest pool usage is ${maxPoolUsage.toFixed(1)}%. Cluster usage is ${cluster.usagePercent.toFixed(1)}%.`,
         observedAt,
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'Ceph cluster is healthy. All OSDs are up, PGs are clean, and pool usage is within normal thresholds.'
-      : status === 'recovering'
-        ? 'Ceph cluster is recovering. Some signals are improved but at least one indicator is still above the healthy target.'
-        : 'Ceph cluster is unhealthy. OSD failures, degraded PGs, or pool capacity require immediate action.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring Ceph cluster health and capacity.']
-      : status === 'recovering'
-        ? ['Continue monitoring until all OSDs are up, PGs are clean, and pool usage returns to healthy thresholds.']
-        : ['Run the Ceph recovery workflow in dry-run mode to determine the next safe mitigation step.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.95,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.95,
+      summary: {
+        healthy: 'Ceph cluster is healthy. All OSDs are up, PGs are clean, and pool usage is within normal thresholds.',
+        recovering: 'Ceph cluster is recovering. Some signals are improved but at least one indicator is still above the healthy target.',
+        unhealthy: 'Ceph cluster is unhealthy. OSD failures, degraded PGs, or pool capacity require immediate action.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring Ceph cluster health and capacity.'],
+        recovering: ['Continue monitoring until all OSDs are up, PGs are clean, and pool usage returns to healthy thresholds.'],
+        unhealthy: ['Run the Ceph recovery workflow in dry-run mode to determine the next safe mitigation step.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -157,7 +154,6 @@ export class CephRecoveryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const cluster = String(context.trigger.payload.instance || 'ceph-cluster-01');
 
     const steps: RecoveryStep[] = [
@@ -494,18 +490,15 @@ export class CephRecoveryAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-ceph-osd-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'ceph-osd',
         agentName: 'ceph-storage-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'osd_down_cascade',
-        createdAt: now,
         estimatedDuration: 'PT15M',
         summary: `Recover Ceph cluster from OSD failures on ${cluster}: reweight failing OSD, remove dead OSD, repair degraded PGs.`,
         supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {
@@ -527,11 +520,5 @@ export class CephRecoveryAgent implements RecoveryAgent {
     };
   }
 
-  async replan(
-    _context: AgentContext,
-    _diagnosis: DiagnosisResult,
-    _executionState: ExecutionState,
-  ): Promise<ReplanResult> {
-    return { action: 'continue' };
-  }
+  replan = defaultReplan;
 }

@@ -13,6 +13,11 @@ export type ReplanResult =
   | { action: 'revised_plan'; plan: RecoveryPlan }
   | { action: 'abort'; reason: string };
 
+/** Default replan implementation — continues with the current plan. */
+export function defaultReplan(): Promise<ReplanResult> {
+  return Promise.resolve({ action: 'continue' });
+}
+
 export interface RecoveryAgent {
   manifest: AgentManifest;
   assessHealth(context: AgentContext): Promise<HealthAssessment>;

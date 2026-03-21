@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { RecoveryAgent, ReplanResult } from '../interface.js';
+import { defaultReplan } from '../interface.js';
+import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { queueBacklogManifest } from './manifest.js';
 import type { QueueBackend } from './backend.js';
 import { QueueSimulator } from './simulator.js';
@@ -49,50 +51,45 @@ export class QueueBacklogAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'queue_depth_metrics',
-        status: backlogCritical ? 'critical' : backlogWarning ? 'warning' : 'healthy',
+        status: signalStatus(backlogCritical, backlogWarning),
         detail: `Total queue depth: ${totalDepth.toLocaleString()}. Backlog growth rate: ${rates.backlogGrowthRate} msg/s.`,
         observedAt,
       },
       {
         source: 'worker_heartbeat',
-        status: workerCritical ? 'critical' : workerWarning ? 'warning' : 'healthy',
+        status: signalStatus(workerCritical, workerWarning),
         detail: `${activeWorkers} active worker(s), ${stuckWorkers} stuck/dead worker(s) out of ${workers.length} total.`,
         observedAt,
       },
       {
         source: 'dlq_metrics',
-        status: dlqCritical ? 'critical' : dlqWarning ? 'warning' : 'healthy',
+        status: signalStatus(dlqCritical, dlqWarning),
         detail: `Dead letter queue depth: ${dlq.depth.toLocaleString()}. Oldest message age: ${dlq.oldestAge}s.`,
         observedAt,
       },
       {
         source: 'processing_rate',
-        status: rateCritical ? 'critical' : rateWarning ? 'warning' : 'healthy',
+        status: signalStatus(rateCritical, rateWarning),
         detail: `Incoming: ${rates.incomingRate} msg/s. Processing: ${rates.processingRate} msg/s. Estimated clear time: ${rates.estimatedClearTime === Infinity ? 'never' : `${rates.estimatedClearTime}s`}.`,
         observedAt,
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'Queue health is healthy. Backlog depths, worker status, and processing rates are all within normal thresholds.'
-      : status === 'recovering'
-        ? 'Queue health is recovering. Backlog is draining but at least one indicator is still above the healthy target.'
-        : 'Queue health is unhealthy. Backlog is growing, workers are stuck, or processing rate has collapsed.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring queue depths and worker health.']
-      : status === 'recovering'
-        ? ['Continue monitoring until backlog clears and all workers return to healthy state.']
-        : ['Run the queue backlog recovery workflow in dry-run mode to determine the next safe mitigation step.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.94,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.94,
+      summary: {
+        healthy: 'Queue health is healthy. Backlog depths, worker status, and processing rates are all within normal thresholds.',
+        recovering: 'Queue health is recovering. Backlog is draining but at least one indicator is still above the healthy target.',
+        unhealthy: 'Queue health is unhealthy. Backlog is growing, workers are stuck, or processing rate has collapsed.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring queue depths and worker health.'],
+        recovering: ['Continue monitoring until backlog clears and all workers return to healthy state.'],
+        unhealthy: ['Run the queue backlog recovery workflow in dry-run mode to determine the next safe mitigation step.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -149,7 +146,6 @@ export class QueueBacklogAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const instance = String(context.trigger.payload.instance || 'queue-cluster');
 
     const steps: RecoveryStep[] = [
@@ -439,18 +435,14 @@ export class QueueBacklogAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-queue-blg-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'queue-blg',
         agentName: 'queue-backlog-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'backlog_overflow',
-        createdAt: now,
         estimatedDuration: 'PT10M',
         summary: `Recover queue system from backlog on ${instance}: pause intake, restart stuck workers, drain backlog, resume flow.`,
-        supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {
@@ -472,11 +464,5 @@ export class QueueBacklogAgent implements RecoveryAgent {
     };
   }
 
-  async replan(
-    _context: AgentContext,
-    _diagnosis: DiagnosisResult,
-    _executionState: ExecutionState,
-  ): Promise<ReplanResult> {
-    return { action: 'continue' };
-  }
+  replan = defaultReplan;
 }

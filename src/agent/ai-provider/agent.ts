@@ -5,9 +5,11 @@ import type { RecoveryAgent, ReplanResult } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { aiProviderManifest } from './manifest.js';
 import type { AiProviderBackend } from './backend.js';
 import { AiProviderSimulator } from './simulator.js';
@@ -46,44 +48,39 @@ export class AiProviderFailoverAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'provider_health_status',
-        status: primaryDown ? 'critical' : primaryDegraded ? 'warning' : 'healthy',
+        status: signalStatus(primaryDown, primaryDegraded),
         detail: providers.map((p) => `${p.name}: ${p.status} (${p.latencyMs}ms, ${(p.errorRate * 100).toFixed(1)}% errors)`).join('; '),
         observedAt,
       },
       {
         source: 'request_metrics',
-        status: latencyCritical || errorCritical ? 'critical' : latencyWarning || errorWarning ? 'warning' : 'healthy',
+        status: signalStatus(latencyCritical || errorCritical, latencyWarning || errorWarning),
         detail: `p95 latency: ${metrics.p95LatencyMs}ms, success rate: ${(metrics.successRate * 100).toFixed(1)}%, timeout rate: ${(metrics.timeoutRate * 100).toFixed(1)}%.`,
         observedAt,
       },
       {
         source: 'circuit_breaker_state',
-        status: circuitOpen ? 'critical' : circuitHalfOpen ? 'warning' : 'healthy',
+        status: signalStatus(circuitOpen, circuitHalfOpen),
         detail: circuitBreakers.map((cb) => `${cb.provider}: ${cb.state} (${cb.failureCount} failures)`).join('; '),
         observedAt,
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'AI provider health is healthy. All providers are responding within normal latency and error thresholds.'
-      : status === 'recovering'
-        ? 'AI provider health is recovering. At least one provider shows elevated latency, errors, or circuit breaker activity.'
-        : 'AI provider health is unhealthy. Primary provider is down or experiencing critical latency/error rates requiring failover.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring provider latency and error rates.']
-      : status === 'recovering'
-        ? ['Continue monitoring. Consider preemptive failover if degradation persists beyond SLA thresholds.']
-        : ['Run the AI provider failover recovery workflow to shift traffic to healthy providers.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.94,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.94,
+      summary: {
+        healthy: 'AI provider health is healthy. All providers are responding within normal latency and error thresholds.',
+        recovering: 'AI provider health is recovering. At least one provider shows elevated latency, errors, or circuit breaker activity.',
+        unhealthy: 'AI provider health is unhealthy. Primary provider is down or experiencing critical latency/error rates requiring failover.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring provider latency and error rates.'],
+        recovering: ['Continue monitoring. Consider preemptive failover if degradation persists beyond SLA thresholds.'],
+        unhealthy: ['Run the AI provider failover recovery workflow to shift traffic to healthy providers.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -140,7 +137,6 @@ export class AiProviderFailoverAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const target = String(context.trigger.payload.instance || 'ai-provider-gateway');
 
     const steps: RecoveryStep[] = [
@@ -362,18 +358,14 @@ export class AiProviderFailoverAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-ai-provider-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'ai-provider',
         agentName: 'ai-provider-failover-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'provider_degraded_latency',
-        createdAt: now,
         estimatedDuration: 'PT5M',
         summary: `Recover from AI provider degradation on ${target}: trip circuit breaker on degraded provider, activate fallback chain, verify routing to healthy providers.`,
-        supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {
