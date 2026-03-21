@@ -15,15 +15,20 @@ export const redisMemoryRegistration: AgentRegistration = {
     const hasLiveTarget = target.primary.host !== 'simulator';
 
     if (hasLiveTarget) {
-      const { RedisLiveClient } = await import('./live-client.js');
-      const backend = new RedisLiveClient({
-        host: target.primary.host,
-        port: target.primary.port,
-        password: target.credentials.password,
-      });
-      await backend.connect();
-      const agent = new RedisMemoryAgent(backend);
-      return { agent, backend, target };
+      try {
+        const { RedisLiveClient } = await import('./live-client.js');
+        const backend = new RedisLiveClient({
+          host: target.primary.host,
+          port: target.primary.port,
+          password: target.credentials.password,
+          connectTimeoutMs: 2000,
+        });
+        await backend.connect();
+        const agent = new RedisMemoryAgent(backend);
+        return { agent, backend, target };
+      } catch {
+        // Connection failed — fall back to simulator (e.g. in tests, dry-run with no Redis)
+      }
     }
 
     const { RedisSimulator } = await import('./simulator.js');

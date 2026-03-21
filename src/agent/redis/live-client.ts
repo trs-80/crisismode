@@ -17,6 +17,7 @@ export interface RedisConnectionConfig {
   host: string;
   port: number;
   password?: string;
+  connectTimeoutMs?: number;
 }
 
 export class RedisLiveClient implements RedisBackend {
@@ -27,7 +28,7 @@ export class RedisLiveClient implements RedisBackend {
       host: config.host,
       port: config.port,
       password: config.password || undefined,
-      connectTimeout: 5000,
+      connectTimeout: config.connectTimeoutMs ?? 5000,
       maxRetriesPerRequest: 1,
       lazyConnect: true,
     });
