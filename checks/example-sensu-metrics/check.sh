@@ -48,10 +48,18 @@ if [ -f /proc/meminfo ]; then
 elif command -v sysctl >/dev/null 2>&1 && command -v vm_stat >/dev/null 2>&1; then
   PAGE_SIZE=$(sysctl -n hw.pagesize 2>/dev/null || echo "4096")
   MEM_TOTAL_KB=$(($(sysctl -n hw.memsize 2>/dev/null || echo "0") / 1024))
-  PAGES_FREE=$(vm_stat 2>/dev/null | awk '/Pages free:/ {gsub(/\./,"",$3); print $3}')
+  # macOS reports most memory as inactive/purgeable — these are reclaimable on demand.
+  # Available ≈ free + inactive + purgeable (mirrors how Activity Monitor / Stats report it).
+  VMSTAT=$(vm_stat 2>/dev/null)
+  PAGES_FREE=$(echo "$VMSTAT" | awk '/Pages free:/ {gsub(/\./,"",$3); print $3}')
+  PAGES_INACTIVE=$(echo "$VMSTAT" | awk '/Pages inactive:/ {gsub(/\./,"",$3); print $3}')
+  PAGES_PURGEABLE=$(echo "$VMSTAT" | awk '/Pages purgeable:/ {gsub(/\./,"",$3); print $3}')
   PAGES_FREE="${PAGES_FREE:-0}"
-  MEM_FREE_KB=$((PAGES_FREE * PAGE_SIZE / 1024))
-  MEM_USED_KB=$((MEM_TOTAL_KB - MEM_FREE_KB))
+  PAGES_INACTIVE="${PAGES_INACTIVE:-0}"
+  PAGES_PURGEABLE="${PAGES_PURGEABLE:-0}"
+  PAGES_AVAIL=$((PAGES_FREE + PAGES_INACTIVE + PAGES_PURGEABLE))
+  MEM_AVAIL_KB=$((PAGES_AVAIL * PAGE_SIZE / 1024))
+  MEM_USED_KB=$((MEM_TOTAL_KB - MEM_AVAIL_KB))
   MEM_PCT=$((MEM_USED_KB * 100 / MEM_TOTAL_KB))
 else
   MEM_TOTAL_KB=0
