@@ -15,7 +15,7 @@ CrisisMode is an AI crisis recovery framework with a hub-and-spoke architecture.
 ### Key abstractions
 - **RecoveryAgent** (`src/agent/interface.ts`) — the contract every agent implements: `assessHealth()`, `diagnose()`, `plan()`, `replan()`
 - **ExecutionBackend** (`src/framework/backend.ts`) — shared contract for execution backends (`executeCommand()`, `evaluateCheck()`, optional `listCapabilityProviders()`)
-- **PgBackend / RedisBackend / EtcdBackend / KafkaBackend / K8sBackend / CephBackend / FlinkBackend** — agent-specific backend interfaces that extend ExecutionBackend with system-specific diagnosis methods
+- **PgBackend / RedisBackend / EtcdBackend / KafkaBackend / K8sBackend / CephBackend / FlinkBackend / DnsBackend / TlsBackend / DiskBackend** — agent-specific backend interfaces that extend ExecutionBackend with system-specific diagnosis methods
 - **ExecutionEngine** (`src/framework/engine.ts`) — executes plans step-by-step with safety checks
 - **GraphEngine** (`src/framework/graph-engine.ts`) — LangGraph-based graph execution engine for complex recovery workflows
 - **SymptomRouter** (`src/framework/symptom-router.ts`) — routes symptoms to the appropriate recovery agent
@@ -168,6 +168,9 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/agent/db-migration/` | Database migration safety and rollback agent |
 | `src/agent/deploy-rollback/` | Deployment rollback orchestration agent |
 | `src/agent/queue-backlog/` | Queue backlog and lag recovery agent |
+| `src/agent/dns/` | DNS resolution failure recovery agent |
+| `src/agent/tls/` | TLS certificate health and expiry agent |
+| `src/agent/disk/` | Local disk exhaustion detection agent |
 | `src/config/builtin-agents.ts` | Built-in agent registration |
 | `src/config/agent-registry.ts` | Global agent registry |
 | `src/integrations/` | External integrations (GitHub, Sentry) |

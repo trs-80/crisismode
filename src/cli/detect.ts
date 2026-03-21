@@ -24,6 +24,7 @@ const DEFAULT_PROBES: Array<{ kind: string; port: number }> = [
   { kind: 'kubernetes', port: 6443 },
   { kind: 'ceph', port: 6789 },
   { kind: 'flink', port: 8081 },
+  { kind: 'dns', port: 53 },
   // Application-level agents (common dev ports)
   { kind: 'message-queue', port: 5672 },   // RabbitMQ/AMQP
 ];
