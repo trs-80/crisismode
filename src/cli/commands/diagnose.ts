@@ -169,6 +169,8 @@ async function runPluginDiagnose(pluginIndex: number): Promise<void> {
 
   if (result.healthy) {
     printSuccess(`Healthy: ${result.summary}`);
+  } else if (execResult.exitStatus === 'warning') {
+    printWarning(`Recovering: ${result.summary}`);
   } else {
     printWarning(`Unhealthy: ${result.summary}`);
   }
