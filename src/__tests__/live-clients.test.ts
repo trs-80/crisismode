@@ -17,6 +17,336 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// ── Kubernetes Live Client ──
+
+describe('K8sLiveClient', () => {
+  let K8sLiveClient: typeof import('../agent/kubernetes/live-client.js').K8sLiveClient;
+
+  // Mock K8s API responses
+  const mockNodes: Record<string, unknown> = {
+    items: [
+      {
+        metadata: {
+          name: 'worker-1',
+          labels: { 'node-role.kubernetes.io/worker': '' },
+        },
+        spec: { unschedulable: false },
+        status: {
+          conditions: [{ type: 'Ready', status: 'True', message: 'kubelet is posting ready status' }],
+          nodeInfo: { kubeletVersion: 'v1.29.2' },
+          allocatable: { cpu: '8', memory: '32Gi', pods: '110' },
+        },
+      },
+      {
+        metadata: {
+          name: 'worker-2',
+          labels: { 'node-role.kubernetes.io/worker': '' },
+        },
+        spec: { unschedulable: false },
+        status: {
+          conditions: [
+            { type: 'Ready', status: 'False', message: 'kubelet stopped posting node status' },
+            { type: 'MemoryPressure', status: 'True', message: 'node has memory pressure' },
+          ],
+          nodeInfo: { kubeletVersion: 'v1.29.2' },
+          allocatable: { cpu: '8', memory: '32Gi', pods: '110' },
+        },
+      },
+    ],
+  };
+
+  const mockPods: Record<string, unknown> = {
+    items: [
+      {
+        metadata: { name: 'payment-abc12', namespace: 'production', creationTimestamp: new Date(Date.now() - 3_600_000).toISOString() },
+        spec: { nodeName: 'worker-1' },
+        status: {
+          phase: 'Running',
+          containerStatuses: [{ name: 'payment', ready: true, restartCount: 0, state: { running: {} } }],
+        },
+      },
+      {
+        metadata: { name: 'order-def34', namespace: 'production', creationTimestamp: new Date(Date.now() - 7_200_000).toISOString() },
+        spec: { nodeName: 'worker-2' },
+        status: {
+          phase: 'Running',
+          containerStatuses: [{ name: 'order', ready: false, restartCount: 47, state: { waiting: { reason: 'CrashLoopBackOff' } } }],
+        },
+      },
+    ],
+  };
+
+  const mockEvents: Record<string, unknown> = {
+    items: [
+      {
+        type: 'Warning',
+        reason: 'NodeNotReady',
+        message: 'Node worker-2 status is now: NodeNotReady',
+        involvedObject: { kind: 'Node', name: 'worker-2', namespace: '' },
+        count: 5,
+        lastTimestamp: new Date().toISOString(),
+      },
+    ],
+  };
+
+  const mockDeployments: Record<string, unknown> = {
+    items: [
+      {
+        metadata: { name: 'payment-service', namespace: 'production' },
+        spec: { replicas: 3 },
+        status: {
+          readyReplicas: 2,
+          updatedReplicas: 3,
+          availableReplicas: 2,
+          conditions: [{ type: 'Available', status: 'False', message: 'Deployment does not have minimum availability' }],
+        },
+      },
+    ],
+  };
+
+  const mockPVCs: Record<string, unknown> = {
+    items: [
+      {
+        metadata: { name: 'data-payment-0', namespace: 'production', finalizers: ['kubernetes.io/pvc-protection'] },
+        spec: { storageClassName: 'gp3' },
+        status: { phase: 'Bound', capacity: { storage: '10Gi' } },
+      },
+    ],
+  };
+
+  function createMockClient() {
+    const client = Object.create(K8sLiveClient.prototype) as InstanceType<typeof K8sLiveClient>;
+
+    const mockCoreApi = {
+      listNode: vi.fn().mockResolvedValue(mockNodes),
+      listNamespacedPod: vi.fn().mockResolvedValue(mockPods),
+      listNamespacedEvent: vi.fn().mockResolvedValue(mockEvents),
+      listEventForAllNamespaces: vi.fn().mockResolvedValue(mockEvents),
+      listNamespacedPersistentVolumeClaim: vi.fn().mockResolvedValue(mockPVCs),
+      listPodForAllNamespaces: vi.fn().mockResolvedValue(mockPods),
+      patchNode: vi.fn().mockResolvedValue({}),
+      deleteNamespacedPod: vi.fn().mockResolvedValue({}),
+      createNamespacedPodEviction: vi.fn().mockResolvedValue({}),
+      patchNamespacedPersistentVolumeClaim: vi.fn().mockResolvedValue({}),
+    };
+
+    const mockAppsApi = {
+      listNamespacedDeployment: vi.fn().mockResolvedValue(mockDeployments),
+      patchNamespacedDeployment: vi.fn().mockResolvedValue({}),
+    };
+
+    const mockVersionApi = {
+      getCode: vi.fn().mockResolvedValue({ gitVersion: 'v1.29.2' }),
+    };
+
+    Object.defineProperty(client, 'coreApi', { value: mockCoreApi, writable: true });
+    Object.defineProperty(client, 'appsApi', { value: mockAppsApi, writable: true });
+    Object.defineProperty(client, 'versionApi', { value: mockVersionApi, writable: true });
+    Object.defineProperty(client, 'config', { value: {}, writable: true });
+
+    return { client, mockCoreApi, mockAppsApi, mockVersionApi };
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    const mod = await import('../agent/kubernetes/live-client.js');
+    K8sLiveClient = mod.K8sLiveClient;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('implements K8sBackend interface', () => {
+    const { client } = createMockClient();
+    expect(typeof client.getNodeStatus).toBe('function');
+    expect(typeof client.getPodsByNamespace).toBe('function');
+    expect(typeof client.getEvents).toBe('function');
+    expect(typeof client.getDeploymentStatus).toBe('function');
+    expect(typeof client.getPVCStatus).toBe('function');
+    expect(typeof client.executeCommand).toBe('function');
+    expect(typeof client.evaluateCheck).toBe('function');
+    expect(typeof client.close).toBe('function');
+  });
+
+  it('lists capability providers with live_validated maturity', () => {
+    const { client } = createMockClient();
+    const providers = client.listCapabilityProviders();
+    expect(providers).toHaveLength(1);
+    expect(providers[0].maturity).toBe('live_validated');
+    expect(providers[0].capabilities).toContain('k8s.node.cordon');
+    expect(providers[0].capabilities).toContain('k8s.node.drain');
+    expect(providers[0].capabilities).toContain('k8s.deployment.restart');
+  });
+
+  it('getNodeStatus maps nodes correctly', async () => {
+    const { client } = createMockClient();
+    const nodes = await client.getNodeStatus();
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0].name).toBe('worker-1');
+    expect(nodes[0].status).toBe('Ready');
+    expect(nodes[0].roles).toContain('worker');
+    expect(nodes[0].kubeletVersion).toBe('v1.29.2');
+    expect(nodes[1].name).toBe('worker-2');
+    expect(nodes[1].status).toBe('NotReady');
+  });
+
+  it('getPodsByNamespace maps pod status and containers', async () => {
+    const { client } = createMockClient();
+    const pods = await client.getPodsByNamespace('production');
+    expect(pods).toHaveLength(2);
+    expect(pods[0].name).toBe('payment-abc12');
+    expect(pods[0].status).toBe('Running');
+    expect(pods[0].restarts).toBe(0);
+    expect(pods[1].name).toBe('order-def34');
+    expect(pods[1].status).toBe('CrashLoopBackOff');
+    expect(pods[1].restarts).toBe(47);
+    expect(pods[1].containers[0].restartCount).toBe(47);
+  });
+
+  it('getEvents returns mapped events', async () => {
+    const { client } = createMockClient();
+    const events = await client.getEvents('production');
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('Warning');
+    expect(events[0].reason).toBe('NodeNotReady');
+    expect(events[0].involvedObject.kind).toBe('Node');
+  });
+
+  it('getEvents without namespace queries all namespaces', async () => {
+    const { client, mockCoreApi } = createMockClient();
+    await client.getEvents();
+    expect(mockCoreApi.listEventForAllNamespaces).toHaveBeenCalledOnce();
+    expect(mockCoreApi.listNamespacedEvent).not.toHaveBeenCalled();
+  });
+
+  it('getDeploymentStatus maps replica counts and conditions', async () => {
+    const { client } = createMockClient();
+    const deps = await client.getDeploymentStatus('production');
+    expect(deps).toHaveLength(1);
+    expect(deps[0].name).toBe('payment-service');
+    expect(deps[0].replicas).toBe(3);
+    expect(deps[0].readyReplicas).toBe(2);
+    expect(deps[0].conditions[0].type).toBe('Available');
+    expect(deps[0].conditions[0].status).toBe('False');
+  });
+
+  it('getPVCStatus maps status and finalizers', async () => {
+    const { client } = createMockClient();
+    const pvcs = await client.getPVCStatus('production');
+    expect(pvcs).toHaveLength(1);
+    expect(pvcs[0].name).toBe('data-payment-0');
+    expect(pvcs[0].status).toBe('Bound');
+    expect(pvcs[0].capacity).toBe('10Gi');
+    expect(pvcs[0].finalizers).toContain('kubernetes.io/pvc-protection');
+  });
+
+  it('executeCommand node_cordon patches node unschedulable', async () => {
+    const { client, mockCoreApi } = createMockClient();
+    const result = await client.executeCommand({
+      type: 'structured_command',
+      operation: 'node_cordon',
+      parameters: { node: 'worker-2' },
+    }) as Record<string, unknown>;
+    expect(result.cordoned).toBe(true);
+    expect(result.node).toBe('worker-2');
+    expect(mockCoreApi.patchNode).toHaveBeenCalledOnce();
+  });
+
+  it('executeCommand node_drain evicts non-DaemonSet pods', async () => {
+    const { client, mockCoreApi } = createMockClient();
+    const result = await client.executeCommand({
+      type: 'structured_command',
+      operation: 'node_drain',
+      parameters: { node: 'worker-2' },
+    }) as Record<string, unknown>;
+    expect(result.drained).toBe(true);
+    expect(result.evictedPods).toBe(2);
+    expect(mockCoreApi.createNamespacedPodEviction).toHaveBeenCalledTimes(2);
+  });
+
+  it('executeCommand deployment_restart patches restart annotation', async () => {
+    const { client, mockAppsApi } = createMockClient();
+    const result = await client.executeCommand({
+      type: 'structured_command',
+      operation: 'deployment_restart',
+      parameters: { deployments: ['payment-service', 'order-service'], namespace: 'production' },
+    }) as Record<string, unknown>;
+    expect(result.restarted).toBe(true);
+    expect(mockAppsApi.patchNamespacedDeployment).toHaveBeenCalledTimes(2);
+  });
+
+  it('executeCommand pod_delete calls deleteNamespacedPod', async () => {
+    const { client, mockCoreApi } = createMockClient();
+    const result = await client.executeCommand({
+      type: 'structured_command',
+      operation: 'pod_delete',
+      parameters: { pod: 'stuck-pod-abc', namespace: 'production' },
+    }) as Record<string, unknown>;
+    expect(result.deleted).toBe(true);
+    expect(mockCoreApi.deleteNamespacedPod).toHaveBeenCalledOnce();
+  });
+
+  it('executeCommand pvc_finalize removes finalizers', async () => {
+    const { client, mockCoreApi } = createMockClient();
+    const result = await client.executeCommand({
+      type: 'structured_command',
+      operation: 'pvc_finalize',
+      parameters: { pvc: 'stuck-pvc', namespace: 'production' },
+    }) as Record<string, unknown>;
+    expect(result.finalized).toBe(true);
+    expect(mockCoreApi.patchNamespacedPersistentVolumeClaim).toHaveBeenCalledOnce();
+  });
+
+  it('executeCommand rejects unsupported command types', async () => {
+    const { client } = createMockClient();
+    await expect(client.executeCommand({ type: 'sql', operation: 'test' }))
+      .rejects.toThrow('Unsupported command type');
+  });
+
+  it('evaluateCheck handles node_ready_count', async () => {
+    const { client } = createMockClient();
+    const result = await client.evaluateCheck({
+      type: 'structured_command',
+      statement: 'node_ready_count',
+      expect: { operator: 'gte', value: 1 },
+    });
+    expect(result).toBe(true);
+  });
+
+  it('evaluateCheck handles pod_crashloop_count', async () => {
+    const { client } = createMockClient();
+    const result = await client.evaluateCheck({
+      type: 'structured_command',
+      statement: 'pod_crashloop_count',
+      expect: { operator: 'eq', value: 1 },
+    });
+    expect(result).toBe(true);
+  });
+
+  it('evaluateCheck handles deployment_ready', async () => {
+    const { client } = createMockClient();
+    const result = await client.evaluateCheck({
+      type: 'structured_command',
+      statement: 'deployment_ready',
+      expect: { operator: 'eq', value: 'false' },
+    });
+    // payment-service has 2/3 ready, so not all ready → false
+    expect(result).toBe(true);
+  });
+
+  it('discoverVersion returns cluster version', async () => {
+    const { client } = createMockClient();
+    const version = await client.discoverVersion();
+    expect(version).toBe('v1.29.2');
+  });
+
+  it('close completes without error', async () => {
+    const { client } = createMockClient();
+    await expect(client.close()).resolves.toBeUndefined();
+  });
+});
+
 // ── Deploy Rollback Live Client ──
 
 describe('DeployLiveClient', () => {

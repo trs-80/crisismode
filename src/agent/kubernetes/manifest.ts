@@ -17,7 +17,7 @@ export const k8sRecoveryManifest: AgentManifest = {
     plugin: {
       id: 'kubernetes.domain-pack',
       kind: 'domain_pack',
-      maturity: 'simulator_only',
+      maturity: 'live_validated',
       compatibilityMode: 'recovery_agent',
     },
   },
