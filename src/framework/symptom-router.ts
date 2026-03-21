@@ -17,6 +17,7 @@
 
 import { sanitizeInput } from './ai-diagnosis.js';
 import type { StackProfile } from '../cli/autodiscovery.js';
+import { PKG_TO_SERVICE, pkgsForService } from '../config/service-registry.js';
 
 // ── Types ──
 
@@ -80,7 +81,7 @@ const ROUTING_RULES: RoutingRule[] = [
     agentKind: 'postgresql',
     signalTypes: ['latency', 'timeout'],
     keywords: ['replication', 'replica', 'lag', 'standby', 'wal', 'postgres', 'pg'],
-    stackDeps: ['pg', 'postgres', '@prisma/client', 'drizzle-orm', 'knex', 'typeorm', 'sequelize'],
+    stackDeps: pkgsForService('postgresql'),
     stackServices: ['postgresql'],
     baseWeight: 0.6,
     reasoning: 'Replication lag or replica timeout signals with PostgreSQL in the stack',
@@ -90,7 +91,7 @@ const ROUTING_RULES: RoutingRule[] = [
     agentKind: 'postgresql',
     signalTypes: ['connection', 'timeout', 'error_rate'],
     keywords: ['connection', 'pool', 'exhaust', 'max_connections', 'too many', 'database', 'postgres', 'pg'],
-    stackDeps: ['pg', 'postgres', '@prisma/client', 'drizzle-orm', 'knex', 'typeorm', 'sequelize'],
+    stackDeps: pkgsForService('postgresql'),
     stackServices: ['postgresql'],
     baseWeight: 0.5,
     reasoning: 'Connection exhaustion signals with database dependencies detected',
@@ -100,7 +101,7 @@ const ROUTING_RULES: RoutingRule[] = [
     agentKind: 'redis',
     signalTypes: ['resource_exhaustion', 'error_rate', 'latency'],
     keywords: ['memory', 'redis', 'eviction', 'oom', 'maxmemory', 'cache'],
-    stackDeps: ['ioredis', 'redis', 'bullmq', 'bull'],
+    stackDeps: pkgsForService('redis'),
     stackServices: ['redis'],
     baseWeight: 0.6,
     reasoning: 'Memory pressure or resource exhaustion signals with Redis in the stack',
@@ -110,7 +111,7 @@ const ROUTING_RULES: RoutingRule[] = [
     agentKind: 'redis',
     signalTypes: ['queue_depth', 'latency', 'timeout'],
     keywords: ['queue', 'backlog', 'worker', 'stuck', 'bull', 'job', 'delayed'],
-    stackDeps: ['bullmq', 'bull', 'ioredis'],
+    stackDeps: pkgsForService('redis'),
     stackServices: ['redis'],
     baseWeight: 0.5,
     reasoning: 'Growing queue depth or stuck workers with queue dependencies in stack',
@@ -120,7 +121,7 @@ const ROUTING_RULES: RoutingRule[] = [
     agentKind: 'kafka',
     signalTypes: ['queue_depth', 'latency', 'timeout'],
     keywords: ['kafka', 'consumer', 'lag', 'partition', 'offset', 'broker', 'topic'],
-    stackDeps: ['kafkajs', '@confluentinc/kafka-javascript'],
+    stackDeps: pkgsForService('kafka'),
     stackServices: ['kafka'],
     baseWeight: 0.6,
     reasoning: 'Consumer lag or partition signals with Kafka in the stack',
@@ -130,7 +131,7 @@ const ROUTING_RULES: RoutingRule[] = [
     agentKind: 'etcd',
     signalTypes: ['connection', 'timeout', 'error_rate'],
     keywords: ['etcd', 'consensus', 'leader', 'quorum', 'raft', 'election'],
-    stackDeps: ['etcd3'],
+    stackDeps: pkgsForService('etcd'),
     stackServices: ['etcd'],
     baseWeight: 0.6,
     reasoning: 'Consensus or leader election failures with etcd in the stack',
@@ -140,7 +141,7 @@ const ROUTING_RULES: RoutingRule[] = [
     agentKind: 'kubernetes',
     signalTypes: ['error_rate', 'resource_exhaustion'],
     keywords: ['kubernetes', 'k8s', 'pod', 'crash', 'restart', 'oom', 'container', 'crashloopbackoff'],
-    stackDeps: ['@kubernetes/client-node'],
+    stackDeps: pkgsForService('kubernetes'),
     baseWeight: 0.5,
     reasoning: 'Pod crash or resource exhaustion signals in a Kubernetes environment',
   },
@@ -346,25 +347,8 @@ export async function collectSignalsFromStack(
   }
 
   // Check for deps without matching env configuration
-  const depServiceMap: Record<string, string> = {
-    pg: 'postgresql',
-    postgres: 'postgresql',
-    '@prisma/client': 'postgresql',
-    'drizzle-orm': 'postgresql',
-    knex: 'postgresql',
-    typeorm: 'postgresql',
-    sequelize: 'postgresql',
-    ioredis: 'redis',
-    redis: 'redis',
-    bullmq: 'redis',
-    bull: 'redis',
-    kafkajs: 'kafka',
-    '@confluentinc/kafka-javascript': 'kafka',
-    etcd3: 'etcd',
-  };
-
   for (const dep of profile.appStack.dependencies) {
-    const expectedService = depServiceMap[dep];
+    const expectedService = PKG_TO_SERVICE[dep];
     if (!expectedService) continue;
 
     const hasEnvHint = profile.envHints.some(

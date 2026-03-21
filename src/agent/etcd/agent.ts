@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { RecoveryAgent, ReplanResult } from '../interface.js';
+import { defaultReplan } from '../interface.js';
+import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { etcdRecoveryManifest } from './manifest.js';
 import type { EtcdBackend } from './backend.js';
 import { EtcdSimulator } from './simulator.js';
@@ -37,7 +39,7 @@ export class EtcdRecoveryAgent implements RecoveryAgent {
     );
     const fragmented = maxFragmentation > 1.5;
 
-    const status = !health.healthy || hasAlarms
+    const status: HealthStatus = !health.healthy || hasAlarms
       ? 'unhealthy'
       : highRaftTerm || fragmented || hasErrors
         ? 'recovering'
@@ -46,13 +48,13 @@ export class EtcdRecoveryAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'etcd_cluster_health',
-        status: !health.healthy ? 'critical' : highRaftTerm ? 'warning' : 'healthy',
+        status: signalStatus(!health.healthy, highRaftTerm),
         detail: `Cluster healthy: ${health.healthy}. Members: ${health.members}. Leader: ${health.leader}. Raft term: ${health.raftTerm}${highRaftTerm ? ' (high — indicates election instability)' : ''}.`,
         observedAt,
       },
       {
         source: 'etcd_alarms',
-        status: hasAlarms ? 'critical' : 'healthy',
+        status: signalStatus(hasAlarms),
         detail: hasAlarms
           ? `Active alarms: ${alarms.map((a) => `${a.alarm} on ${a.memberID}`).join(', ')}.`
           : 'No active alarms.',
@@ -60,32 +62,27 @@ export class EtcdRecoveryAgent implements RecoveryAgent {
       },
       {
         source: 'etcd_storage',
-        status: fragmented ? 'warning' : 'healthy',
+        status: signalStatus(false, fragmented),
         detail: `Max storage fragmentation ratio: ${maxFragmentation.toFixed(1)}x. ${endpoints.length} endpoint(s) reporting.`,
         observedAt,
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'Etcd cluster is healthy. All members are operational, no alarms, and storage fragmentation is within normal bounds.'
-      : status === 'recovering'
-        ? 'Etcd cluster is recovering. Some indicators (raft term, fragmentation, or endpoint errors) are still above healthy thresholds.'
-        : 'Etcd cluster is unhealthy. Cluster reports degraded health or active alarms requiring intervention.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring etcd cluster health and raft term stability.']
-      : status === 'recovering'
-        ? ['Continue monitoring until raft term stabilizes and storage fragmentation decreases to normal levels.']
-        : ['Run the etcd recovery workflow in dry-run mode to determine the next safe mitigation step.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.94,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.94,
+      summary: {
+        healthy: 'Etcd cluster is healthy. All members are operational, no alarms, and storage fragmentation is within normal bounds.',
+        recovering: 'Etcd cluster is recovering. Some indicators (raft term, fragmentation, or endpoint errors) are still above healthy thresholds.',
+        unhealthy: 'Etcd cluster is unhealthy. Cluster reports degraded health or active alarms requiring intervention.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring etcd cluster health and raft term stability.'],
+        recovering: ['Continue monitoring until raft term stabilizes and storage fragmentation decreases to normal levels.'],
+        unhealthy: ['Run the etcd recovery workflow in dry-run mode to determine the next safe mitigation step.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -147,7 +144,6 @@ export class EtcdRecoveryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const instance = String(context.trigger.payload.instance || 'etcd-cluster');
 
     const steps: RecoveryStep[] = [
@@ -463,18 +459,14 @@ export class EtcdRecoveryAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-etcd-rec-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'etcd-rec',
         agentName: 'etcd-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'leader_election_loop',
-        createdAt: now,
         estimatedDuration: 'PT10M',
         summary: `Recover etcd cluster on ${instance}: remove problematic member, defragment, re-add with clean state.`,
-        supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {
@@ -496,11 +488,5 @@ export class EtcdRecoveryAgent implements RecoveryAgent {
     };
   }
 
-  async replan(
-    _context: AgentContext,
-    _diagnosis: DiagnosisResult,
-    _executionState: ExecutionState,
-  ): Promise<ReplanResult> {
-    return { action: 'continue' };
-  }
+  replan = defaultReplan;
 }

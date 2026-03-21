@@ -13,7 +13,7 @@ import { AgentRegistry } from '../../config/agent-registry.js';
 import { detectServices } from '../detect.js';
 import { probeNetwork } from '../../framework/network-profile.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
-import { executeCheckPlugin, executeNagiosPlugin, executeGossPlugin, executeSensuPlugin } from '../../framework/check-plugin.js';
+import { dispatchPluginExecution } from '../../framework/check-plugin.js';
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 import {
   printBanner, printHealthStatus, printDiagnosis, printOperatorSummary,
@@ -158,17 +158,8 @@ async function runPluginDiagnose(pluginIndex: number): Promise<void> {
   console.log('');
 
   const execOpts = { timeoutMs: plugin.manifest.timeoutMs ?? 10_000, cwd: plugin.pluginDir };
-  const execResult = plugin.manifest.format === 'nagios'
-    ? await executeNagiosPlugin(plugin.executablePath, 'diagnose', execOpts)
-    : plugin.manifest.format === 'goss'
-      ? await executeGossPlugin(plugin.executablePath, 'diagnose', execOpts)
-      : plugin.manifest.format === 'sensu'
-        ? await executeSensuPlugin(plugin.executablePath, 'diagnose', { ...execOpts, sensuMetricFormat: plugin.manifest.sensuMetricFormat })
-        : await executeCheckPlugin(
-          plugin.executablePath,
-          { verb: 'diagnose', target: { name: 'plugin-diagnose', kind: plugin.manifest.targetKinds[0] ?? 'generic' } },
-          execOpts,
-        );
+  const request = { verb: 'diagnose' as const, target: { name: 'plugin-diagnose', kind: plugin.manifest.targetKinds[0] ?? 'generic' } };
+  const execResult = await dispatchPluginExecution(plugin, 'diagnose', execOpts, request);
 
   const result = execResult.result as CheckDiagnoseResult | null;
   if (!result) {

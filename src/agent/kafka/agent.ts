@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { RecoveryAgent, ReplanResult } from '../interface.js';
+import { defaultReplan } from '../interface.js';
+import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { kafkaRecoveryManifest } from './manifest.js';
 import type { KafkaBackend } from './backend.js';
 import { KafkaSimulator } from './simulator.js';
@@ -37,7 +39,7 @@ export class KafkaRecoveryAgent implements RecoveryAgent {
     const lagWarning = maxLag > 1_000;
     const brokerCritical = brokerCount < expectedBrokers;
 
-    const status = urpCritical || lagCritical
+    const status: HealthStatus = urpCritical || lagCritical
       ? 'unhealthy'
       : urpWarning || lagWarning || brokerCritical
         ? 'recovering'
@@ -46,44 +48,39 @@ export class KafkaRecoveryAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'kafka_partition_status',
-        status: urpCritical ? 'critical' : urpWarning ? 'warning' : 'healthy',
+        status: signalStatus(urpCritical, urpWarning),
         detail: `${urpCount} under-replicated partition(s) across ${metadata.topicCount} topic(s).`,
         observedAt,
       },
       {
         source: 'kafka_consumer_lag',
-        status: lagCritical ? 'critical' : lagWarning ? 'warning' : 'healthy',
+        status: signalStatus(lagCritical, lagWarning),
         detail: `Maximum consumer group lag is ${maxLag.toLocaleString()} across ${consumerGroups.length} group(s).`,
         observedAt,
       },
       {
         source: 'kafka_broker_status',
-        status: brokerCritical ? 'critical' : 'healthy',
+        status: signalStatus(brokerCritical),
         detail: `${brokerCount}/${expectedBrokers} broker(s) online. Controller is broker-${metadata.controllerId}.`,
         observedAt,
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'Kafka cluster is healthy. All partitions are in-sync, consumer lag is within normal thresholds, and all brokers are online.'
-      : status === 'recovering'
-        ? 'Kafka cluster is recovering. Under-replicated partitions or elevated consumer lag detected but within manageable thresholds.'
-        : 'Kafka cluster is unhealthy. Significant under-replicated partitions or critical consumer lag requires immediate action.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring Kafka partition and consumer lag metrics.']
-      : status === 'recovering'
-        ? ['Continue monitoring until all partitions are in-sync and consumer lag returns to healthy thresholds.']
-        : ['Run the Kafka recovery workflow in dry-run mode to determine the next safe mitigation step.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.95,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.95,
+      summary: {
+        healthy: 'Kafka cluster is healthy. All partitions are in-sync, consumer lag is within normal thresholds, and all brokers are online.',
+        recovering: 'Kafka cluster is recovering. Under-replicated partitions or elevated consumer lag detected but within manageable thresholds.',
+        unhealthy: 'Kafka cluster is unhealthy. Significant under-replicated partitions or critical consumer lag requires immediate action.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring Kafka partition and consumer lag metrics.'],
+        recovering: ['Continue monitoring until all partitions are in-sync and consumer lag returns to healthy thresholds.'],
+        unhealthy: ['Run the Kafka recovery workflow in dry-run mode to determine the next safe mitigation step.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -138,7 +135,6 @@ export class KafkaRecoveryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const instance = String(context.trigger.payload.instance || 'kafka-cluster');
 
     const steps: RecoveryStep[] = [
@@ -407,18 +403,14 @@ export class KafkaRecoveryAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-kafka-urp-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'kafka-urp',
         agentName: 'kafka-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'under_replicated_partitions',
-        createdAt: now,
         estimatedDuration: 'PT10M',
         summary: `Recover Kafka from under-replicated partitions on ${instance}: elect preferred leaders, reassign partitions, verify ISR.`,
-        supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {
@@ -440,11 +432,5 @@ export class KafkaRecoveryAgent implements RecoveryAgent {
     };
   }
 
-  async replan(
-    _context: AgentContext,
-    _diagnosis: DiagnosisResult,
-    _executionState: ExecutionState,
-  ): Promise<ReplanResult> {
-    return { action: 'continue' };
-  }
+  replan = defaultReplan;
 }

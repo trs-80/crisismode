@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { AgentRegistration } from '../../config/agent-registration.js';
+import { createSimulatorRegistration } from '../../config/simulator-registration.js';
 import { deployRollbackManifest } from './manifest.js';
 
-export const deployRollbackRegistration: AgentRegistration = {
+export const deployRollbackRegistration = createSimulatorRegistration({
   kind: 'application',
   name: 'deploy-rollback-recovery',
   manifest: deployRollbackManifest,
-
-  async createAgent(target) {
+  loadAgent: async () => {
     const { DeployRollbackAgent } = await import('./agent.js');
-    const { DeploySimulator } = await import('./simulator.js');
-
-    // Deploy live client not yet implemented — use simulator for now
-    const backend = new DeploySimulator();
-    const agent = new DeployRollbackAgent(backend);
-    return { agent, backend, target };
+    return DeployRollbackAgent as any;
   },
-};
+  loadSimulator: async () => {
+    const { DeploySimulator } = await import('./simulator.js');
+    return DeploySimulator as any;
+  },
+});

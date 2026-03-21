@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { AgentRegistration } from '../../config/agent-registration.js';
+import { createSimulatorRegistration } from '../../config/simulator-registration.js';
 import { aiProviderManifest } from './manifest.js';
 
-export const aiProviderRegistration: AgentRegistration = {
+export const aiProviderRegistration = createSimulatorRegistration({
   kind: 'ai-provider',
   name: 'ai-provider-failover-recovery',
   manifest: aiProviderManifest,
-
-  async createAgent(target) {
+  loadAgent: async () => {
     const { AiProviderFailoverAgent } = await import('./agent.js');
-    const { AiProviderSimulator } = await import('./simulator.js');
-
-    // AI provider live client not yet implemented — use simulator for now
-    const backend = new AiProviderSimulator();
-    const agent = new AiProviderFailoverAgent(backend);
-    return { agent, backend, target };
+    return AiProviderFailoverAgent as any;
   },
-};
+  loadSimulator: async () => {
+    const { AiProviderSimulator } = await import('./simulator.js');
+    return AiProviderSimulator as any;
+  },
+});

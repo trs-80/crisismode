@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { detectServices } from './detect.js';
 import type { DetectedService } from './detect.js';
+import { INFRA_PKG_NAMES } from '../config/service-registry.js';
 
 // ── Types ──
 
@@ -79,19 +80,8 @@ const FRAMEWORK_DEPS: Record<string, string> = {
   '@sveltejs/kit': 'sveltekit',
 };
 
-/** Infrastructure dependencies we care about */
-const INFRA_DEPS: string[] = [
-  'pg', 'postgres', '@prisma/client', 'drizzle-orm', 'knex', 'typeorm', 'sequelize',
-  'ioredis', 'redis', 'bullmq', 'bull',
-  'kafkajs', '@confluentinc/kafka-javascript',
-  'amqplib', 'rhea',
-  '@kubernetes/client-node',
-  'etcd3',
-  'mongoose', 'mongodb',
-  'mysql2', 'mariadb',
-  'cassandra-driver',
-  'ioredis',
-];
+/** Infrastructure dependencies we care about (from centralised registry) */
+const INFRA_DEPS: string[] = INFRA_PKG_NAMES;
 
 /** AI provider SDKs */
 const AI_PROVIDER_DEPS: Record<string, string> = {

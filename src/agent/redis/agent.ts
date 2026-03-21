@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { RecoveryAgent, ReplanResult } from '../interface.js';
+import { defaultReplan } from '../interface.js';
+import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { redisMemoryManifest } from './manifest.js';
 import type { RedisBackend } from './backend.js';
 import { RedisSimulator } from './simulator.js';
@@ -37,7 +39,7 @@ export class RedisMemoryAgent implements RecoveryAgent {
     const replicaCritical = maxReplicaLag > 30;
     const replicaWarning = maxReplicaLag > 5;
 
-    const status = memoryCritical || clientCritical || slowlogCritical || replicaCritical
+    const status: HealthStatus = memoryCritical || clientCritical || slowlogCritical || replicaCritical
       ? 'unhealthy'
       : memoryWarning || clientWarning || slowlogWarning || replicaWarning
         ? 'recovering'
@@ -46,19 +48,19 @@ export class RedisMemoryAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'redis_info_memory',
-        status: memoryCritical ? 'critical' : memoryWarning ? 'warning' : 'healthy',
+        status: signalStatus(memoryCritical, memoryWarning),
         detail: `Memory usage is ${info.memoryUsagePercent.toFixed(1)}% with fragmentation ratio ${fragmentationRatio.toFixed(1)}.`,
         observedAt,
       },
       {
         source: 'redis_info_clients',
-        status: clientCritical ? 'critical' : clientWarning ? 'warning' : 'healthy',
+        status: signalStatus(clientCritical, clientWarning),
         detail: `${info.connectedClients} connected client(s), ${info.blockedClients} blocked client(s).`,
         observedAt,
       },
       {
         source: 'redis_slowlog',
-        status: slowlogCritical ? 'critical' : slowlogWarning ? 'warning' : 'healthy',
+        status: signalStatus(slowlogCritical, slowlogWarning),
         detail: slowlog.length > 0
           ? `${slowlog.length} recent slowlog entry(ies); worst command ${slowlog[0]?.command}.`
           : 'No recent slowlog pressure detected.',
@@ -66,32 +68,27 @@ export class RedisMemoryAgent implements RecoveryAgent {
       },
       {
         source: 'redis_replication',
-        status: replicaCritical ? 'critical' : replicaWarning ? 'warning' : 'healthy',
+        status: signalStatus(replicaCritical, replicaWarning),
         detail: `${slaves.length} replica(s) connected. Maximum observed replication lag is ${maxReplicaLag}s.`,
         observedAt,
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'Redis health is healthy. Memory, client pressure, slow queries, and replica lag are all within normal thresholds.'
-      : status === 'recovering'
-        ? 'Redis health is recovering. Direct signals are improved but at least one pressure indicator is still above the healthy target.'
-        : 'Redis health is unhealthy. Direct signals show memory, client, slowlog, or replication pressure still requires action.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring Redis memory and client pressure.']
-      : status === 'recovering'
-        ? ['Continue monitoring until memory usage, blocked clients, and replica lag return to healthy thresholds.']
-        : ['Run the Redis recovery workflow in dry-run mode to determine the next safe mitigation step.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.96,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.96,
+      summary: {
+        healthy: 'Redis health is healthy. Memory, client pressure, slow queries, and replica lag are all within normal thresholds.',
+        recovering: 'Redis health is recovering. Direct signals are improved but at least one pressure indicator is still above the healthy target.',
+        unhealthy: 'Redis health is unhealthy. Direct signals show memory, client, slowlog, or replication pressure still requires action.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring Redis memory and client pressure.'],
+        recovering: ['Continue monitoring until memory usage, blocked clients, and replica lag return to healthy thresholds.'],
+        unhealthy: ['Run the Redis recovery workflow in dry-run mode to determine the next safe mitigation step.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -146,7 +143,6 @@ export class RedisMemoryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const instance = String(context.trigger.payload.instance || 'redis-primary');
 
     const steps: RecoveryStep[] = [
@@ -398,18 +394,14 @@ export class RedisMemoryAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-redis-mem-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'redis-mem',
         agentName: 'redis-memory-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'memory_pressure',
-        createdAt: now,
         estimatedDuration: 'PT5M',
         summary: `Recover Redis from memory pressure on ${instance}: disconnect idle clients, trigger expiry, verify eviction policy.`,
-        supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {
@@ -431,11 +423,5 @@ export class RedisMemoryAgent implements RecoveryAgent {
     };
   }
 
-  async replan(
-    _context: AgentContext,
-    _diagnosis: DiagnosisResult,
-    _executionState: ExecutionState,
-  ): Promise<ReplanResult> {
-    return { action: 'continue' };
-  }
+  replan = defaultReplan;
 }

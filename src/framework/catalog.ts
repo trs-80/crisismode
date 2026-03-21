@@ -4,12 +4,13 @@
 import type { CatalogEntry } from '../types/catalog-entry.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { RiskLevel } from '../types/common.js';
+import { RECOVERY_PLAN_API_VERSION } from './plan-helpers.js';
 
 const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
 
 export function getCatalogEntry(): CatalogEntry {
   return {
-    apiVersion: 'v0.2.1',
+    apiVersion: RECOVERY_PLAN_API_VERSION,
     kind: 'CatalogEntry',
     metadata: {
       catalogId: 'pg-replication-standard-recovery',

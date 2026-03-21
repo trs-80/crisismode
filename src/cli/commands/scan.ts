@@ -17,7 +17,7 @@ import { loadConfig } from '../../config/loader.js';
 import { detectServices } from '../detect.js';
 import { discoverStack } from '../autodiscovery.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
-import { executeCheckPlugin, executeNagiosPlugin, executeGossPlugin, executeSensuPlugin, exitStatusToHealth } from '../../framework/check-plugin.js';
+import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
   printBanner, printScanSummary, printNextAction,
   printInfo, printDetection, printError,
@@ -210,13 +210,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
         };
 
         const execOpts = { timeoutMs: plugin.manifest.timeoutMs ?? 10_000, cwd: plugin.pluginDir };
-        const execResult = plugin.manifest.format === 'nagios'
-          ? await executeNagiosPlugin(plugin.executablePath, 'health', execOpts)
-          : plugin.manifest.format === 'goss'
-            ? await executeGossPlugin(plugin.executablePath, 'health', execOpts)
-            : plugin.manifest.format === 'sensu'
-              ? await executeSensuPlugin(plugin.executablePath, 'health', { ...execOpts, sensuMetricFormat: plugin.manifest.sensuMetricFormat })
-              : await executeCheckPlugin(plugin.executablePath, request, execOpts);
+        const execResult = await dispatchPluginExecution(plugin, 'health', execOpts, request);
 
         const healthResult = execResult.result as CheckHealthResult | null;
         const rawStatus = healthResult?.status ?? exitStatusToHealth(execResult.exitStatus);

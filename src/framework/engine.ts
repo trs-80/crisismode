@@ -7,7 +7,7 @@ import type { AgentContext } from '../types/agent-context.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { ExecutionState, StepResult } from '../types/execution-state.js';
 import type { AgentManifest } from '../types/manifest.js';
-import type { RiskLevel } from '../types/common.js';
+import type { ExecutionMode, RiskLevel } from '../types/common.js';
 import type { RecoveryAgent } from '../agent/interface.js';
 import { executeCapture, validateBlastRadius } from './safety.js';
 import { requestApproval, shouldAutoApprove } from './coordinator.js';
@@ -17,6 +17,9 @@ import type { ExecutionBackend } from './backend.js';
 import { resolveStepProviders } from './provider-registry.js';
 import { derivePlanMaxRiskLevel, getMaxRiskIndex } from './risk.js';
 import { collectExecutionContexts } from './step-walker.js';
+import { makeStepResult } from './step-result.js';
+
+export type { ExecutionMode } from '../types/common.js';
 
 export interface EngineCallbacks {
   onStepStart?: (step: RecoveryStep, index: number) => void;
@@ -32,8 +35,6 @@ export interface EngineCallbacks {
   onReplanResult?: (action: string, details?: string) => void;
   onBlastRadiusCheck?: (step: SystemActionStep, message: string) => void;
 }
-
-export type ExecutionMode = 'dry-run' | 'execute';
 
 /**
  * Legacy sequential execution engine.
@@ -71,24 +72,6 @@ export class LegacyExecutionEngine {
 
   setCoveredRiskLevels(levels: RiskLevel[]): void {
     this.coveredRiskLevels = levels;
-  }
-
-  private makeResult(
-    step: RecoveryStep,
-    status: StepResult['status'],
-    startedAt: string,
-    startTime: number,
-    extra?: Partial<StepResult>,
-  ): StepResult {
-    return {
-      stepId: step.stepId,
-      step,
-      status,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-      ...extra,
-    };
   }
 
   async executePlan(plan: RecoveryPlan, diagnosis: DiagnosisResult): Promise<StepResult[]> {
@@ -182,7 +165,7 @@ export class LegacyExecutionEngine {
       message: `Diagnosis action completed: ${step.name}`,
     });
 
-    return this.makeResult(step, 'success', startedAt, startTime, { output });
+    return makeStepResult(step, 'success', startedAt, startTime, { output });
   }
 
   private executeNotification(
@@ -199,7 +182,7 @@ export class LegacyExecutionEngine {
       data: { recipients: step.recipients },
     });
 
-    return this.makeResult(step, 'success', startedAt, startTime);
+    return makeStepResult(step, 'success', startedAt, startTime);
   }
 
   private executeCheckpoint(
@@ -218,7 +201,7 @@ export class LegacyExecutionEngine {
       (r, i) => r.status === 'failed' && step.stateCaptures[i].capturePolicy === 'required',
     );
 
-    return this.makeResult(step, requiredFailed ? 'failed' : 'success', startedAt, startTime, {
+    return makeStepResult(step, requiredFailed ? 'failed' : 'success', startedAt, startTime, {
       captureResults: captureResults.map((r) => ({
         name: r.name,
         status: r.status,
@@ -234,7 +217,7 @@ export class LegacyExecutionEngine {
     startTime: number,
   ): Promise<StepResult> {
     const fail = (error: string, extra?: Partial<StepResult>) =>
-      this.makeResult(step, 'failed', startedAt, startTime, { error, ...extra });
+      makeStepResult(step, 'failed', startedAt, startTime, { error, ...extra });
 
     // Phase 1: Blast radius validation
     const blastResult = validateBlastRadius(step, this.manifest, this.context);
@@ -315,7 +298,7 @@ export class LegacyExecutionEngine {
         this.backend.transition?.(step.stateTransition);
       }
 
-      return this.makeResult(step, 'success', startedAt, startTime, {
+      return makeStepResult(step, 'success', startedAt, startTime, {
         output: { dryRun: true },
         providerResolution: providerResolution.capabilities,
       });
@@ -361,7 +344,7 @@ export class LegacyExecutionEngine {
       this.callbacks.onCapture?.(result.name, result.status);
     }
 
-    return this.makeResult(step, successPassed ? 'success' : 'failed', startedAt, startTime, {
+    return makeStepResult(step, successPassed ? 'success' : 'failed', startedAt, startTime, {
       output,
       providerResolution: providerResolution.capabilities,
       error: successPassed ? undefined : `Success criteria failed: ${step.successCriteria.description}`,
@@ -407,12 +390,12 @@ export class LegacyExecutionEngine {
     this.callbacks.onApprovalResult?.(step, result, catalogCovered);
 
     if (result === 'rejected') {
-      return this.makeResult(step, 'failed', startedAt, startTime, {
+      return makeStepResult(step, 'failed', startedAt, startTime, {
         error: 'Human rejected the step',
       });
     }
 
-    return this.makeResult(step, result === 'skipped' ? 'skipped' : 'success', startedAt, startTime);
+    return makeStepResult(step, result === 'skipped' ? 'skipped' : 'success', startedAt, startTime);
   }
 
   private async executeReplanningCheckpoint(
@@ -441,14 +424,14 @@ export class LegacyExecutionEngine {
 
     if (replanResult.action === 'abort') {
       this.callbacks.onReplanResult?.('abort', replanResult.reason);
-      return this.makeResult(step, 'failed', startedAt, startTime, {
+      return makeStepResult(step, 'failed', startedAt, startTime, {
         error: `Replan aborted execution: ${replanResult.reason}`,
       });
     }
 
     if (replanResult.action === 'continue') {
       this.callbacks.onReplanResult?.('continue', 'Current plan remains valid');
-      return this.makeResult(step, 'success', startedAt, startTime);
+      return makeStepResult(step, 'success', startedAt, startTime);
     }
 
     // revised_plan
@@ -466,13 +449,13 @@ export class LegacyExecutionEngine {
       this.executionState.completedSteps.push(result);
       this.callbacks.onStepComplete?.(revisedStep, result);
       if (result.status === 'failed') {
-        return this.makeResult(step, 'failed', startedAt, startTime, {
+        return makeStepResult(step, 'failed', startedAt, startTime, {
           error: `Revised plan failed at step ${revisedStep.stepId}: ${result.error ?? 'unknown error'}`,
         });
       }
     }
 
-    return this.makeResult(step, 'success', startedAt, startTime);
+    return makeStepResult(step, 'success', startedAt, startTime);
   }
 
   private async executeConditional(
@@ -495,7 +478,7 @@ export class LegacyExecutionEngine {
       branchResult = await this.executeBranchStep(step.thenStep, startedAt, startTime);
       this.callbacks.onStepComplete?.(step.thenStep, branchResult);
     } else if (step.elseStep === 'skip') {
-      branchResult = this.makeResult(step, 'skipped', startedAt, startTime);
+      branchResult = makeStepResult(step, 'skipped', startedAt, startTime);
     } else {
       this.callbacks.onStepStart?.(step.elseStep, -1);
       branchResult = await this.executeBranchStep(step.elseStep, startedAt, startTime);
@@ -504,7 +487,7 @@ export class LegacyExecutionEngine {
 
     this.recorder.addStepResult(branchResult);
 
-    return this.makeResult(step, branchResult.status, startedAt, startTime);
+    return makeStepResult(step, branchResult.status, startedAt, startTime);
   }
 
   private async executeBranchStep(
@@ -518,7 +501,7 @@ export class LegacyExecutionEngine {
     if (step.type === 'human_notification') {
       return this.executeNotification(step, startedAt, startTime);
     }
-    return this.makeResult(step, 'success', startedAt, startTime);
+    return makeStepResult(step, 'success', startedAt, startTime);
   }
 
   private checkFastReplanConditions(

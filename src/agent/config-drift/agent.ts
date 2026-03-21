@@ -5,9 +5,11 @@ import type { RecoveryAgent, ReplanResult } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
+import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { configDriftManifest } from './manifest.js';
 import type { ConfigDriftBackend } from './backend.js';
 import { ConfigDriftSimulator } from './simulator.js';
@@ -45,7 +47,7 @@ export class ConfigDriftAgent implements RecoveryAgent {
     const signals: HealthSignal[] = [
       {
         source: 'environment_variables',
-        status: envCritical ? 'critical' : envWarning ? 'warning' : 'healthy',
+        status: signalStatus(envCritical, envWarning),
         detail: envMismatches.length > 0
           ? `${envMismatches.length} env var(s) drifted from expected values: ${envMismatches.map((v) => v.name).join(', ')}.`
           : 'All environment variables match expected values.',
@@ -53,7 +55,7 @@ export class ConfigDriftAgent implements RecoveryAgent {
       },
       {
         source: 'secrets',
-        status: secretCritical ? 'critical' : 'healthy',
+        status: signalStatus(secretCritical),
         detail: expiredSecrets.length > 0
           ? `${expiredSecrets.length} secret(s) expired: ${expiredSecrets.map((s) => s.name).join(', ')}.`
           : unmountedSecrets.length > 0
@@ -63,7 +65,7 @@ export class ConfigDriftAgent implements RecoveryAgent {
       },
       {
         source: 'config_files',
-        status: configCritical ? 'critical' : configWarning ? 'warning' : 'healthy',
+        status: signalStatus(configCritical, configWarning),
         detail: diffs.length > 0
           ? `${diffs.length} config drift(s) detected across ${Array.from(new Set(diffs.map((d) => d.source))).join(', ')} sources.`
           : 'All config files match expected state.',
@@ -71,26 +73,21 @@ export class ConfigDriftAgent implements RecoveryAgent {
       },
     ];
 
-    const summary = status === 'healthy'
-      ? 'Config alignment is healthy. Environment variables, secrets, and config files all match expected state.'
-      : status === 'recovering'
-        ? 'Config alignment is recovering. Some non-critical drifts remain but critical values are correct.'
-        : 'Config alignment is unhealthy. Critical environment variables, secrets, or config files have drifted from expected state.';
-
-    const recommendedActions = status === 'healthy'
-      ? ['No action required. Continue monitoring config alignment after deploys.']
-      : status === 'recovering'
-        ? ['Review remaining config drifts and verify they are intentional or schedule correction.']
-        : ['Run the config drift recovery workflow to restore expected configuration state.'];
-
-    return {
+    return buildHealthAssessment({
       status,
-      confidence: 0.94,
-      summary,
-      observedAt,
       signals,
-      recommendedActions,
-    };
+      confidence: 0.94,
+      summary: {
+        healthy: 'Config alignment is healthy. Environment variables, secrets, and config files all match expected state.',
+        recovering: 'Config alignment is recovering. Some non-critical drifts remain but critical values are correct.',
+        unhealthy: 'Config alignment is unhealthy. Critical environment variables, secrets, or config files have drifted from expected state.',
+      },
+      actions: {
+        healthy: ['No action required. Continue monitoring config alignment after deploys.'],
+        recovering: ['Review remaining config drifts and verify they are intentional or schedule correction.'],
+        unhealthy: ['Run the config drift recovery workflow to restore expected configuration state.'],
+      },
+    });
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
@@ -155,7 +152,6 @@ export class ConfigDriftAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const now = new Date().toISOString();
     const target = String(context.trigger.payload.instance || 'app-deployment');
 
     const steps: RecoveryStep[] = [
@@ -423,18 +419,14 @@ export class ConfigDriftAgent implements RecoveryAgent {
     ];
 
     return {
-      apiVersion: 'v0.2.1',
-      kind: 'RecoveryPlan',
-      metadata: {
-        planId: `rp-${now.replace(/[-:T]/g, '').slice(0, 14)}-config-drift-001`,
+      ...createPlanEnvelope({
+        planIdSuffix: 'config-drift',
         agentName: 'config-drift-recovery',
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'config_file_drift',
-        createdAt: now,
         estimatedDuration: 'PT5M',
         summary: `Recover from config drift on ${target}: restore env vars, rotate expired secrets, verify config file alignment.`,
-        supersedes: null,
-      },
+      }),
       impact: {
         affectedSystems: [
           {

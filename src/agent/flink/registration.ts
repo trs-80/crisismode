@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { AgentRegistration } from '../../config/agent-registration.js';
+import { createSimulatorRegistration } from '../../config/simulator-registration.js';
 import { flinkRecoveryManifest } from './manifest.js';
 
-export const flinkRecoveryRegistration: AgentRegistration = {
+export const flinkRecoveryRegistration = createSimulatorRegistration({
   kind: 'flink',
   name: 'flink-recovery',
   manifest: flinkRecoveryManifest,
-
-  async createAgent(target) {
+  loadAgent: async () => {
     const { FlinkRecoveryAgent } = await import('./agent.js');
-    const { FlinkSimulator } = await import('./simulator.js');
-
-    // Flink live client not yet implemented — use simulator for now
-    const backend = new FlinkSimulator();
-    const agent = new FlinkRecoveryAgent(backend);
-    return { agent, backend, target };
+    return FlinkRecoveryAgent as any;
   },
-};
+  loadSimulator: async () => {
+    const { FlinkSimulator } = await import('./simulator.js');
+    return FlinkSimulator as any;
+  },
+});
