@@ -11,9 +11,27 @@ export const k8sRecoveryRegistration: AgentRegistration = {
 
   async createAgent(target) {
     const { K8sRecoveryAgent } = await import('./agent.js');
-    const { K8sSimulator } = await import('./simulator.js');
 
-    // K8s live client not yet implemented — use simulator for now
+    const hasLiveTarget = target.primary.host !== 'simulator';
+
+    if (hasLiveTarget) {
+      try {
+        const { K8sLiveClient } = await import('./live-client.js');
+        const backend = new K8sLiveClient({
+          kubeconfig: target.primary.host !== 'default' ? target.primary.host : undefined,
+          context: target.primary.database || undefined,
+          inCluster: target.primary.host === 'in-cluster',
+          connectTimeoutMs: 2000,
+        });
+        await backend.connect();
+        const agent = new K8sRecoveryAgent(backend);
+        return { agent, backend, target };
+      } catch {
+        // Connection failed — fall back to simulator (e.g. in tests, dry-run with no cluster)
+      }
+    }
+
+    const { K8sSimulator } = await import('./simulator.js');
     const backend = new K8sSimulator();
     const agent = new K8sRecoveryAgent(backend);
     return { agent, backend, target };
