@@ -22,6 +22,7 @@ import {
   printBanner, printScanSummary, printNextAction,
   printInfo, printDetection, printError,
 } from '../output.js';
+import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
 import type { ScanFinding, ScanResult } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { HealthAssessment } from '../../types/health.js';
@@ -84,17 +85,12 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     config = buildConfigFromDetection(detectedServices);
   }
 
-  if (!config) {
-    // Nothing detected, nothing configured — still produce a scan result
-    const result: ScanResult = {
-      score: 100,
-      findings: [],
-      scannedAt: new Date().toISOString(),
-      durationMs: Date.now() - startTime,
-    };
-    printScanSummary(result);
-    printNextAction('No services detected. Run `crisismode init` to configure manually.');
-    return result;
+  // Always inject local health agents (DNS, disk) — they work without config
+  if (config) {
+    config = { ...config, targets: mergeLocalTargets(config.targets) };
+  } else {
+    config = buildConfigFromDetection([]);
+    config = { ...config, targets: mergeLocalTargets(config.targets) };
   }
 
   // Apply category filter if provided
@@ -278,6 +274,13 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     printNextAction(`Run \`crisismode scan --verbose\` for more details on unknown services`);
   } else if (findings.length > 0) {
     printNextAction('All systems healthy. Run `crisismode watch` to monitor continuously.');
+  }
+
+  // Hint about agents that require explicit configuration
+  const configuredKinds = new Set(config.targets.map((t) => t.kind));
+  const newAgentHints = unconfiguredAgentHints(configuredKinds);
+  if (newAgentHints.length > 0) {
+    printInfo(`Additional agents available: ${newAgentHints.join(', ')}. Add targets to crisismode.yaml to enable.`);
   }
 
   return result;

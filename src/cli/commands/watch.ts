@@ -15,6 +15,7 @@ import { buildOperatorSummary } from '../../framework/operator-summary.js';
 import { loadConfig, parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { detectServices } from '../detect.js';
+import { mergeLocalTargets } from '../local-agents.js';
 import { generateDiagnosisReport } from '../../framework/incident-report.js';
 import { WatchState } from '../../framework/watch-state.js';
 import type { HealthCard, RecurringPattern } from '../../framework/watch-state.js';
@@ -53,13 +54,12 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
     printDetection(services);
 
     const detected = services.filter((s) => s.detected);
-    if (detected.length === 0) {
-      throw noConfig();
-    }
-
     config = buildConfigFromDetection(detected);
     source = 'auto-detected';
   }
+
+  // Inject local health agents (DNS, disk) so they work without explicit config
+  config = { ...config, targets: mergeLocalTargets(config.targets) };
 
   printInfo(`Config: ${source}`);
   console.log('');

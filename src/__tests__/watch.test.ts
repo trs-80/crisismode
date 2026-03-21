@@ -241,15 +241,20 @@ describe('runWatch', () => {
     expect(vi.mocked(printDetection)).toHaveBeenCalled();
   });
 
-  it('throws when config fails and no services detected', async () => {
+  it('runs with local agents when config fails and no services detected', async () => {
     vi.mocked(loadConfig).mockImplementation(() => { throw new Error('not found'); });
     vi.mocked(detectServices).mockResolvedValue([
       { kind: 'postgresql', host: '127.0.0.1', port: 5432, detected: false },
     ]);
 
-    await expect(runWatch({ maxCycles: 1, intervalMs: 10 })).rejects.toThrow(
-      'No configuration found',
-    );
+    const instance = makeAgentInstance();
+    const registry = new AgentRegistry({} as never);
+    vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
+
+    // Should not throw — local agents (DNS, disk) provide targets
+    await runWatch({ maxCycles: 1, intervalMs: 10 });
+
+    expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('No configuration found'));
   });
 
   it('runs two cycles and tracks health transitions', async () => {

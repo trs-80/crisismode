@@ -20,6 +20,7 @@ import {
   printInfo, printSuccess, printWarning, printDetection, printNetworkProfile,
 } from '../output.js';
 import { noConfig, formatError } from '../errors.js';
+import { mergeLocalTargets } from '../local-agents.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { CheckDiagnoseResult } from '../../framework/check-plugin.js';
 
@@ -54,14 +55,14 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     printDetection(services);
 
     const detected = services.filter((s) => s.detected);
-    if (detected.length === 0) {
-      throw noConfig();
-    }
 
-    // Build minimal config from detection
+    // Build config from detection (may be empty — local agents fill the gap)
     config = buildConfigFromDetection(detected);
     source = 'auto-detected';
   }
+
+  // Inject local health agents (DNS, disk) so they work without explicit config
+  config = { ...config, targets: mergeLocalTargets(config.targets) };
 
   printInfo(`Config: ${source}`);
   console.log('');
