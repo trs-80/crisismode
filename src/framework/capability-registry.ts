@@ -387,6 +387,89 @@ let CAPABILITIES: CapabilityDefinition[] = [
     manualFallback: 'Scale workers manually via your orchestrator or process manager.',
   },
 
+  // ── DNS ──
+  {
+    id: 'dns.resolver.probe',
+    actionKind: 'read',
+    description: 'Probe configured nameservers for reachability and latency.',
+    targetKinds: ['dns'],
+    manualFallback: 'Test resolver reachability manually using dig or nslookup.',
+  },
+  {
+    id: 'dns.resolution.verify',
+    actionKind: 'read',
+    description: 'Verify DNS resolution correctness across configured resolvers.',
+    targetKinds: ['dns'],
+    manualFallback: 'Verify resolution manually using dig @<nameserver> <hostname>.',
+  },
+  {
+    id: 'dns.resolv_conf.read',
+    actionKind: 'read',
+    description: 'Read and parse the system resolver configuration.',
+    targetKinds: ['dns'],
+    manualFallback: 'Read /etc/resolv.conf or run scutil --dns on macOS.',
+  },
+  {
+    id: 'dns.cache.flush',
+    actionKind: 'mutate',
+    description: 'Flush the local DNS resolver cache.',
+    targetKinds: ['dns'],
+    manualFallback: 'Flush the cache manually: macOS: dscacheutil -flushcache; Linux: systemd-resolve --flush-caches.',
+  },
+  {
+    id: 'dns.resolv_conf.write',
+    actionKind: 'mutate',
+    description: 'Update the system resolver configuration with new nameservers.',
+    targetKinds: ['dns'],
+    manualFallback: 'Edit /etc/resolv.conf manually and replace the nameserver lines.',
+  },
+
+  // ── TLS ──
+  {
+    id: 'tls.endpoint.inspect',
+    actionKind: 'read',
+    description: 'Connect to a TLS endpoint and inspect its certificate details.',
+    targetKinds: ['tls'],
+    manualFallback: 'Inspect the certificate manually using openssl s_client -connect <host>:<port>.',
+  },
+  {
+    id: 'tls.chain.validate',
+    actionKind: 'read',
+    description: 'Validate the certificate chain against the system CA store.',
+    targetKinds: ['tls'],
+    manualFallback: 'Validate the chain manually using openssl verify -CAfile <ca-bundle> <cert>.',
+  },
+  {
+    id: 'tls.config.read',
+    actionKind: 'read',
+    description: 'Read the configured TLS endpoints to monitor.',
+    targetKinds: ['tls'],
+    manualFallback: 'Review the crisismode.yaml configuration for TLS target entries.',
+  },
+
+  // ── Disk ──
+  {
+    id: 'disk.usage.read',
+    actionKind: 'read',
+    description: 'Read filesystem usage statistics (block and inode) for mounted filesystems.',
+    targetKinds: ['disk'],
+    manualFallback: 'Check disk usage manually using df -h and df -i.',
+  },
+  {
+    id: 'disk.files.inspect',
+    actionKind: 'read',
+    description: 'Inspect filesystem for large files and directories consuming space.',
+    targetKinds: ['disk'],
+    manualFallback: 'Find large files manually using du -h --max-depth=2 / | sort -rh | head -20.',
+  },
+  {
+    id: 'disk.logs.inspect',
+    actionKind: 'read',
+    description: 'Inspect log directory health including rotation status and file counts.',
+    targetKinds: ['disk'],
+    manualFallback: 'Check log directory manually using du -sh /var/log/ and ls -lhS /var/log/.',
+  },
+
   // ── Stream (Flink) ──
   {
     id: 'stream.job.restart',

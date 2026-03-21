@@ -22,6 +22,9 @@ import { aiProviderRegistration } from '../agent/ai-provider/registration.js';
 import { dbMigrationRegistration } from '../agent/db-migration/registration.js';
 import { queueBacklogRegistration } from '../agent/queue-backlog/registration.js';
 import { configDriftRegistration } from '../agent/config-drift/registration.js';
+import { dnsRecoveryRegistration } from '../agent/dns/registration.js';
+import { tlsRecoveryRegistration } from '../agent/tls/registration.js';
+import { diskExhaustionRegistration } from '../agent/disk/registration.js';
 
 export const builtinAgents: AgentRegistration[] = [
   // Infrastructure agents
@@ -32,6 +35,9 @@ export const builtinAgents: AgentRegistration[] = [
   k8sRecoveryRegistration,
   cephStorageRegistration,
   flinkRecoveryRegistration,
+  dnsRecoveryRegistration,
+  tlsRecoveryRegistration,
+  diskExhaustionRegistration,
   // AI application recovery agents
   deployRollbackRegistration,
   aiProviderRegistration,

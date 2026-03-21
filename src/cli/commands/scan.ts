@@ -52,6 +52,9 @@ const KIND_PREFIX: Record<string, string> = {
   'managed-database': 'DBMIG',
   'message-queue': 'QUEUE',
   'application-config': 'CFG',
+  dns: 'DNS',
+  tls: 'TLS',
+  disk: 'DISK',
   plugin: 'PLUG',
 };
 
