@@ -32,24 +32,11 @@ jobs:
 
   build:
     needs: validate
-    strategy:
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            platform: linux
-            arch: x64
-          - runner: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-          - runner: macos-latest
-            platform: darwin
-            arch: arm64
-          - runner: macos-15
-            platform: darwin
-            arch: x64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
 
       - uses: pnpm/action-setup@v4
 
@@ -60,21 +47,29 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build binary
-        run: OUTPUT_NAME=crisismode-${{ matrix.platform }}-${{ matrix.arch }} bash scripts/build-binary.sh
+      - name: Build all platform binaries
+        run: bash scripts/build-binary.sh --all
 
-      - name: Generate checksum
+      - name: Generate checksums
         run: |
           cd dist
-          shasum -a 256 crisismode-${{ matrix.platform }}-${{ matrix.arch }} > crisismode-${{ matrix.platform }}-${{ matrix.arch }}.sha256
+          for bin in crisismode-linux-x64 crisismode-linux-arm64 crisismode-darwin-x64 crisismode-darwin-arm64; do
+            sha256sum "$bin" > "${bin}.sha256"
+          done
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: crisismode-${{ matrix.platform }}-${{ matrix.arch }}
+          name: binaries
           path: |
-            dist/crisismode-${{ matrix.platform }}-${{ matrix.arch }}
-            dist/crisismode-${{ matrix.platform }}-${{ matrix.arch }}.sha256
+            dist/crisismode-linux-x64
+            dist/crisismode-linux-x64.sha256
+            dist/crisismode-linux-arm64
+            dist/crisismode-linux-arm64.sha256
+            dist/crisismode-darwin-x64
+            dist/crisismode-darwin-x64.sha256
+            dist/crisismode-darwin-arm64
+            dist/crisismode-darwin-arm64.sha256
 
   release:
     needs: build
@@ -95,16 +90,11 @@ jobs:
             exit 1
           fi
 
-      - name: Download all artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-
-      - name: Collect release assets
-        run: |
-          mkdir -p release
-          find artifacts -type f -exec cp {} release/ \;
-          ls -la release/
+          name: binaries
+          path: release
 
       - name: Create GitHub Release
         env:

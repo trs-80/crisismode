@@ -1,100 +1,93 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# build-binary.sh — produce a standalone crisismode binary using esbuild + Node.js SEA.
+# build-binary.sh — produce standalone crisismode binaries using bun compile.
 #
 # Usage:
-#   ./scripts/build-binary.sh
-#   OUTPUT_NAME=crisismode-linux-x64 ./scripts/build-binary.sh
+#   ./scripts/build-binary.sh                          # build for current platform
+#   ./scripts/build-binary.sh --all                    # build all 4 targets
+#   TARGET=bun-linux-x64 ./scripts/build-binary.sh     # build specific target
 #
-# Requirements: Node.js >= 20, pnpm, esbuild + postject (devDependencies)
+# Requirements: bun, pnpm (for typecheck)
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="${REPO_ROOT}/dist"
-BUNDLE="${DIST_DIR}/crisismode.bundle.cjs"
-BLOB="${DIST_DIR}/sea-prep.blob"
-OUTPUT_NAME="${OUTPUT_NAME:-crisismode}"
-BINARY="${DIST_DIR}/${OUTPUT_NAME}"
 
-# ── Preflight ──────────────────────────────────────────────────────────────────
-
-echo "[build-binary] Checking prerequisites..."
-
-NODE_VERSION=$(node --version)
-NODE_MAJOR=$(echo "$NODE_VERSION" | sed 's/v\([0-9]*\).*/\1/')
-if [ "$NODE_MAJOR" -lt 20 ]; then
-  echo "[build-binary] ERROR: Node.js >= 20 required for SEA. Found: ${NODE_VERSION}" >&2
-  exit 1
-fi
-echo "[build-binary] Node: ${NODE_VERSION}"
+# Read version from package.json
+VERSION=$(node -p "require('./package.json').version")
 
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
-
-# Normalize arch names for consistent binary naming
 case "$ARCH" in
   aarch64) ARCH="arm64" ;;
   x86_64)  ARCH="x64" ;;
 esac
 
-echo "[build-binary] Platform: ${PLATFORM}/${ARCH}"
+ALL_TARGETS=(
+  "bun-linux-x64"
+  "bun-linux-arm64"
+  "bun-darwin-x64"
+  "bun-darwin-arm64"
+)
+
+# ── Preflight ──────────────────────────────────────────────────────────────────
+
+echo "[build-binary] Checking prerequisites..."
+
+if ! command -v bun &> /dev/null; then
+  echo "[build-binary] ERROR: bun is required. Install: curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
+fi
+
+echo "[build-binary] bun: $(bun --version)"
+echo "[build-binary] Version: ${VERSION}"
+echo "[build-binary] Host: ${PLATFORM}/${ARCH}"
 
 # ── Step 1: Type check ────────────────────────────────────────────────────────
 
 echo "[build-binary] Running type check..."
 pnpm exec tsc --noEmit
 
-# ── Step 2: Bundle with esbuild ───────────────────────────────────────────────
+# ── Step 2: Build binaries ────────────────────────────────────────────────────
 
-echo "[build-binary] Bundling with esbuild..."
 mkdir -p "${DIST_DIR}"
-node "${REPO_ROOT}/scripts/esbuild.config.mjs"
-echo "[build-binary] Bundle: ${BUNDLE} ($(du -sh "${BUNDLE}" | cut -f1))"
 
-# ── Step 3: Generate SEA blob ─────────────────────────────────────────────────
+build_target() {
+  local target="$1"
+  # Extract platform-arch from bun target name (bun-linux-x64 → linux-x64)
+  local suffix="${target#bun-}"
+  local outfile="${DIST_DIR}/crisismode-${suffix}"
 
-echo "[build-binary] Generating SEA blob..."
-node --experimental-sea-config "${REPO_ROOT}/sea-config.json"
-echo "[build-binary] Blob: ${BLOB} ($(du -sh "${BLOB}" | cut -f1))"
+  echo "[build-binary] Building ${target} → crisismode-${suffix}..."
 
-# ── Step 4: Copy node executable ──────────────────────────────────────────────
+  bun build "${REPO_ROOT}/src/cli/index.ts" \
+    --compile \
+    --target="${target}" \
+    --define "process.env.__CRISISMODE_VERSION=\"${VERSION}\"" \
+    --outfile "${outfile}"
 
-echo "[build-binary] Copying node executable..."
-cp "$(which node)" "${BINARY}"
+  chmod +x "${outfile}"
 
-# ── Step 5: Inject SEA blob ───────────────────────────────────────────────────
+  local size
+  size=$(du -sh "${outfile}" | cut -f1)
+  echo "[build-binary] ✓ crisismode-${suffix} (${size})"
+}
 
-echo "[build-binary] Injecting SEA blob with postject..."
-
-POSTJECT="${REPO_ROOT}/node_modules/.bin/postject"
-if [ ! -f "${POSTJECT}" ]; then
-  echo "[build-binary] ERROR: postject not found. Run: pnpm install" >&2
-  exit 1
-fi
-
-SEA_FUSE="NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"
-
-if [ "${PLATFORM}" = "darwin" ]; then
-  codesign --remove-signature "${BINARY}"
-  "${POSTJECT}" "${BINARY}" NODE_SEA_BLOB "${BLOB}" \
-    --sentinel-fuse "${SEA_FUSE}" \
-    --macho-segment-name __NODE_SEA
-  codesign -s - "${BINARY}"
-elif [ "${PLATFORM}" = "linux" ]; then
-  "${POSTJECT}" "${BINARY}" NODE_SEA_BLOB "${BLOB}" \
-    --sentinel-fuse "${SEA_FUSE}"
+if [ "${1:-}" = "--all" ]; then
+  # Build all 4 targets
+  for target in "${ALL_TARGETS[@]}"; do
+    build_target "$target"
+  done
+elif [ -n "${TARGET:-}" ]; then
+  # Build specific target
+  build_target "${TARGET}"
 else
-  echo "[build-binary] WARNING: Unsupported platform '${PLATFORM}'. Attempting generic injection." >&2
-  "${POSTJECT}" "${BINARY}" NODE_SEA_BLOB "${BLOB}" \
-    --sentinel-fuse "${SEA_FUSE}"
+  # Build for current platform
+  build_target "bun-${PLATFORM}-${ARCH}"
 fi
-
-chmod +x "${BINARY}"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
-BINARY_SIZE=$(du -sh "${BINARY}" | cut -f1)
 echo ""
-echo "[build-binary] Binary ready: ${BINARY} (${BINARY_SIZE})"
-echo "[build-binary] Test with: ${BINARY} --version"
+echo "[build-binary] Done. Test with: dist/crisismode-${PLATFORM}-${ARCH} --version"
