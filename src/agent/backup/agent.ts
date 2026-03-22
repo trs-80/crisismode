@@ -51,11 +51,11 @@ export class BackupVerificationAgent implements RecoveryAgent {
     const configs = this.extractConfigs(context);
     const report = await this.getReport(configs);
 
-    const { hasFailedVerifications, hasStaleBackups, hasMissingBackups, hasUncoveredSources } =
+    const { hasFailedVerifications, hasStaleBackups, hasMissingBackups, hasUncoveredSources, hasStructuralFailures } =
       this.classifyReport(report);
 
-    const isCritical = hasMissingBackups || hasFailedVerifications;
-    const isWarning = hasStaleBackups || hasUncoveredSources;
+    const isCritical = hasMissingBackups || (hasFailedVerifications && hasStructuralFailures);
+    const isWarning = hasStaleBackups || hasUncoveredSources || (hasFailedVerifications && !hasStructuralFailures);
 
     const status = isCritical ? 'unhealthy' : isWarning ? 'recovering' : 'healthy';
 
@@ -118,7 +118,7 @@ export class BackupVerificationAgent implements RecoveryAgent {
     const configs = this.extractConfigs(context);
     const report = await this.getReport(configs);
 
-    const { hasFailedVerifications, hasStaleBackups, hasMissingBackups, hasUncoveredSources, hasSizeAnomalies, hasRtoRisk } =
+    const { hasFailedVerifications, hasStaleBackups, hasMissingBackups, hasUncoveredSources, hasSizeAnomalies, hasRtoRisk, hasStructuralFailures } =
       this.classifyReport(report);
 
     // Scenario classification — first match wins (most severe first)
@@ -128,8 +128,8 @@ export class BackupVerificationAgent implements RecoveryAgent {
     if (hasMissingBackups && report.providers.every((p) => !p.detected)) {
       scenario = 'no_backups_found';
       confidence = 0.98;
-    } else if (hasFailedVerifications) {
-      // Distinguish between integrity failure and size anomaly
+    } else if (hasFailedVerifications && hasStructuralFailures) {
+      // Integrity or size failures — not just recency
       const hasIntegrityCheck = report.providers.some((p) =>
         p.verifications.some((v) => v.checks.some((c) => c.name === CHECK_NAMES.INTEGRITY && !c.passed)),
       );
@@ -143,7 +143,7 @@ export class BackupVerificationAgent implements RecoveryAgent {
         scenario = 'integrity_failure';
         confidence = 0.90;
       }
-    } else if (hasStaleBackups) {
+    } else if (hasStaleBackups || (hasFailedVerifications && !hasStructuralFailures)) {
       scenario = 'stale_backup';
       confidence = 0.95;
     } else if (hasUncoveredSources) {
@@ -434,8 +434,12 @@ export class BackupVerificationAgent implements RecoveryAgent {
     );
     const hasRtoRisk = report.rtoEstimates.length > 0 &&
       report.rtoEstimates.some((r) => r.estimatedSeconds > 3600); // >1h is risky
+    const hasStructuralFailures = report.providers.some((p) =>
+      p.verifications.some((v) => !v.passed &&
+        v.checks.some((c) => !c.passed && c.name !== CHECK_NAMES.RECENCY)),
+    );
 
-    return { hasFailedVerifications, hasStaleBackups, hasMissingBackups, hasUncoveredSources, hasSizeAnomalies, hasRtoRisk };
+    return { hasFailedVerifications, hasStaleBackups, hasMissingBackups, hasUncoveredSources, hasSizeAnomalies, hasRtoRisk, hasStructuralFailures };
   }
 
   private buildRecencyDetail(evals: RpoEvaluation[]): string {
