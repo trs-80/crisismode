@@ -17,7 +17,7 @@ _crisismode_completions() {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-  local commands="scan diagnose recover status init demo webhook ask watch completions"
+  local commands="scan diagnose recover status init demo webhook ask watch completions registry"
   local global_flags="--config --target --json --no-color --verbose -h --help -v --version"
 
   if [[ \${COMP_CWORD} -eq 1 ]]; then
@@ -63,6 +63,13 @@ _crisismode_completions() {
     completions)
       COMPREPLY=( \$(compgen -W "bash zsh fish" -- "\${cur}") )
       ;;
+    registry)
+      if [[ \${COMP_CWORD} -eq 2 ]]; then
+        COMPREPLY=( \$(compgen -W "list install search" -- "\${cur}") )
+      else
+        COMPREPLY=( \$(compgen -W "--local --force --json --no-color -h --help" -- "\${cur}") )
+      fi
+      ;;
     *)
       COMPREPLY=( \$(compgen -W "\${global_flags}" -- "\${cur}") )
       ;;
@@ -100,6 +107,7 @@ _crisismode() {
         'ask:Natural language AI diagnosis'
         'watch:Continuous shadow observation'
         'completions:Print shell completion script'
+        'registry:Browse and install check plugins'
       )
       _describe 'subcommand' subcommands
       ;;
@@ -180,6 +188,11 @@ _crisismode() {
           shells=('bash:Bash completion script' 'zsh:Zsh completion script' 'fish:Fish completion script')
           _describe 'shell' shells
           ;;
+        registry)
+          local -a subcmds
+          subcmds=('list:List available check plugins' 'install:Install a check plugin' 'search:Search check plugins')
+          _describe 'subcommand' subcmds
+          ;;
       esac
       ;;
   esac
@@ -204,6 +217,7 @@ complete -c crisismode -n '__fish_use_subcommand' -a webhook     -d 'Start webho
 complete -c crisismode -n '__fish_use_subcommand' -a ask         -d 'Natural language AI diagnosis'
 complete -c crisismode -n '__fish_use_subcommand' -a watch       -d 'Continuous shadow observation'
 complete -c crisismode -n '__fish_use_subcommand' -a completions -d 'Print shell completion script'
+complete -c crisismode -n '__fish_use_subcommand' -a registry    -d 'Browse and install check plugins'
 
 # Global flags
 complete -c crisismode -l config   -d 'Path to crisismode.yaml' -r -F
@@ -232,6 +246,11 @@ complete -c crisismode -n '__fish_seen_subcommand_from watch' -l interval -d 'Po
 
 # completions
 complete -c crisismode -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish' -d 'Target shell'
+
+# registry
+complete -c crisismode -n '__fish_seen_subcommand_from registry' -a 'list install search' -d 'Registry action'
+complete -c crisismode -n '__fish_seen_subcommand_from registry' -l local -d 'Install to ./checks/ instead of ~/.crisismode/checks/'
+complete -c crisismode -n '__fish_seen_subcommand_from registry' -l force -d 'Overwrite existing installation'
 `.trimStart();
 
 const SHELLS = new Set(['bash', 'zsh', 'fish'] as const);

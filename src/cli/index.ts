@@ -39,6 +39,9 @@ const HELP = `
     crisismode ask                          Interactive diagnostic REPL
     crisismode watch [options]              Continuous shadow observation
     crisismode completions bash|zsh|fish   Generate shell completions
+    crisismode registry list               List available check plugins
+    crisismode registry search <query>     Search check plugins
+    crisismode registry install <name>     Install a check plugin
 
   Options:
     --agent <name>      Scaffold a new check plugin (init only)
@@ -47,6 +50,8 @@ const HELP = `
     --category <kinds>  Comma-separated service kinds to scan (scan only)
     --execute           Enable mutations (recover/webhook only)
     --health-only       Health check only, no diagnosis (recover only)
+    --local             Install to ./checks/ instead of ~/.crisismode/checks/
+    --force             Overwrite existing plugin installation
     --json              Machine-readable JSON output
     --no-color          Disable colored output
     --verbose           Show additional detail
@@ -72,6 +77,8 @@ async function main(): Promise<void> {
         agent: { type: 'string' },
         execute: { type: 'boolean', default: false },
         'health-only': { type: 'boolean', default: false },
+        local: { type: 'boolean', default: false },
+        force: { type: 'boolean', default: false },
         interval: { type: 'string' },
         json: { type: 'boolean', default: false },
         'no-color': { type: 'boolean', default: false },
@@ -201,6 +208,23 @@ async function main(): Promise<void> {
         configPath: values.config as string | undefined,
         targetName: values.target as string | undefined,
         intervalMs: intervalStr ? parseInt(intervalStr, 10) * 1000 : undefined,
+      });
+      break;
+    }
+
+    case 'registry': {
+      const sub = positionals[0] as 'list' | 'install' | 'search' | undefined;
+      if (!sub || !['list', 'install', 'search'].includes(sub)) {
+        console.error('Usage: crisismode registry list|install|search');
+        process.exit(1);
+      }
+      const { runRegistry } = await import('./commands/registry.js');
+      await runRegistry({
+        subcommand: sub,
+        args: positionals.slice(1),
+        local: values.local as boolean,
+        force: values.force as boolean,
+        json: values.json as boolean,
       });
       break;
     }
