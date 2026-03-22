@@ -12,7 +12,7 @@
  */
 
 import { readdir, stat } from 'node:fs/promises';
-import { join, extname, basename } from 'node:path';
+import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type {
@@ -27,9 +27,11 @@ import type {
   RpoEvaluation,
   RtoEstimate,
 } from './backend.js';
+import { DEFAULT_RPO_SECONDS, CHECK_NAMES } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
+import { formatBytes, formatDuration } from '../../framework/format-helpers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +46,9 @@ const BACKUP_EXTENSIONS = new Set([
 
 /** Size drop ratio that triggers a warning. */
 const SIZE_DROP_THRESHOLD = 0.5;
+
+/** Maximum backup items to verify per location (bounds I/O from integrity checks). */
+const MAX_ITEMS_PER_LOCATION = 10;
 
 export interface BackupLiveConfig {
   locations: string[];
@@ -62,60 +67,68 @@ export class BackupLiveClient implements BackupBackend {
 
   async verifyAll(configs: BackupProviderConfig[]): Promise<BackupVerificationReport> {
     const verifiedAt = new Date().toISOString();
-    const providers: ProviderReport[] = [];
-    const rpoEvaluations: RpoEvaluation[] = [];
-    const rtoEstimates: RtoEstimate[] = [];
-    const uncoveredSources: string[] = [];
 
-    for (const config of configs) {
-      const items = await this.inventoryLocation(config);
+    // Process all providers in parallel — they are independent
+    const results = await Promise.all(configs.map(async (config) => {
+      const allItems = await this.inventoryLocation(config);
 
-      if (items.length === 0) {
-        providers.push({ kind: config.kind, source: config.source, detected: false, items: [], verifications: [] });
-        rpoEvaluations.push({
+      if (allItems.length === 0) {
+        const provider: ProviderReport = { kind: config.kind, source: config.source, detected: false, items: [], verifications: [] };
+        const rpo: RpoEvaluation = {
           source: config.source,
           providerKind: config.kind,
-          targetRpoSeconds: config.rpoSeconds ?? 86400,
+          targetRpoSeconds: config.rpoSeconds ?? DEFAULT_RPO_SECONDS,
           actualAgeSeconds: Infinity,
           withinTarget: false,
-        });
-        uncoveredSources.push(config.source);
-        continue;
+        };
+        return { provider, rpo, rto: null as RtoEstimate | null, uncovered: config.source };
       }
 
-      const verifications: BackupVerification[] = [];
-      for (const item of items) {
-        verifications.push(await this.verifyItem(item, config));
-      }
+      // Cap items to verify (sorted newest-first by inventoryLocation)
+      const itemsToVerify = allItems.slice(0, MAX_ITEMS_PER_LOCATION);
 
-      providers.push({ kind: config.kind, source: config.source, detected: true, items, verifications });
+      // Verify items in parallel — each is independent
+      const verifications = await Promise.all(
+        itemsToVerify.map((item) => this.verifyItem(item, config)),
+      );
+
+      const provider: ProviderReport = { kind: config.kind, source: config.source, detected: true, items: allItems, verifications };
 
       // RPO evaluation — based on newest backup
-      const newest = items.reduce((a, b) => new Date(a.createdAt) > new Date(b.createdAt) ? a : b);
+      const newest = allItems[0]; // already sorted newest-first
       const ageSeconds = (Date.now() - new Date(newest.createdAt).getTime()) / 1000;
-      const targetRpo = config.rpoSeconds ?? 86400;
-      rpoEvaluations.push({
+      const targetRpo = config.rpoSeconds ?? DEFAULT_RPO_SECONDS;
+      const rpo: RpoEvaluation = {
         source: config.source,
         providerKind: config.kind,
         targetRpoSeconds: targetRpo,
         actualAgeSeconds: Math.round(ageSeconds),
         withinTarget: ageSeconds <= targetRpo,
-      });
+      };
 
       // RTO estimate — rough calculation based on backup size
-      const totalSize = items.reduce((sum, i) => sum + i.sizeBytes, 0);
+      const totalSize = allItems.reduce((sum, i) => sum + i.sizeBytes, 0);
+      let rto: RtoEstimate | null = null;
       if (totalSize > 0) {
         const restoreThroughputBps = 35 * 1024 * 1024; // ~35MB/s conservative estimate
-        rtoEstimates.push({
+        rto = {
           source: config.source,
           providerKind: config.kind,
           estimatedSeconds: Math.ceil(totalSize / restoreThroughputBps),
           basis: `Estimated from backup size (${formatBytes(totalSize)}) at ~35MB/s restore throughput`,
-        });
+        };
       }
-    }
 
-    return { verifiedAt, providers, rpoEvaluations, rtoEstimates, uncoveredSources };
+      return { provider, rpo, rto, uncovered: null as string | null };
+    }));
+
+    return {
+      verifiedAt,
+      providers: results.map((r) => r.provider),
+      rpoEvaluations: results.map((r) => r.rpo),
+      rtoEstimates: results.map((r) => r.rto).filter((r): r is RtoEstimate => r !== null),
+      uncoveredSources: results.map((r) => r.uncovered).filter((s): s is string => s !== null),
+    };
   }
 
   // ── Private: inventory ──
@@ -175,14 +188,14 @@ export class BackupLiveClient implements BackupBackend {
     const checks: BackupCheck[] = [];
 
     // Check 1: Existence (already confirmed by inventory, but explicit)
-    checks.push({ name: 'exists', passed: true, detail: `Backup found at ${item.location}`, severity: 'info' });
+    checks.push({ name: CHECK_NAMES.EXISTS, passed: true, detail: `Backup found at ${item.location}`, severity: 'info' });
 
     // Check 2: Recency
     const ageSeconds = (Date.now() - new Date(item.createdAt).getTime()) / 1000;
-    const targetRpo = config.rpoSeconds ?? 86400;
+    const targetRpo = config.rpoSeconds ?? DEFAULT_RPO_SECONDS;
     const withinRpo = ageSeconds <= targetRpo;
     checks.push({
-      name: 'recency',
+      name: CHECK_NAMES.RECENCY,
       passed: withinRpo,
       detail: withinRpo
         ? `Backup is ${formatDuration(ageSeconds)} old (within ${formatDuration(targetRpo)} RPO target)`
@@ -195,7 +208,7 @@ export class BackupLiveClient implements BackupBackend {
       const ratio = item.sizeBytes / item.previousSizeBytes;
       const dropped = ratio < SIZE_DROP_THRESHOLD;
       checks.push({
-        name: 'size_trend',
+        name: CHECK_NAMES.SIZE_TREND,
         passed: !dropped,
         detail: dropped
           ? `Backup is ${formatBytes(item.sizeBytes)} — previous was ${formatBytes(item.previousSizeBytes)}. Size dropped ${Math.round((1 - ratio) * 100)}%, possible truncation or failed job`
@@ -203,7 +216,7 @@ export class BackupLiveClient implements BackupBackend {
         severity: dropped ? 'critical' : 'info',
       });
     } else {
-      checks.push({ name: 'size_trend', passed: true, detail: 'No previous backup for size comparison', severity: 'info' });
+      checks.push({ name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'No previous backup for size comparison', severity: 'info' });
     }
 
     // Check 4: Basic integrity (gzip header check for compressed files)
@@ -223,9 +236,9 @@ export class BackupLiveClient implements BackupBackend {
     if (lower.endsWith('.gz') || lower.endsWith('.tgz')) {
       try {
         await execFileAsync('gzip', ['-t', item.location], { timeout: 30000 });
-        return { name: 'integrity', passed: true, detail: 'gzip integrity check passed', severity: 'info' };
+        return { name: CHECK_NAMES.INTEGRITY, passed: true, detail: 'gzip integrity check passed', severity: 'info' };
       } catch {
-        return { name: 'integrity', passed: false, detail: 'gzip integrity check failed — backup may be corrupted', severity: 'critical' };
+        return { name: CHECK_NAMES.INTEGRITY, passed: false, detail: 'gzip integrity check failed — backup may be corrupted', severity: 'critical' };
       }
     }
 
@@ -233,9 +246,9 @@ export class BackupLiveClient implements BackupBackend {
     if (lower.endsWith('.tar')) {
       try {
         await execFileAsync('tar', ['-tf', item.location], { timeout: 30000 });
-        return { name: 'integrity', passed: true, detail: 'tar archive listing succeeded', severity: 'info' };
+        return { name: CHECK_NAMES.INTEGRITY, passed: true, detail: 'tar archive listing succeeded', severity: 'info' };
       } catch {
-        return { name: 'integrity', passed: false, detail: 'tar archive listing failed — backup may be corrupted', severity: 'critical' };
+        return { name: CHECK_NAMES.INTEGRITY, passed: false, detail: 'tar archive listing failed — backup may be corrupted', severity: 'critical' };
       }
     }
 
@@ -304,20 +317,4 @@ export class BackupLiveClient implements BackupBackend {
   async close(): Promise<void> {
     // No persistent state to clean up
   }
-}
-
-function formatBytes(bytes: number): string {
-  const GB = 1024 * 1024 * 1024;
-  const MB = 1024 * 1024;
-  if (bytes >= GB) return `${(bytes / GB).toFixed(1)}GB`;
-  if (bytes >= MB) return `${(bytes / MB).toFixed(1)}MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${bytes}B`;
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds >= 86400) return `${(seconds / 86400).toFixed(1)}d`;
-  if (seconds >= 3600) return `${(seconds / 3600).toFixed(1)}h`;
-  if (seconds >= 60) return `${(seconds / 60).toFixed(0)}m`;
-  return `${Math.round(seconds)}s`;
 }

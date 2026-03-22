@@ -86,6 +86,17 @@ export interface RtoEstimate {
   basis: string;
 }
 
+/** Default RPO if not configured: 24 hours. */
+export const DEFAULT_RPO_SECONDS = 86400;
+
+/** Standard check names used across agent, simulator, and live client. */
+export const CHECK_NAMES = {
+  EXISTS: 'exists',
+  RECENCY: 'recency',
+  SIZE_TREND: 'size_trend',
+  INTEGRITY: 'integrity',
+} as const;
+
 /** Configuration for a single backup provider. */
 export interface BackupProviderConfig {
   kind: BackupProviderKind;

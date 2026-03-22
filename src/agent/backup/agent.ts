@@ -12,6 +12,7 @@ import { signalStatus, buildHealthAssessment } from '../../framework/health-help
 import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { defaultReplan } from '../interface.js';
 import { backupManifest } from './manifest.js';
+import { formatBytes, formatDuration } from '../../framework/format-helpers.js';
 import type {
   BackupBackend,
   BackupProviderConfig,
@@ -19,42 +20,36 @@ import type {
   ProviderReport,
   RpoEvaluation,
 } from './backend.js';
+import { DEFAULT_RPO_SECONDS, CHECK_NAMES } from './backend.js';
 import { BackupSimulator } from './simulator.js';
 
-/** Default RPO if not configured: 24 hours. */
-const DEFAULT_RPO_SECONDS = 86400;
-
-/** Size drop threshold that triggers a size anomaly alert. */
-const SIZE_DROP_THRESHOLD = 0.5; // 50% drop from previous
-
-function formatBytes(bytes: number): string {
-  const GB = 1024 * 1024 * 1024;
-  const MB = 1024 * 1024;
-  if (bytes >= GB) return `${(bytes / GB).toFixed(1)}GB`;
-  if (bytes >= MB) return `${(bytes / MB).toFixed(1)}MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${bytes}B`;
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds >= 86400) return `${(seconds / 86400).toFixed(1)}d`;
-  if (seconds >= 3600) return `${(seconds / 3600).toFixed(1)}h`;
-  if (seconds >= 60) return `${(seconds / 60).toFixed(0)}m`;
-  return `${seconds}s`;
-}
+/** TTL for memoized verification reports (ms). */
+const REPORT_CACHE_TTL_MS = 60_000;
 
 export class BackupVerificationAgent implements RecoveryAgent {
   manifest = backupManifest;
   backend: BackupBackend;
+  private cachedReport: { key: string; report: BackupVerificationReport; ts: number } | null = null;
 
   constructor(backend?: BackupBackend) {
     this.backend = backend ?? new BackupSimulator();
   }
 
+  private async getReport(configs: BackupProviderConfig[]): Promise<BackupVerificationReport> {
+    const key = JSON.stringify(configs);
+    const now = Date.now();
+    if (this.cachedReport && this.cachedReport.key === key && now - this.cachedReport.ts < REPORT_CACHE_TTL_MS) {
+      return this.cachedReport.report;
+    }
+    const report = await this.backend.verifyAll(configs);
+    this.cachedReport = { key, report, ts: now };
+    return report;
+  }
+
   async assessHealth(context: AgentContext): Promise<HealthAssessment> {
     const observedAt = new Date().toISOString();
     const configs = this.extractConfigs(context);
-    const report = await this.backend.verifyAll(configs);
+    const report = await this.getReport(configs);
 
     const { hasFailedVerifications, hasStaleBackups, hasMissingBackups, hasUncoveredSources } =
       this.classifyReport(report);
@@ -121,7 +116,7 @@ export class BackupVerificationAgent implements RecoveryAgent {
 
   async diagnose(context: AgentContext): Promise<DiagnosisResult> {
     const configs = this.extractConfigs(context);
-    const report = await this.backend.verifyAll(configs);
+    const report = await this.getReport(configs);
 
     const { hasFailedVerifications, hasStaleBackups, hasMissingBackups, hasUncoveredSources, hasSizeAnomalies, hasRtoRisk } =
       this.classifyReport(report);
@@ -136,7 +131,7 @@ export class BackupVerificationAgent implements RecoveryAgent {
     } else if (hasFailedVerifications) {
       // Distinguish between integrity failure and size anomaly
       const hasIntegrityCheck = report.providers.some((p) =>
-        p.verifications.some((v) => v.checks.some((c) => c.name === 'integrity' && !c.passed)),
+        p.verifications.some((v) => v.checks.some((c) => c.name === CHECK_NAMES.INTEGRITY && !c.passed)),
       );
       if (hasIntegrityCheck) {
         scenario = 'integrity_failure';
@@ -435,7 +430,7 @@ export class BackupVerificationAgent implements RecoveryAgent {
     const hasStaleBackups = report.rpoEvaluations.some((r) => !r.withinTarget);
     const hasUncoveredSources = report.uncoveredSources.length > 0;
     const hasSizeAnomalies = report.providers.some((p) =>
-      p.verifications.some((v) => v.checks.some((c) => c.name === 'size_trend' && !c.passed)),
+      p.verifications.some((v) => v.checks.some((c) => c.name === CHECK_NAMES.SIZE_TREND && !c.passed)),
     );
     const hasRtoRisk = report.rtoEstimates.length > 0 &&
       report.rtoEstimates.some((r) => r.estimatedSeconds > 3600); // >1h is risky

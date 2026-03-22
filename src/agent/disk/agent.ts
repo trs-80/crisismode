@@ -10,6 +10,7 @@ import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
 import { createPlanEnvelope } from '../../framework/plan-helpers.js';
+import { formatBytes } from '../../framework/format-helpers.js';
 import { defaultReplan } from '../interface.js';
 import { diskManifest } from './manifest.js';
 import type { DiskBackend, FilesystemUsage } from './backend.js';
@@ -19,13 +20,6 @@ const CRITICAL_USAGE_PERCENT = 95;
 const WARNING_USAGE_PERCENT = 85;
 const CRITICAL_INODE_PERCENT = 95;
 const WARNING_INODE_PERCENT = 85;
-
-function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${bytes}B`;
-}
 
 export class DiskExhaustionAgent implements RecoveryAgent {
   manifest = diskManifest;

@@ -13,9 +13,11 @@ import type {
   RpoEvaluation,
   RtoEstimate,
 } from './backend.js';
+import { DEFAULT_RPO_SECONDS, CHECK_NAMES } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
+import { formatBytes } from '../../framework/format-helpers.js';
 
 export type SimulatorState =
   | 'no_backups_found'
@@ -82,7 +84,7 @@ export class BackupSimulator implements BackupBackend {
       rpoEvaluations: configs.map((c) => ({
         source: c.source,
         providerKind: c.kind,
-        targetRpoSeconds: c.rpoSeconds ?? 86400,
+        targetRpoSeconds: c.rpoSeconds ?? DEFAULT_RPO_SECONDS,
         actualAgeSeconds: Infinity,
         withinTarget: false,
       })),
@@ -100,14 +102,14 @@ export class BackupSimulator implements BackupBackend {
     const items = this.makeItems(configs, now, staleAge, 2.5 * GB, 2.4 * GB);
     return this.buildReport(configs, items, now, verifiedAt, (item, config) => {
       const ageHours = Math.round(staleAge / HOUR);
-      const targetHours = Math.round((config.rpoSeconds ?? 86400) / 3600);
+      const targetHours = Math.round((config.rpoSeconds ?? DEFAULT_RPO_SECONDS) / 3600);
       return {
         item,
         passed: false,
         checks: [
-          { name: 'exists', passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
-          { name: 'recency', passed: false, detail: `Backup is ${ageHours}h old — exceeds ${targetHours}h RPO target`, severity: 'critical' },
-          { name: 'size_trend', passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
+          { name: CHECK_NAMES.EXISTS, passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
+          { name: CHECK_NAMES.RECENCY, passed: false, detail: `Backup is ${ageHours}h old — exceeds ${targetHours}h RPO target`, severity: 'critical' },
+          { name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
         ],
       };
     });
@@ -124,9 +126,9 @@ export class BackupSimulator implements BackupBackend {
       item,
       passed: false,
       checks: [
-        { name: 'exists', passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
-        { name: 'recency', passed: true, detail: 'Backup is recent (6h old)', severity: 'info' },
-        { name: 'size_trend', passed: false, detail: `Backup is ${formatBytes(item.sizeBytes)} — previous was ${formatBytes(item.previousSizeBytes ?? 0)}. Size dropped ${item.previousSizeBytes ? Math.round((1 - item.sizeBytes / item.previousSizeBytes) * 100) : 100}%, possible truncation or failed job`, severity: 'critical' },
+        { name: CHECK_NAMES.EXISTS, passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
+        { name: CHECK_NAMES.RECENCY, passed: true, detail: 'Backup is recent (6h old)', severity: 'info' },
+        { name: CHECK_NAMES.SIZE_TREND, passed: false, detail: `Backup is ${formatBytes(item.sizeBytes)} — previous was ${formatBytes(item.previousSizeBytes ?? 0)}. Size dropped ${item.previousSizeBytes ? Math.round((1 - item.sizeBytes / item.previousSizeBytes) * 100) : 100}%, possible truncation or failed job`, severity: 'critical' },
       ],
     }));
   }
@@ -141,10 +143,10 @@ export class BackupSimulator implements BackupBackend {
       item,
       passed: false,
       checks: [
-        { name: 'exists', passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
-        { name: 'recency', passed: true, detail: 'Backup is recent (8h old)', severity: 'info' },
-        { name: 'size_trend', passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
-        { name: 'integrity', passed: false, detail: 'Archive integrity check failed: unexpected end of file in archive header — backup is corrupted', severity: 'critical' },
+        { name: CHECK_NAMES.EXISTS, passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
+        { name: CHECK_NAMES.RECENCY, passed: true, detail: 'Backup is recent (8h old)', severity: 'info' },
+        { name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
+        { name: CHECK_NAMES.INTEGRITY, passed: false, detail: 'Archive integrity check failed: unexpected end of file in archive header — backup is corrupted', severity: 'critical' },
       ],
     }));
   }
@@ -167,16 +169,16 @@ export class BackupSimulator implements BackupBackend {
           item,
           passed: true,
           checks: [
-            { name: 'exists', passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
-            { name: 'recency', passed: true, detail: 'Backup is recent (6h old)', severity: 'info' },
-            { name: 'size_trend', passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
+            { name: CHECK_NAMES.EXISTS, passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
+            { name: CHECK_NAMES.RECENCY, passed: true, detail: 'Backup is recent (6h old)', severity: 'info' },
+            { name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
           ],
         };
         providers.push({ kind: config.kind, source: config.source, detected: true, items: [item], verifications: [verification] });
-        rpoEvals.push({ source: config.source, providerKind: config.kind, targetRpoSeconds: config.rpoSeconds ?? 86400, actualAgeSeconds: 6 * 3600, withinTarget: true });
+        rpoEvals.push({ source: config.source, providerKind: config.kind, targetRpoSeconds: config.rpoSeconds ?? DEFAULT_RPO_SECONDS, actualAgeSeconds: 6 * 3600, withinTarget: true });
       } else {
         providers.push({ kind: config.kind, source: config.source, detected: false, items: [], verifications: [] });
-        rpoEvals.push({ source: config.source, providerKind: config.kind, targetRpoSeconds: config.rpoSeconds ?? 86400, actualAgeSeconds: Infinity, withinTarget: false });
+        rpoEvals.push({ source: config.source, providerKind: config.kind, targetRpoSeconds: config.rpoSeconds ?? DEFAULT_RPO_SECONDS, actualAgeSeconds: Infinity, withinTarget: false });
         uncovered.push(config.source);
       }
     });
@@ -195,9 +197,9 @@ export class BackupSimulator implements BackupBackend {
       item,
       passed: true,
       checks: [
-        { name: 'exists', passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
-        { name: 'recency', passed: true, detail: 'Backup is recent (4h old)', severity: 'info' },
-        { name: 'size_trend', passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
+        { name: CHECK_NAMES.EXISTS, passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
+        { name: CHECK_NAMES.RECENCY, passed: true, detail: 'Backup is recent (4h old)', severity: 'info' },
+        { name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
       ],
     }));
 
@@ -222,9 +224,9 @@ export class BackupSimulator implements BackupBackend {
       item,
       passed: true,
       checks: [
-        { name: 'exists', passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
-        { name: 'recency', passed: true, detail: 'Backup is recent (6h old)', severity: 'info' },
-        { name: 'size_trend', passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
+        { name: CHECK_NAMES.EXISTS, passed: true, detail: `Backup found at ${item.location}`, severity: 'info' },
+        { name: CHECK_NAMES.RECENCY, passed: true, detail: 'Backup is recent (6h old)', severity: 'info' },
+        { name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
       ],
     }));
   }
@@ -286,9 +288,9 @@ export class BackupSimulator implements BackupBackend {
         rpoEvals.push({
           source: config.source,
           providerKind: config.kind,
-          targetRpoSeconds: config.rpoSeconds ?? 86400,
+          targetRpoSeconds: config.rpoSeconds ?? DEFAULT_RPO_SECONDS,
           actualAgeSeconds: Math.round(ageSeconds),
-          withinTarget: ageSeconds <= (config.rpoSeconds ?? 86400),
+          withinTarget: ageSeconds <= (config.rpoSeconds ?? DEFAULT_RPO_SECONDS),
         });
       }
     }
@@ -362,11 +364,4 @@ export class BackupSimulator implements BackupBackend {
   }
 
   async close(): Promise<void> {}
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes >= GB) return `${(bytes / GB).toFixed(1)}GB`;
-  if (bytes >= MB) return `${(bytes / MB).toFixed(1)}MB`;
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${bytes}B`;
 }
