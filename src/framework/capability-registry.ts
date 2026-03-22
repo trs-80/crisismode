@@ -470,6 +470,43 @@ let CAPABILITIES: CapabilityDefinition[] = [
     manualFallback: 'Check log directory manually using du -sh /var/log/ and ls -lhS /var/log/.',
   },
 
+  // ── Backup Verification ──
+  {
+    id: 'backup.inventory.list',
+    actionKind: 'read',
+    description: 'Enumerate backup artifacts across configured providers.',
+    targetKinds: ['backup'],
+    manualFallback: 'List backup files manually by checking configured backup directories, cloud snapshots, or database dump locations.',
+  },
+  {
+    id: 'backup.verify.integrity',
+    actionKind: 'read',
+    description: 'Verify backup integrity, completeness, and consistency.',
+    targetKinds: ['backup'],
+    manualFallback: 'Verify backup integrity manually using archive validation tools (e.g. gzip -t, pg_restore --list, tar -tzf).',
+  },
+  {
+    id: 'backup.verify.restore_test',
+    actionKind: 'mutate',
+    description: 'Attempt a test restore of a backup to a scratch environment to validate restorability.',
+    targetKinds: ['backup'],
+    manualFallback: 'Perform a test restore manually to a non-production environment.',
+  },
+  {
+    id: 'backup.rpo.evaluate',
+    actionKind: 'read',
+    description: 'Evaluate backup recency against configured Recovery Point Objective (RPO) targets.',
+    targetKinds: ['backup'],
+    manualFallback: 'Check backup timestamps manually and compare against your RPO targets.',
+  },
+  {
+    id: 'backup.schedule.check',
+    actionKind: 'read',
+    description: 'Verify backup job scheduling and recent execution history.',
+    targetKinds: ['backup'],
+    manualFallback: 'Check backup schedule manually via cron, systemd timers, or your backup orchestrator.',
+  },
+
   // ── Stream (Flink) ──
   {
     id: 'stream.job.restart',

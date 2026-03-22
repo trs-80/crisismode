@@ -69,6 +69,14 @@ targets:
   #     host: api.example.com
   #     port: 443
 
+  # Backup verification (uncomment and configure backup locations):
+  # - name: db-backups
+  #   kind: backup
+  #   primary:
+  #     host: /var/backups/postgres   # comma-separated backup paths
+  #     port: 0
+  #     database: orders_db           # source system name
+
   # Note: DNS and disk health checks run automatically without configuration.
   # To customize which mount points or resolvers are checked, add explicit targets:
   # - name: custom-dns
