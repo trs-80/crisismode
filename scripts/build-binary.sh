@@ -31,6 +31,13 @@ echo "[build-binary] Node: ${NODE_VERSION}"
 
 PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
+
+# Normalize arch names for consistent binary naming
+case "$ARCH" in
+  aarch64) ARCH="arm64" ;;
+  x86_64)  ARCH="x64" ;;
+esac
+
 echo "[build-binary] Platform: ${PLATFORM}/${ARCH}"
 
 # ── Step 1: Type check ────────────────────────────────────────────────────────
