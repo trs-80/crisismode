@@ -44,7 +44,7 @@ jobs:
           - runner: macos-latest
             platform: darwin
             arch: arm64
-          - runner: macos-13
+          - runner: macos-15
             platform: darwin
             arch: x64
     runs-on: ${{ matrix.runner }}
