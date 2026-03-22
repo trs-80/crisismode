@@ -171,6 +171,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/agent/dns/` | DNS resolution failure recovery agent |
 | `src/agent/tls/` | TLS certificate health and expiry agent |
 | `src/agent/disk/` | Local disk exhaustion detection agent |
+| `src/agent/backup/` | Backup verification and DR readiness agent |
 | `src/config/builtin-agents.ts` | Built-in agent registration |
 | `src/config/agent-registry.ts` | Global agent registry |
 | `src/integrations/` | External integrations (GitHub, Sentry) |

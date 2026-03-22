@@ -56,6 +56,7 @@ const KIND_PREFIX: Record<string, string> = {
   dns: 'DNS',
   tls: 'TLS',
   disk: 'DISK',
+  backup: 'BKUP',
   plugin: 'PLUG',
 };
 

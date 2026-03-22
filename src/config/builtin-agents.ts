@@ -25,6 +25,7 @@ import { configDriftRegistration } from '../agent/config-drift/registration.js';
 import { dnsRecoveryRegistration } from '../agent/dns/registration.js';
 import { tlsRecoveryRegistration } from '../agent/tls/registration.js';
 import { diskExhaustionRegistration } from '../agent/disk/registration.js';
+import { backupVerificationRegistration } from '../agent/backup/registration.js';
 
 export const builtinAgents: AgentRegistration[] = [
   // Infrastructure agents
@@ -38,6 +39,7 @@ export const builtinAgents: AgentRegistration[] = [
   dnsRecoveryRegistration,
   tlsRecoveryRegistration,
   diskExhaustionRegistration,
+  backupVerificationRegistration,
   // AI application recovery agents
   deployRollbackRegistration,
   aiProviderRegistration,

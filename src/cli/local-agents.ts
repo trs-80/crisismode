@@ -38,7 +38,7 @@ export function mergeLocalTargets(userTargets: TargetConfig[]): TargetConfig[] {
 }
 
 /** Agent kinds that are available but require explicit configuration (not auto-injected). */
-const CONFIG_ONLY_KINDS = ['tls'];
+const CONFIG_ONLY_KINDS = ['tls', 'backup'];
 
 /**
  * Return a list of agent kinds the user hasn't configured yet.
