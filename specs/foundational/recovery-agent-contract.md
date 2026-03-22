@@ -3,7 +3,7 @@
 **Version:** 0.3.0-draft
 **Status:** Draft — Post-Implementation Reconciliation
 **Date:** 2026-03-15
-**Authors:** [Your Name]
+**Authors:** Aaron Johnson
 **Supersedes:** 0.2.1-draft
 
 ---
