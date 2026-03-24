@@ -52,6 +52,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
+    "@crisismode/agent-sdk": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
     "@langchain/core": "^1.1.32",
     "@langchain/langgraph": "^1.2.2",
