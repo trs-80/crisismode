@@ -116,6 +116,64 @@ See [QUICKSTART.md](QUICKSTART.md) for a full walkthrough.
 | Ceph | OSD down cascade, degraded PGs, pool near-full | Simulator ready |
 | Flink | Checkpoint failure cascade, TaskManager loss, backpressure | Simulator ready |
 
+## Building Agents
+
+CrisisMode is extensible through recovery agents. Two contribution tracks:
+
+### Markdown Playbooks (low-code)
+
+Write recovery procedures as Markdown files with YAML frontmatter:
+
+```markdown
+---
+name: "my-recovery-playbook"
+version: "1.0.0"
+description: "Recovery for my system"
+severity: elevated
+tags: [postgresql, replication]
+---
+
+### 1. Diagnose the issue
+- type: diagnosis_action
+- target: primary
+
+### 2. Notify the team
+- type: human_notification
+- channel: default
+```
+
+Validate and test:
+```sh
+crisismode playbook validate my-playbook.md
+crisismode playbook dry-run my-playbook.md
+```
+
+See [Playbook Authoring Guide](docs/playbook-authoring.md) for details.
+
+### TypeScript Agents
+
+For complex recovery logic, build agents with the SDK:
+
+```sh
+npm install @crisismode/agent-sdk
+```
+
+Implement the `RecoveryAgent` interface with `assessHealth()`, `diagnose()`, `plan()`, and `replan()` methods.
+
+See [Agent Development Guide](docs/agent-development.md) for a full tutorial.
+
+## Architecture
+
+CrisisMode uses a hub-and-spoke architecture:
+
+- **Spoke** (Layers 1-2): Runs close to target systems, handles execution and safety
+- **Hub** (Layers 3-4): Coordination, analytics, AI enrichment
+- **Agents**: Implement the `RecoveryAgent` interface for system-specific recovery
+- **Playbooks**: Markdown-based declarative recovery procedures
+- **Hooks**: Pluggable lifecycle events for cross-cutting concerns
+
+See [Architecture Overview](docs/architecture.md) for details.
+
 ## How It Works
 
 ```
@@ -173,7 +231,9 @@ See [docs/guides/creating-a-check-plugin.md](docs/guides/creating-a-check-plugin
 
 ## Contributing
 
-Recovery knowledge lives in agents and check plugins. Domain experts contribute what they know about how systems fail — the framework handles safety, validation, and execution. See [GETTING_STARTED.md](GETTING_STARTED.md) for the developer setup and the 6-file agent pattern.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build agents, write playbooks, and submit contributions.
+
+Recovery knowledge lives in agents, playbooks, and check plugins. Domain experts contribute what they know about how systems fail — the framework handles safety, validation, and execution. See [GETTING_STARTED.md](GETTING_STARTED.md) for the developer setup and the 6-file agent pattern.
 
 Every agent implements the `RecoveryAgent` interface (`src/agent/interface.ts`):
 

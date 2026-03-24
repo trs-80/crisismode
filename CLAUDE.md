@@ -27,6 +27,30 @@ CrisisMode is an AI crisis recovery framework with a hub-and-spoke architecture.
 - **AI Diagnosis** (`src/framework/ai-diagnosis-universal.ts`) — universal AI-powered diagnosis for any agent via Claude API
 - **ForensicRecorder** — immutable audit trail for every execution
 
+### Agent SDK (`packages/agent-sdk/`)
+- All public types are defined in `@crisismode/agent-sdk` and re-exported from `src/types/index.ts`
+- Zero runtime dependencies — types only
+- Source-of-truth for: RecoveryAgent, ExecutionBackend, AgentManifest, RecoveryPlan, step types, health types
+- The main package depends on `@crisismode/agent-sdk` via pnpm workspace
+
+### Playbook System (`src/framework/playbook/`)
+- `parser.ts` — Parses Markdown + YAML frontmatter into `ParsedPlaybook` objects
+- `runtime.ts` — Converts `ParsedPlaybook` to `RecoveryPlan` (same type the execution engine uses)
+- `discovery.ts` — Scans `~/.crisismode/playbooks/`, `./playbooks/`, `CRISISMODE_PLAYBOOK_PATH` for `.md` files
+- Playbooks use the same safety infrastructure as code-based agents (no shortcuts)
+- Format spec: `specs/foundational/playbook-format.md`
+
+### Hook System (`src/framework/hooks/`)
+- `types.ts` — 9 lifecycle hook points (plan:validate, step:before, step:after, etc.)
+- `registry.ts` — Priority-ordered, multi-subscriber hook registry with timeout protection
+- `builtin.ts` — Built-in hooks for logging and summary (priority 0-99, non-removable)
+- Engine integration: optional `HookRegistry` parameter in `LegacyExecutionEngine` constructor
+
+### Agent Plugin Registry (`src/framework/registry/`)
+- `types.ts` — `AgentPluginManifest` (crisismode-agent.json schema)
+- `local.ts` — Discovery from `~/.crisismode/agents/`, `./agents/`, `CRISISMODE_AGENT_PATH`, `node_modules/@crisismode/`
+- Manifest spec: `specs/foundational/registry-manifest.md`
+
 ### Execution modes
 - `dry-run` — reads from real systems, logs mutations without executing
 - `execute` — runs all operations including SQL mutations
@@ -54,6 +78,11 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `init` | Generate `crisismode.yaml` configuration |
 | `webhook` | Start webhook receiver for AlertManager |
 | `watch` | Continuous shadow observation |
+| `playbook validate` | Validate a playbook file |
+| `playbook list` | List discovered playbooks |
+| `playbook dry-run` | Preview compiled recovery plan |
+| `agent list` | List all registered agents |
+| `agent info` | Show agent details |
 
 ### Output Modes
 
@@ -185,6 +214,17 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `specs/deployment/operations.md` | Hub-and-spoke deployment architecture |
 | `specs/architecture/plugin-platform.md` | Plugin platform architecture guide |
 | `specs/architecture/operator-health-and-ai-services.md` | Operator summary, AI services, and site config spec |
+| `packages/agent-sdk/` | @crisismode/agent-sdk — public types package |
+| `src/framework/playbook/` | Markdown playbook parser, runtime, and discovery |
+| `src/framework/hooks/` | Pluggable lifecycle hook system |
+| `src/framework/registry/` | Agent plugin discovery and manifest handling |
+| `specs/foundational/playbook-format.md` | Playbook format specification |
+| `specs/foundational/registry-manifest.md` | Agent manifest specification |
+| `playbooks/examples/` | Reference playbook implementations |
+| `CONTRIBUTING.md` | Contribution guide (agents and playbooks) |
+| `docs/architecture.md` | System architecture overview |
+| `docs/agent-development.md` | Agent development tutorial |
+| `docs/playbook-authoring.md` | Playbook authoring guide |
 
 ## Commit Conventions
 

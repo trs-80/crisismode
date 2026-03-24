@@ -1,189 +1,176 @@
 # Contributing to CrisisMode
 
-Thank you for your interest in contributing to CrisisMode. This document explains how to get started, what kinds of contributions we are looking for, and the standards your code needs to meet.
+CrisisMode accepts two types of contributions:
 
-CrisisMode is licensed under [Apache 2.0](LICENSE). By contributing, you agree that your contributions will be licensed under the same terms.
+1. **Markdown playbooks** -- declarative recovery procedures that anyone can write
+2. **TypeScript agents** -- programmatic recovery logic for specific infrastructure
 
-## What to Contribute
+Both paths are welcome. Playbooks are the easiest way to start.
 
-Contributions fall into three tiers, ordered from lowest to highest barrier to entry.
+## Your first playbook
 
-### Tier 1: Check Plugins (no TypeScript required)
+Playbooks are Markdown files with YAML frontmatter and structured steps.
 
-Check plugins are standalone shell scripts that probe a specific system and report health status. They are the fastest way to expand CrisisMode's coverage.
+### 1. Create the file
 
-**Examples of checks we would welcome:**
+Create a `.md` file in `playbooks/`:
 
-- MySQL connection health and replication status
-- MongoDB replica set health
-- SSL/TLS certificate expiry
-- HTTP endpoint health and latency
-- NGINX/HAProxy upstream status
-- DNS resolution validation
-- NTP clock drift
+```markdown
+---
+name: restart-worker
+version: "1.0.0"
+description: Restart a stuck background worker
+severity: warning
+tags: [worker, restart]
+---
 
-Each check plugin is a single directory under `checks/` containing a `manifest.json` and an executable script. No TypeScript, no compilation, no framework knowledge required.
+### Check worker status
+- type: diagnosis_action
+- command: systemctl status worker
 
-See [Creating a Check Plugin](docs/guides/creating-a-check-plugin.md) for a step-by-step tutorial.
+### Notify on-call
+- type: human_notification
+- channel: slack
+- message: Worker is unresponsive, initiating restart
 
-### Tier 2: Recovery Agents (TypeScript)
+### Restart worker
+- type: system_action
+- command: systemctl restart worker
+- risk: routine
+- rollback: systemctl stop worker
+```
 
-Recovery agents are TypeScript modules that diagnose failures and build validated recovery plans for a specific system. Each agent follows a 6-file pattern and implements the `RecoveryAgent` interface.
+### 2. Validate and test
 
-**Examples of agents we would welcome:**
+```bash
+crisismode playbook validate playbooks/restart-worker.md
+crisismode playbook dry-run playbooks/restart-worker.md
+```
 
-- MySQL replication recovery
-- MongoDB sharding recovery
-- RabbitMQ queue recovery
-- Consul service mesh recovery
-- Vault seal/unseal recovery
-- ElastiCache failover
+### 3. Submit a PR
 
-Building an agent requires understanding the agent contract and the recovery plan structure, but not the framework internals. The framework handles validation, approval workflows, forensic recording, and execution.
+Open a pull request with your playbook. Include a description of what the playbook recovers and how you tested it.
 
-See [Creating a Recovery Agent](docs/guides/creating-a-recovery-agent.md) for a guide to the pattern.
+## Your first agent
 
-### Tier 3: Framework Improvements
+Agents are TypeScript modules that implement the `RecoveryAgent` interface.
 
-Core framework changes touch the execution engine, validator, CLI, safety layer, or coordination logic. These require understanding the full architecture.
+### 1. Install the SDK
 
-**Examples:**
+```bash
+npm install @crisismode/agent-sdk
+```
 
-- New recovery step types
-- Execution engine improvements
-- CLI command enhancements
-- Safety validator rules
-- Signal source integrations (DataDog, CloudWatch, PagerDuty)
+### 2. Implement the RecoveryAgent interface
 
-For framework changes, open an issue first to discuss the approach before writing code.
+Every agent lives in `src/agent/<system>/` with these files:
 
-## Development Setup
+| File | Purpose |
+|---|---|
+| `backend.ts` | Interface with async methods for system interaction |
+| `simulator.ts` | In-memory implementation for demos and tests |
+| `live-client.ts` | Real infrastructure client |
+| `manifest.ts` | Agent metadata: capabilities, risk profile, triggers |
+| `agent.ts` | `RecoveryAgent` implementation |
+| `registration.ts` | Lazy factory for the agent registry |
+
+### 3. Study the reference implementation
+
+`src/agent/pg-replication/` is the canonical example. It demonstrates:
+
+- Backend interface design with system-specific diagnosis methods
+- Simulator that enables testing without infrastructure
+- Manifest with target systems, version constraints, and trigger conditions
+- Dynamic plan building based on diagnosis findings
+
+### 4. Write tests using the simulator
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { YourSimulator } from './simulator.js';
+import { YourAgent } from './agent.js';
+
+describe('my-agent', () => {
+  it('diagnoses the issue', async () => {
+    const backend = new YourSimulator();
+    const agent = new YourAgent(backend);
+    const health = await agent.assessHealth();
+    expect(health.status).toBe('degraded');
+  });
+});
+```
+
+### 5. Add a plugin manifest
+
+Create `crisismode-agent.json` in your agent's root:
+
+```json
+{
+  "name": "my-agent",
+  "version": "1.0.0",
+  "description": "Recovers my-system from common failures",
+  "kind": "agent",
+  "entryPoint": "./agent.js",
+  "targetKinds": ["my-system"],
+  "crisismode": { "minVersion": "0.3.0" }
+}
+```
+
+### 6. Register the agent
+
+Create `registration.ts` with a lazy factory and register it in `src/config/builtin-agents.ts`.
+
+## Development setup
 
 ### Prerequisites
 
 - **Node.js** >= 18 (recommended: [fnm](https://github.com/Schniz/fnm) or [nvm](https://github.com/nvm-sh/nvm))
 - **pnpm** -- `npm install -g pnpm`
-- **Git**
 
-Optional (required by pre-commit hooks):
-
-- **shellcheck** -- `brew install shellcheck`
-- **gitleaks** -- `brew install gitleaks`
-
-### First-Time Setup
+### Getting started
 
 ```bash
 git clone git@github.com:trs-80/crisismode.git
 cd crisismode
 pnpm install
+pnpm test
+pnpm run typecheck
 ```
 
-### Verify Everything Works
+## Code standards
 
-```bash
-pnpm test          # Unit tests (vitest)
-pnpm run typecheck # TypeScript compilation check
-```
-
-For full development environment details including the containerized test stack, see [GETTING_STARTED.md](GETTING_STARTED.md).
-
-## Pull Request Workflow
-
-### Branch and Fork
-
-1. Fork the repository on GitHub.
-2. Create a branch from `main` using the naming convention:
-   - `feat/<scope>` -- new features
-   - `fix/<scope>` -- bug fixes
-   - `docs/<scope>` -- documentation changes
-
-### Commit Messages
-
-This project uses [Conventional Commits](https://www.conventionalcommits.org/). The commit-msg hook enforces this format.
-
-```
-type(scope): description
-```
-
-Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`, `perf`, `build`
-
-Examples:
-
-```
-feat(agent): add MySQL replication recovery agent
-fix(scan): handle timeout in check plugin executor
-docs(guides): add check plugin tutorial
-test(redis): add memory pressure scenario tests
-```
-
-### PR Requirements
-
-All pull requests must:
-
-- **Pass CI** -- typecheck and unit tests run automatically on every PR.
-- **Include tests** -- new code needs new tests. See the testing section below.
-- **Contain no secrets** -- no API keys, tokens, passwords, or credentials. The gitleaks pre-commit hook catches most of these, but review your changes manually as well.
-- **Follow code conventions** -- see below.
-
-### Review Process
-
-Maintainers review pull requests within a few business days. For larger changes, expect discussion about approach and design before approval. Framework-level changes may require multiple rounds of review.
-
-## Code Conventions
-
-These conventions are enforced by CI and pre-commit hooks. For the full list, see the "Code Conventions" and "What NOT to Do" sections in [CLAUDE.md](CLAUDE.md).
-
-- **TypeScript strict mode** with ESM modules (`"type": "module"`).
-- **Module resolution is NodeNext** -- all imports must use `.js` extensions, even for `.ts` source files.
-- **Named exports only** -- no default exports.
-- **Async by default** -- backend interfaces return `Promise<T>`.
-- **Type imports** -- use `import type { ... }` for type-only imports.
+- **TypeScript strict mode** with ESM modules (`"type": "module"`)
+- **`.js` extensions** on all imports (NodeNext module resolution)
+- **Named exports only** -- no default exports
+- **Async by default** -- backend interfaces return `Promise<T>`
+- **Type imports** -- use `import type { ... }` for type-only imports
 - **SPDX license header** on all new source files:
   ```typescript
   // SPDX-License-Identifier: Apache-2.0
   // Copyright 2026 CrisisMode Contributors
   ```
-- **No hardcoded IPs or hostnames** in agents -- discover infrastructure at diagnosis time.
-- **No new dependencies** without considering the spoke's 256Mi memory target.
-- **No secrets in code** -- credentials come from environment variables or Kubernetes Secrets at runtime.
+- **Conventional Commits** for all commit messages:
+  ```
+  feat(agent): add MySQL recovery agent
+  fix(engine): handle timeout in step execution
+  test(redis): add memory pressure scenario tests
+  ```
 
-## Safety Rules
+## Testing requirements
 
-CrisisMode operates during crises when wrong actions are most costly. The safety rules exist to prevent agents from causing more harm than they fix.
+- All new code needs tests
+- Run `pnpm test` before submitting
+- Run `pnpm run typecheck` to verify type safety
+- Build the simulator first -- it enables testing without real infrastructure
+- Use the agent test harness (`src/framework/agent-test-harness.ts`) for standardized agent testing
+- Follow existing test patterns in `src/__tests__/`
 
-- **Agents propose, the framework disposes.** Agents build recovery plans. The framework validates, gates, and executes them.
-- **State preservation is mandatory.** Every `system_action` at `elevated` risk or higher must include `statePreservation.before` captures.
-- **Notification is mandatory.** Every plan containing `elevated` or higher risk steps must include a `human_notification` step.
-- **Rollback strategies are mandatory.** Every `RecoveryPlan` must declare a `rollbackStrategy`.
-- **Blast radius must be declared.** Every `system_action` must specify which components are affected.
-- **Step IDs must be unique** within a plan.
-- **No nested conditionals.** Conditional steps cannot contain other conditional steps.
+## What NOT to do
 
-These rules are enforced by the validator (`src/framework/validator.ts`). Violations cause plan rejection before any execution occurs.
-
-## Testing Requirements
-
-### Check plugins
-
-- Test your check script manually and include the test commands and expected output in the PR description.
-- If your check requires a specific system to be running, document how to set it up.
-
-### Recovery agents
-
-- **Unit tests** for the agent's `assessHealth`, `diagnose`, `plan`, and `replan` methods using the simulator backend.
-- **Simulator** that models both healthy and degraded states so the agent can be exercised without real infrastructure.
-- Follow the existing test patterns in `src/__tests__/`.
-- `pnpm test` and `pnpm typecheck` must pass.
-
-### Framework changes
-
-- Unit tests are required for all framework changes.
-- If modifying the validator, add test cases for both valid and invalid plans.
-- If modifying the execution engine, test both dry-run and execute paths.
-- `pnpm test` and `pnpm typecheck` must pass.
-
-## Getting Help
-
-- **Issues** -- open an issue on GitHub for bugs, feature requests, or questions.
-- **Discussions** -- for design discussions or questions about approach, open an issue before writing code.
-- **Existing code** -- the Redis agent (`src/agent/redis/`) is a good reference for the full agent pattern, and `checks/check-disk-usage/` is the reference check plugin.
+- **Don't weaken safety layers** -- every `system_action` at `elevated` risk or higher must have state preservation captures
+- **Don't add unnecessary dependencies** -- spokes target 256Mi memory; every dependency counts
+- **Don't hardcode IPs or hostnames** -- discover infrastructure at diagnosis time
+- **Don't store secrets in code** -- credentials come from environment variables or K8s Secrets
+- **Don't modify hub code** -- hub coordination is managed separately
+- **Don't skip pre-commit hooks** -- they enforce safety invariants
+- **Don't create agents with `maxRiskLevel: 'critical'`** without explicit discussion

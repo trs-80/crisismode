@@ -42,6 +42,11 @@ const HELP = `
     crisismode registry list               List available check plugins
     crisismode registry search <query>     Search check plugins
     crisismode registry install <name>     Install a check plugin
+    crisismode playbook list               List discovered playbooks
+    crisismode playbook validate <path>    Validate a playbook file
+    crisismode playbook dry-run <path>     Preview compiled recovery plan
+    crisismode agent list                  List all registered agents
+    crisismode agent info <name>           Show details for a specific agent
 
   Options:
     --agent <name>      Scaffold a new check plugin (init only)
@@ -224,6 +229,36 @@ async function main(): Promise<void> {
         args: positionals.slice(1),
         local: values.local as boolean,
         force: values.force as boolean,
+        json: values.json as boolean,
+      });
+      break;
+    }
+
+    case 'playbook': {
+      const sub = positionals[0] as 'list' | 'validate' | 'dry-run' | undefined;
+      if (!sub || !['list', 'validate', 'dry-run'].includes(sub)) {
+        console.error('Usage: crisismode playbook list|validate|dry-run');
+        process.exit(1);
+      }
+      const { runPlaybook } = await import('./commands/playbook.js');
+      await runPlaybook({
+        subcommand: sub,
+        args: positionals.slice(1),
+        json: values.json as boolean,
+      });
+      break;
+    }
+
+    case 'agent': {
+      const sub = positionals[0] as 'list' | 'info' | undefined;
+      if (!sub || !['list', 'info'].includes(sub)) {
+        console.error('Usage: crisismode agent list|info <name>');
+        process.exit(1);
+      }
+      const { runAgent } = await import('./commands/agent.js');
+      await runAgent({
+        subcommand: sub,
+        args: positionals.slice(1),
         json: values.json as boolean,
       });
       break;
