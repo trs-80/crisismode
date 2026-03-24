@@ -53,89 +53,13 @@ Open a pull request with your playbook. Include a description of what the playbo
 
 ## Your first agent
 
-Agents are TypeScript modules that implement the `RecoveryAgent` interface.
+Agents are TypeScript modules that implement the `RecoveryAgent` interface using a 6-file pattern (`backend.ts`, `simulator.ts`, `live-client.ts`, `manifest.ts`, `agent.ts`, `registration.ts`).
 
-### 1. Install the SDK
-
-```bash
-npm install @crisismode/agent-sdk
-```
-
-### 2. Implement the RecoveryAgent interface
-
-Every agent lives in `src/agent/<system>/` with these files:
-
-| File | Purpose |
-|---|---|
-| `backend.ts` | Interface with async methods for system interaction |
-| `simulator.ts` | In-memory implementation for demos and tests |
-| `live-client.ts` | Real infrastructure client |
-| `manifest.ts` | Agent metadata: capabilities, risk profile, triggers |
-| `agent.ts` | `RecoveryAgent` implementation |
-| `registration.ts` | Lazy factory for the agent registry |
-
-### 3. Study the reference implementation
-
-`src/agent/pg-replication/` is the canonical example. It demonstrates:
-
-- Backend interface design with system-specific diagnosis methods
-- Simulator that enables testing without infrastructure
-- Manifest with target systems, version constraints, and trigger conditions
-- Dynamic plan building based on diagnosis findings
-
-### 4. Write tests using the simulator
-
-```typescript
-import { describe, it, expect } from 'vitest';
-import { YourSimulator } from './simulator.js';
-import { YourAgent } from './agent.js';
-
-describe('my-agent', () => {
-  it('diagnoses the issue', async () => {
-    const backend = new YourSimulator();
-    const agent = new YourAgent(backend);
-    const health = await agent.assessHealth();
-    expect(health.status).toBe('degraded');
-  });
-});
-```
-
-### 5. Add a plugin manifest
-
-Create `crisismode-agent.json` in your agent's root:
-
-```json
-{
-  "name": "my-agent",
-  "version": "1.0.0",
-  "description": "Recovers my-system from common failures",
-  "kind": "agent",
-  "entryPoint": "./agent.js",
-  "targetKinds": ["my-system"],
-  "crisismode": { "minVersion": "0.3.0" }
-}
-```
-
-### 6. Register the agent
-
-Create `registration.ts` with a lazy factory and register it in `src/config/builtin-agents.ts`.
+See the [Agent Development Guide](docs/guides/creating-a-recovery-agent.md) for a complete walkthrough. The PostgreSQL agent at `src/agent/pg-replication/` is the canonical reference implementation.
 
 ## Development setup
 
-### Prerequisites
-
-- **Node.js** >= 18 (recommended: [fnm](https://github.com/Schniz/fnm) or [nvm](https://github.com/nvm-sh/nvm))
-- **pnpm** -- `npm install -g pnpm`
-
-### Getting started
-
-```bash
-git clone git@github.com:trs-80/crisismode.git
-cd crisismode
-pnpm install
-pnpm test
-pnpm run typecheck
-```
+See [GETTING_STARTED.md](GETTING_STARTED.md) for prerequisites, installation, test environment, and running against real infrastructure.
 
 ## Code standards
 

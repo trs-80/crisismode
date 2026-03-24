@@ -442,3 +442,35 @@ Common validation failures when developing a new agent:
 - Omitting the `rollbackStrategy` from the `RecoveryPlan`.
 - Duplicate step IDs (especially when building steps in a loop).
 - Using a risk level higher than what the manifest allows.
+
+## Step 7: Distribute as a Plugin
+
+To distribute your agent as a standalone package, create a `crisismode-agent.json` manifest at the package root:
+
+```json
+{
+  "name": "my-system-recovery",
+  "version": "1.0.0",
+  "description": "Recovers MySystem from common failures",
+  "kind": "agent",
+  "entryPoint": "./dist/agent.js",
+  "targetKinds": ["my-system"],
+  "crisismode": { "minVersion": "0.3.0" }
+}
+```
+
+Users install your agent to `~/.crisismode/agents/` and CrisisMode discovers it automatically.
+
+See `src/framework/registry/types.ts` for the full `AgentPluginManifest` schema.
+
+## Reference Implementation
+
+The PostgreSQL replication agent at `src/agent/pg-replication/` is the canonical reference. It demonstrates:
+
+- A full backend interface with system-specific diagnosis methods
+- A simulator with three state transitions (degraded, recovering, recovered)
+- Dynamic plan generation based on diagnosis findings
+- Replanning with slot repair when conditions change mid-flight
+- All seven step types used in a real recovery scenario
+
+Start there when you need a working example of any pattern described in this guide.

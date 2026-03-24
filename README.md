@@ -160,21 +160,9 @@ npm install @crisismode/agent-sdk
 
 Implement the `RecoveryAgent` interface with `assessHealth()`, `diagnose()`, `plan()`, and `replan()` methods.
 
-See [Agent Development Guide](docs/agent-development.md) for a full tutorial.
+See the [Agent Development Guide](docs/guides/creating-a-recovery-agent.md) for a full tutorial.
 
 ## Architecture
-
-CrisisMode uses a hub-and-spoke architecture:
-
-- **Spoke** (Layers 1-2): Runs close to target systems, handles execution and safety
-- **Hub** (Layers 3-4): Coordination, analytics, AI enrichment
-- **Agents**: Implement the `RecoveryAgent` interface for system-specific recovery
-- **Playbooks**: Markdown-based declarative recovery procedures
-- **Hooks**: Pluggable lifecycle events for cross-cutting concerns
-
-See [Architecture Overview](docs/architecture.md) for details.
-
-## How It Works
 
 ```
 Alert Source (Prometheus) → Spoke Webhook Receiver
@@ -190,7 +178,9 @@ Alert Source (Prometheus) → Spoke Webhook Receiver
                            Forensic Record → Hub API
 ```
 
-CrisisMode uses a hub-and-spoke architecture: spokes run close to target systems and handle execution, while the hub provides coordination, analytics, and management. Recovery actions progress through five escalation levels: observe, diagnose, suggest, repair-safe, and repair-destructive.
+Hub-and-spoke topology: **spokes** (Layers 1-2) run close to target systems and handle execution and safety; the **hub** (Layers 3-4) provides coordination, analytics, and AI enrichment. Recovery actions progress through five escalation levels: observe, diagnose, suggest, repair-safe, and repair-destructive.
+
+See [Architecture Overview](docs/architecture.md) for details.
 
 ## Safety Model
 
@@ -231,20 +221,9 @@ See [docs/guides/creating-a-check-plugin.md](docs/guides/creating-a-check-plugin
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build agents, write playbooks, and submit contributions.
+Domain experts contribute recovery knowledge as agents, playbooks, and check plugins — the framework handles safety, validation, and execution.
 
-Recovery knowledge lives in agents, playbooks, and check plugins. Domain experts contribute what they know about how systems fail — the framework handles safety, validation, and execution. See [GETTING_STARTED.md](GETTING_STARTED.md) for the developer setup and the 6-file agent pattern.
-
-Every agent implements the `RecoveryAgent` interface (`src/agent/interface.ts`):
-
-```typescript
-interface RecoveryAgent {
-  manifest: AgentManifest;
-  diagnose(context: AgentContext): Promise<DiagnosisResult>;
-  plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan>;
-  replan(context: AgentContext, diagnosis: DiagnosisResult, state: ExecutionState): Promise<ReplanResult>;
-}
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflows and [GETTING_STARTED.md](GETTING_STARTED.md) for developer setup.
 
 ## Deployment
 

@@ -12,7 +12,7 @@ A playbook is a `.md` file with two parts:
 Playbooks are discovered from three locations:
 - `~/.crisismode/playbooks/` (user)
 - `./playbooks/` (project)
-- `$CRISISMODE_PLAYBOOKS` environment variable
+- `$CRISISMODE_PLAYBOOK_PATH` environment variable
 
 ## Frontmatter Reference
 

@@ -223,7 +223,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `playbooks/examples/` | Reference playbook implementations |
 | `CONTRIBUTING.md` | Contribution guide (agents and playbooks) |
 | `docs/architecture.md` | System architecture overview |
-| `docs/agent-development.md` | Agent development tutorial |
+| `docs/guides/creating-a-recovery-agent.md` | Agent development tutorial |
 | `docs/playbook-authoring.md` | Playbook authoring guide |
 
 ## Commit Conventions
