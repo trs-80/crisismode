@@ -18,6 +18,7 @@ import { resolveStepProviders } from './provider-registry.js';
 import { derivePlanMaxRiskLevel, getMaxRiskIndex } from './risk.js';
 import { collectExecutionContexts } from './step-walker.js';
 import { makeStepResult } from './step-result.js';
+import type { HookRegistry } from './hooks/registry.js';
 
 export type { ExecutionMode } from '../types/common.js';
 
@@ -56,6 +57,7 @@ export class LegacyExecutionEngine {
     backend: ExecutionBackend,
     callbacks: EngineCallbacks = {},
     mode: ExecutionMode = 'dry-run',
+    private hooks?: HookRegistry,
   ) {
     this.recorder = recorder;
     this.callbacks = callbacks;
@@ -77,10 +79,40 @@ export class LegacyExecutionEngine {
   async executePlan(plan: RecoveryPlan, diagnosis: DiagnosisResult): Promise<StepResult[]> {
     const results: StepResult[] = [];
 
+    if (this.hooks) {
+      const validateResult = await this.hooks.fire('plan:validate', {
+        plan,
+        manifest: this.manifest,
+        agentContext: this.context,
+        mode: this.mode,
+      });
+      if (validateResult.abort) {
+        return [];
+      }
+      await this.hooks.fire('plan:validated', { plan, manifest: this.manifest });
+    }
+
     for (let i = 0; i < plan.steps.length; i++) {
       const step = plan.steps[i];
       this.executionState.currentStepIndex = i;
       this.callbacks.onStepStart?.(step, i);
+
+      if (this.hooks) {
+        const beforeResult = await this.hooks.fire('step:before', {
+          step,
+          plan,
+          manifest: this.manifest,
+          agentContext: this.context,
+          executionState: this.executionState,
+          mode: this.mode,
+        });
+        if (beforeResult.abort) {
+          results.push(makeStepResult(step, 'failed', new Date().toISOString(), Date.now(), {
+            error: `Aborted by hook: ${beforeResult.reason}`,
+          }));
+          break;
+        }
+      }
 
       const result = await this.executeStep(step, plan, diagnosis);
       results.push(result);
@@ -88,6 +120,14 @@ export class LegacyExecutionEngine {
       this.executionState.completedSteps.push(result);
 
       this.callbacks.onStepComplete?.(step, result);
+
+      if (this.hooks) {
+        if (result.status === 'failed') {
+          await this.hooks.fire('step:failed', { step, stepResult: result, plan });
+        } else {
+          await this.hooks.fire('step:after', { step, stepResult: result, plan });
+        }
+      }
 
       if (result.status === 'failed' || (step.type === 'human_approval' && result.status === 'skipped')) {
         this.recorder.addLogEntry({
@@ -99,6 +139,14 @@ export class LegacyExecutionEngine {
         });
         break;
       }
+    }
+
+    if (this.hooks) {
+      await this.hooks.fire('recovery:complete', {
+        plan,
+        executionState: this.executionState,
+        manifest: this.manifest,
+      });
     }
 
     return results;
@@ -249,6 +297,9 @@ export class LegacyExecutionEngine {
     }
 
     // Phase 3: Before captures
+    if (this.hooks) {
+      await this.hooks.fire('capture:before', { step, manifest: this.manifest, mode: this.mode });
+    }
     const beforeCaptures = step.statePreservation.before.map((capture) => {
       const result = executeCapture(capture);
       this.recorder.addCapture(result);
@@ -266,6 +317,9 @@ export class LegacyExecutionEngine {
     }
 
     // Phase 4: Preconditions
+    if (this.hooks) {
+      await this.hooks.fire('precondition:check', { step, manifest: this.manifest, mode: this.mode });
+    }
     if (step.preConditions) {
       for (const pre of step.preConditions) {
         const passed = await this.backend.evaluateCheck(pre.check);
@@ -369,6 +423,10 @@ export class LegacyExecutionEngine {
     );
 
     this.callbacks.onApprovalRequest?.(step);
+
+    if (this.hooks) {
+      await this.hooks.fire('approval:request', { step, plan, manifest: this.manifest, mode: this.mode });
+    }
 
     let result: string;
     if (autoApprove) {
