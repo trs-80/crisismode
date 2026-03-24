@@ -146,7 +146,7 @@ Markdown + YAML frontmatter
 Playbooks are discovered from three locations:
 - `~/.crisismode/playbooks/` (user)
 - `./playbooks/` (project)
-- `$CRISISMODE_PLAYBOOKS` (environment variable)
+- `$CRISISMODE_PLAYBOOK_PATH` (environment variable)
 
 See [Playbook Authoring Guide](playbook-authoring.md) for the full format reference.
 
@@ -193,18 +193,8 @@ Two execution modes control whether mutations actually run:
 - **`dry-run`** (default) — Reads from real systems, logs what mutations would happen, but does not execute them. All safety checks still run. State transitions are simulated.
 - **`execute`** — Runs all operations including system mutations. Requires explicit opt-in via `--execute` flag.
 
-## Key Source Files
+## Further Reading
 
-| File | Purpose |
-|---|---|
-| `src/agent/interface.ts` | RecoveryAgent contract |
-| `src/framework/engine.ts` | LegacyExecutionEngine |
-| `src/framework/graph-engine.ts` | RecoveryGraphEngine (LangGraph) |
-| `src/framework/backend.ts` | ExecutionBackend contract |
-| `src/framework/hooks/` | Hook system (registry, types, built-in hooks) |
-| `src/framework/playbook/` | Playbook parser, runtime, discovery |
-| `src/types/step-types.ts` | All 7 recovery step types |
-| `src/types/manifest.ts` | AgentManifest type definition |
-| `src/types/recovery-plan.ts` | RecoveryPlan structure |
-| `specs/foundational/recovery-agent-contract.md` | Authoritative specification |
-| `specs/deployment/operations.md` | Hub-and-spoke deployment details |
+- [Recovery Agent Contract](../specs/foundational/recovery-agent-contract.md) — authoritative specification
+- [Deployment & Operations](../specs/deployment/operations.md) — hub-and-spoke deployment details
+- [Agent Development Guide](guides/creating-a-recovery-agent.md) — building a new agent from scratch
