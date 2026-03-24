@@ -45,6 +45,8 @@ const HELP = `
     crisismode playbook list               List discovered playbooks
     crisismode playbook validate <path>    Validate a playbook file
     crisismode playbook dry-run <path>     Preview compiled recovery plan
+    crisismode agent list                  List all registered agents
+    crisismode agent info <name>           Show details for a specific agent
 
   Options:
     --agent <name>      Scaffold a new check plugin (init only)
@@ -240,6 +242,21 @@ async function main(): Promise<void> {
       }
       const { runPlaybook } = await import('./commands/playbook.js');
       await runPlaybook({
+        subcommand: sub,
+        args: positionals.slice(1),
+        json: values.json as boolean,
+      });
+      break;
+    }
+
+    case 'agent': {
+      const sub = positionals[0] as 'list' | 'info' | undefined;
+      if (!sub || !['list', 'info'].includes(sub)) {
+        console.error('Usage: crisismode agent list|info <name>');
+        process.exit(1);
+      }
+      const { runAgent } = await import('./commands/agent.js');
+      await runAgent({
         subcommand: sub,
         args: positionals.slice(1),
         json: values.json as boolean,
