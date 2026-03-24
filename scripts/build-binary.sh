@@ -47,7 +47,7 @@ echo "[build-binary] Host: ${PLATFORM}/${ARCH}"
 # ── Step 1: Type check ────────────────────────────────────────────────────────
 
 echo "[build-binary] Running type check..."
-pnpm exec tsc --noEmit
+pnpm typecheck
 
 # ── Step 2: Build binaries ────────────────────────────────────────────────────
 
