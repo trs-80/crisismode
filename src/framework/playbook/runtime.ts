@@ -96,7 +96,7 @@ function convertStep(playbook: ParsedPlaybook, step: PlaybookStep): RecoveryStep
           ? {
               directComponents: [step.target ?? 'primary'],
               indirectComponents: [],
-              maxImpact: `max_downtime_seconds: ${step.blastRadius.max_downtime_seconds ?? 0}`,
+              maxImpact: `max_downtime_seconds: ${step.blastRadius.maxDowntimeSeconds ?? 0}`,
               cascadeRisk: 'low',
             }
           : {

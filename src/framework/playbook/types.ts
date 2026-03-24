@@ -18,9 +18,9 @@ export interface PlaybookRequirements {
 }
 
 export interface PlaybookBlastRadius {
-  max_affected_rows?: number;
-  max_downtime_seconds?: number;
-  requires_maintenance_window?: boolean;
+  maxAffectedRows?: number;
+  maxDowntimeSeconds?: number;
+  requiresMaintenanceWindow?: boolean;
 }
 
 export interface PlaybookFrontmatter {

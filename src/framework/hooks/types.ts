@@ -2,7 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
-import type { RecoveryStep, SystemActionStep } from '../../types/step-types.js';
+import type { RecoveryStep } from '../../types/step-types.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { ExecutionState, StepResult } from '../../types/execution-state.js';

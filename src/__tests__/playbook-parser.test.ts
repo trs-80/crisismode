@@ -140,9 +140,9 @@ Execute a risky operation.
     const result = parsePlaybook(markdown);
 
     expect(result.steps[0].blastRadius).toEqual({
-      max_downtime_seconds: 30,
-      max_affected_rows: 1000,
-      requires_maintenance_window: true,
+      maxDowntimeSeconds: 30,
+      maxAffectedRows: 1000,
+      requiresMaintenanceWindow: true,
     });
   });
 

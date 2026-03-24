@@ -19,6 +19,7 @@ import type {
   DiscoveredAgentPlugin,
   AgentPluginDiscoveryResult,
 } from './types.js';
+import { dirExists } from '../fs-utils.js';
 
 const MANIFEST_FILENAME = 'crisismode-agent.json';
 
@@ -176,13 +177,4 @@ async function readManifest(pluginDir: string): Promise<AgentPluginManifest> {
       sdkVersion: typeof cm.sdkVersion === 'string' ? cm.sdkVersion : undefined,
     },
   };
-}
-
-async function dirExists(path: string): Promise<boolean> {
-  try {
-    const stats = await stat(path);
-    return stats.isDirectory();
-  } catch {
-    return false;
-  }
 }

@@ -133,7 +133,7 @@ export function validatePlaybookFrontmatter(frontmatter: unknown): PlaybookValid
 
 // --- Internal helpers ---
 
-function extractFrontmatter(markdown: string): { frontmatterRaw: string; body: string } {
+export function extractFrontmatter(markdown: string): { frontmatterRaw: string; body: string } {
   const lines = markdown.split('\n');
 
   if (lines[0]?.trim() !== '---') {
@@ -216,8 +216,7 @@ function parseSteps(body: string): PlaybookStep[] {
 }
 
 function parseStepSection(content: string, position: number, title: string): PlaybookStep {
-  const codeBlocks = extractCodeBlocks(content);
-  const contentWithoutCode = removeCodeBlocks(content);
+  const { codeBlocks, contentWithoutCode } = processCodeBlocks(content);
   const { properties, bodyLines } = parseProperties(contentWithoutCode);
 
   const step: PlaybookStep = {
@@ -275,11 +274,11 @@ function parseProperties(content: string): {
           const subValue = subMatch[2].trim();
 
           if (subKey === 'max_affected_rows') {
-            blastRadius.max_affected_rows = parseInt(subValue, 10);
+            blastRadius.maxAffectedRows = parseInt(subValue, 10);
           } else if (subKey === 'max_downtime_seconds') {
-            blastRadius.max_downtime_seconds = parseInt(subValue, 10);
+            blastRadius.maxDowntimeSeconds = parseInt(subValue, 10);
           } else if (subKey === 'requires_maintenance_window') {
-            blastRadius.requires_maintenance_window = subValue === 'true';
+            blastRadius.requiresMaintenanceWindow = subValue === 'true';
           }
           i++;
         }
@@ -299,23 +298,13 @@ function parseProperties(content: string): {
   return { properties, bodyLines };
 }
 
-function extractCodeBlocks(content: string): PlaybookCodeBlock[] {
-  const blocks: PlaybookCodeBlock[] = [];
-  const pattern = /```(\w*)\n([\s\S]*?)```/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(content)) !== null) {
-    blocks.push({
-      lang: match[1] || '',
-      content: match[2].trimEnd(),
-    });
-  }
-
-  return blocks;
-}
-
-function removeCodeBlocks(content: string): string {
-  return content.replace(/```\w*\n[\s\S]*?```/g, '').trim();
+function processCodeBlocks(content: string): { codeBlocks: PlaybookCodeBlock[]; contentWithoutCode: string } {
+  const codeBlocks: PlaybookCodeBlock[] = [];
+  const contentWithoutCode = content.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, lang: string, code: string) => {
+    codeBlocks.push({ lang: lang || '', content: code.trim() });
+    return '';
+  });
+  return { codeBlocks, contentWithoutCode };
 }
 
 function stripQuotes(value: string): string {
@@ -329,10 +318,6 @@ function stripQuotes(value: string): string {
 }
 
 function parseRollback(body: string): string | undefined {
-  const rollbackMatch = body.match(/^## Rollback\s*\n([\s\S]*?)(?=^## |\Z)/m);
-  if (!rollbackMatch) return undefined;
-
-  // Capture everything after the ## Rollback heading until the next ## heading or end
   const startIndex = body.search(/^## Rollback/m);
   if (startIndex === -1) return undefined;
 
@@ -341,7 +326,6 @@ function parseRollback(body: string): string | undefined {
   if (headingEnd === -1) return undefined;
 
   const remainder = afterHeading.slice(headingEnd + 1);
-  // Find the next ## heading (not ###)
   const nextSectionMatch = remainder.search(/^## /m);
   const rollbackContent =
     nextSectionMatch !== -1 ? remainder.slice(0, nextSectionMatch) : remainder;

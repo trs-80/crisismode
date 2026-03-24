@@ -18,6 +18,7 @@ import { join, resolve, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { constants } from 'node:fs';
 import type { CheckPluginManifest } from './check-plugin.js';
+import { dirExists } from './fs-utils.js';
 
 // ── Types ──
 
@@ -208,14 +209,5 @@ async function validateExecutable(path: string): Promise<void> {
     await access(path, constants.X_OK);
   } catch {
     throw new Error(`Plugin executable not found or not executable: ${path}`);
-  }
-}
-
-async function dirExists(path: string): Promise<boolean> {
-  try {
-    const stats = await stat(path);
-    return stats.isDirectory();
-  } catch {
-    return false;
   }
 }

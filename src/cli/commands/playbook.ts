@@ -165,7 +165,7 @@ async function runDryRun(opts: PlaybookOptions): Promise<void> {
     printInfo(`Compiled plan: "${plan.metadata.planId}" (${plan.steps.length} step(s))\n`);
 
     for (const step of plan.steps) {
-      const riskLabel = 'riskLevel' in step ? ` [${(step as unknown as Record<string, unknown>).riskLevel}]` : '';
+      const riskLabel = step.type === 'system_action' ? ` [${step.riskLevel}]` : '';
       console.log(`  ${step.stepId}  ${step.type}${riskLabel}`);
       console.log(`    ${step.name}`);
       console.log('');

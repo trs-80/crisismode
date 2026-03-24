@@ -79,7 +79,7 @@ describe('playbookToPlan', () => {
           risk: 'elevated',
           precondition: 'Service is running',
           success: 'Service restarted',
-          blastRadius: { max_downtime_seconds: 60, max_affected_rows: 500 },
+          blastRadius: { maxDowntimeSeconds: 60, maxAffectedRows: 500 },
         }),
       ],
     });

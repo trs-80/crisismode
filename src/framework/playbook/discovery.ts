@@ -18,7 +18,8 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { parse as parseYaml } from 'yaml';
 import type { PlaybookFrontmatter, DiscoveredPlaybook, PlaybookDiscoveryResult } from './types.js';
-import { validatePlaybookFrontmatter } from './parser.js';
+import { extractFrontmatter, validatePlaybookFrontmatter } from './parser.js';
+import { dirExists } from '../fs-utils.js';
 
 // ── Discovery ──
 
@@ -87,9 +88,19 @@ async function scanDirectory(
 
     try {
       const content = await readFile(filePath, 'utf-8');
-      const frontmatterObj = extractFrontmatter(content);
 
-      if (frontmatterObj === null) {
+      let frontmatterRaw: string;
+      try {
+        ({ frontmatterRaw } = extractFrontmatter(content));
+      } catch {
+        warnings.push({ path: filePath, reason: 'Missing or invalid YAML frontmatter' });
+        continue;
+      }
+
+      let frontmatterObj: unknown;
+      try {
+        frontmatterObj = parseYaml(frontmatterRaw);
+      } catch {
         warnings.push({ path: filePath, reason: 'Missing or invalid YAML frontmatter' });
         continue;
       }
@@ -101,7 +112,21 @@ async function scanDirectory(
         continue;
       }
 
-      const frontmatter = frontmatterObj as unknown as PlaybookFrontmatter;
+      const fm = frontmatterObj as Record<string, unknown>;
+      const frontmatter: PlaybookFrontmatter = {
+        name: fm.name as string,
+        version: fm.version as string,
+        description: fm.description as string,
+        ...(fm.agent !== undefined && { agent: fm.agent as string }),
+        ...(fm.provider !== undefined && { provider: fm.provider as string }),
+        ...(fm.severity !== undefined && { severity: fm.severity as PlaybookFrontmatter['severity'] }),
+        ...(fm.triggers !== undefined && { triggers: fm.triggers as PlaybookFrontmatter['triggers'] }),
+        ...(fm.requires !== undefined && { requires: fm.requires as PlaybookFrontmatter['requires'] }),
+        ...(fm.tags !== undefined && { tags: fm.tags as string[] }),
+        ...(fm.author !== undefined && { author: fm.author as string }),
+        ...(fm.estimated_duration !== undefined && { estimatedDuration: fm.estimated_duration as string }),
+        ...(fm.estimatedDuration !== undefined && { estimatedDuration: fm.estimatedDuration as string }),
+      };
 
       // Deduplicate by name (later sources shadow earlier ones)
       if (seen.has(frontmatter.name)) {
@@ -122,37 +147,3 @@ async function scanDirectory(
   }
 }
 
-function extractFrontmatter(content: string): Record<string, unknown> | null {
-  const lines = content.split('\n');
-
-  if (lines[0]?.trim() !== '---') return null;
-
-  let closingIndex = -1;
-  for (let i = 1; i < lines.length; i++) {
-    if (lines[i]?.trim() === '---') {
-      closingIndex = i;
-      break;
-    }
-  }
-
-  if (closingIndex === -1) return null;
-
-  const yamlStr = lines.slice(1, closingIndex).join('\n');
-
-  try {
-    const parsed = parseYaml(yamlStr);
-    if (parsed == null || typeof parsed !== 'object') return null;
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-async function dirExists(path: string): Promise<boolean> {
-  try {
-    const stats = await stat(path);
-    return stats.isDirectory();
-  } catch {
-    return false;
-  }
-}
