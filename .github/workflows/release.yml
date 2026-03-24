@@ -108,25 +108,12 @@ jobs:
 
           # Prepend install instructions to the generated notes
           EXISTING_NOTES=$(gh release view "${{ github.ref_name }}" --json body --jq .body)
-          cat > /tmp/release-notes.md << 'NOTES'
-## Install
-
-**Linux:**
-```bash
-curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-linux-x64 -o crisismode
-chmod +x crisismode
-./crisismode scan
-```
-
-**macOS:**
-```bash
-curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-darwin-arm64 -o crisismode
-chmod +x crisismode
-xattr -cr crisismode   # remove macOS quarantine flag
-./crisismode scan
-```
-
----
-NOTES
+          printf '%s\n' '## Install' '' '**Linux:**' '```bash' \
+            'curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-linux-x64 -o crisismode' \
+            'chmod +x crisismode' './crisismode scan' '```' '' \
+            '**macOS:**' '```bash' \
+            'curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-darwin-arm64 -o crisismode' \
+            'chmod +x crisismode' 'xattr -cr crisismode   # remove macOS quarantine flag' \
+            './crisismode scan' '```' '' '---' > /tmp/release-notes.md
           printf '%s' "$EXISTING_NOTES" >> /tmp/release-notes.md
           gh release edit "${{ github.ref_name }}" --notes-file /tmp/release-notes.md
