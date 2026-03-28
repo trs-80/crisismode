@@ -46,6 +46,7 @@ export const kafkaRecoveryManifest: AgentManifest = {
       },
     ],
     failureScenarios: [
+      'broker_down',
       'partition_leader_imbalance',
       'under_replicated_partitions',
       'consumer_lag_cascade',
@@ -65,7 +66,7 @@ export const kafkaRecoveryManifest: AgentManifest = {
         type: 'structured_command',
         privilege: 'admin',
         target: 'kafka',
-        allowedOperations: ['leader_elect', 'partition_reassign', 'config_set', 'consumer_group_reset'],
+        allowedOperations: ['leader_elect', 'unclean_leader_elect', 'partition_reassign', 'config_set', 'increase_replica_fetchers', 'consumer_group_reset'],
         capabilities: [
           'broker.partition.reassign',
           'broker.leader.elect',

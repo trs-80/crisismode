@@ -14,6 +14,16 @@ export interface KafkaBrokerInfo {
   port: number;
   rack: string;
   isController: boolean;
+  isAlive: boolean;
+}
+
+export interface BrokerLiveness {
+  brokerId: number;
+  reachable: boolean;
+  lastSeen: string;
+  diskUsagePercent: number;
+  cpuLoadPercent: number;
+  networkErrorRate: number;
 }
 
 export interface KafkaTopicPartition {
@@ -55,6 +65,9 @@ export interface KafkaBackend extends ExecutionBackend {
 
   /** Get broker configuration entries */
   getBrokerConfigs(brokerId: number): Promise<Record<string, string>>;
+
+  /** Get liveness and load info for a specific broker */
+  getBrokerLiveness(brokerId: number): Promise<BrokerLiveness>;
 
   /** Optional simulator-only state transitions */
   transition?(to: string): void;
