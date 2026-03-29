@@ -26,6 +26,9 @@ import { dnsRecoveryRegistration } from '../agent/dns/registration.js';
 import { tlsRecoveryRegistration } from '../agent/tls/registration.js';
 import { diskExhaustionRegistration } from '../agent/disk/registration.js';
 import { backupVerificationRegistration } from '../agent/backup/registration.js';
+import { awsS3RecoveryRegistration } from '../agent/aws-s3/registration.js';
+import { awsDynamoDbRecoveryRegistration } from '../agent/aws-dynamodb/registration.js';
+import { awsRdsRecoveryRegistration } from '../agent/aws-rds/registration.js';
 
 export const builtinAgents: AgentRegistration[] = [
   // Infrastructure agents
@@ -40,6 +43,10 @@ export const builtinAgents: AgentRegistration[] = [
   tlsRecoveryRegistration,
   diskExhaustionRegistration,
   backupVerificationRegistration,
+  // AWS recovery agents
+  awsS3RecoveryRegistration,
+  awsDynamoDbRecoveryRegistration,
+  awsRdsRecoveryRegistration,
   // AI application recovery agents
   deployRollbackRegistration,
   aiProviderRegistration,

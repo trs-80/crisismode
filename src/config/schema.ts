@@ -41,6 +41,16 @@ export interface HostConfig {
   database?: string;
 }
 
+// ── AWS target config ──
+
+export interface AwsTargetConfig {
+  region: string;
+  bucket?: string;       // aws-s3
+  table?: string;        // aws-dynamodb
+  instanceId?: string;   // aws-rds
+  profile?: string;      // optional AWS profile override
+}
+
 // ── Target config ──
 
 export interface TargetConfig {
@@ -50,9 +60,11 @@ export interface TargetConfig {
   agent?: string;
   /** Optional: target system version (e.g. '16.2'). Can be auto-discovered by backends that support it. */
   version?: string;
-  primary: HostConfig;
+  primary?: HostConfig;
   replicas?: HostConfig[];
   credentials?: CredentialRef;
+  /** AWS-specific config for aws-s3, aws-dynamodb, aws-rds target kinds. */
+  aws?: AwsTargetConfig;
 }
 
 // ── Site config ──
@@ -100,4 +112,6 @@ export interface ResolvedTarget {
   primary: HostConfig;
   replicas: HostConfig[];
   credentials: ResolvedCredentials;
+  /** AWS-specific config — passed through from TargetConfig. */
+  aws?: AwsTargetConfig;
 }

@@ -57,6 +57,9 @@ const KIND_PREFIX: Record<string, string> = {
   tls: 'TLS',
   disk: 'DISK',
   backup: 'BKUP',
+  'aws-s3': 'S3',
+  'aws-dynamodb': 'DYNAMO',
+  'aws-rds': 'RDS',
   plugin: 'PLUG',
 };
 

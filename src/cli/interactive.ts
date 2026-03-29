@@ -65,7 +65,8 @@ export async function runInteractive(): Promise<void> {
     printInfo('Available targets:');
     for (let i = 0; i < config.targets.length; i++) {
       const t = config.targets[i];
-      console.log(`  ${i + 1}. ${t.name} (${t.kind}) — ${t.primary.host}:${t.primary.port}`);
+      const addr = t.primary ? `${t.primary.host}:${t.primary.port}` : t.aws?.region ?? 'aws';
+      console.log(`  ${i + 1}. ${t.name} (${t.kind}) — ${addr}`);
     }
     console.log('');
 

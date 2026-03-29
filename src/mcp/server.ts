@@ -254,8 +254,8 @@ export async function handleStatus(params: Record<string, unknown>): Promise<unk
     services = result.config.targets.map((t) => ({
       name: t.name,
       kind: t.kind,
-      host: t.primary.host,
-      port: t.primary.port,
+      host: t.primary?.host ?? t.aws?.region ?? 'aws',
+      port: t.primary?.port ?? 0,
     }));
   } catch {
     const detected = await detectServices();

@@ -68,11 +68,13 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
   console.log('');
 
   // Probe network connectivity (runs in parallel with agent setup)
-  const targetProbes = config.targets.map((t) => ({
-    host: t.primary.host,
-    port: t.primary.port,
-    label: t.name,
-  }));
+  const targetProbes = config.targets
+    .filter((t) => t.primary)
+    .map((t) => ({
+      host: t.primary!.host,
+      port: t.primary!.port,
+      label: t.name,
+    }));
   const networkPromise = probeNetwork({
     hubEndpoint: 'hub' in config ? config.hub?.endpoint : undefined,
     targets: targetProbes,

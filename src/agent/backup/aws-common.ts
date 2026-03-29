@@ -2,58 +2,12 @@
 // Copyright 2026 CrisisMode Contributors
 
 /**
- * Shared AWS utilities for backup providers.
- *
- * Handles dynamic SDK imports (graceful when not installed) and
- * credential validation via STS GetCallerIdentity.
+ * Re-export shared AWS utilities from the common location.
+ * Preserves backward compatibility for existing backup provider imports.
  */
 
-export interface AwsCredentialResult {
-  valid: boolean;
-  accountId: string;
-  region: string;
-}
-
-/**
- * Dynamically import an AWS SDK package. Returns null if the package
- * is not installed — callers use this to degrade gracefully.
- */
-export async function tryImportAws<T>(pkg: string): Promise<T | null> {
-  try {
-    return await import(pkg) as T;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Validate AWS credentials by calling STS GetCallerIdentity.
- * Returns account/region info on success, or { valid: false } if
- * credentials are missing, expired, or the SDK is not installed.
- */
-export async function resolveAwsCredentials(opts?: {
-  region?: string;
-  profile?: string;
-}): Promise<AwsCredentialResult> {
-  const invalid: AwsCredentialResult = { valid: false, accountId: '', region: '' };
-
-  const sts = await tryImportAws<typeof import('@aws-sdk/client-sts')>('@aws-sdk/client-sts');
-  if (!sts) return invalid;
-
-  const region = opts?.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
-
-  try {
-    const client = new sts.STSClient({
-      region,
-      ...(opts?.profile ? { profile: opts.profile } : {}),
-    });
-    const resp = await client.send(new sts.GetCallerIdentityCommand({}));
-    return {
-      valid: true,
-      accountId: resp.Account ?? '',
-      region,
-    };
-  } catch {
-    return invalid;
-  }
-}
+export {
+  tryImportAws,
+  resolveAwsCredentials,
+  type AwsCredentialResult,
+} from '../aws-common.js';

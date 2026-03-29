@@ -37,15 +37,15 @@ export async function runStatus(): Promise<void> {
   console.log('');
 
   const results = await Promise.all(
-    config.targets.map(async (target) => {
-      const services = await detectServices(target.primary.host, [
-        { kind: target.kind, port: target.primary.port },
+    config.targets.filter((t) => t.primary).map(async (target) => {
+      const services = await detectServices(target.primary!.host, [
+        { kind: target.kind, port: target.primary!.port },
       ]);
       const isUp = services[0]?.detected ?? false;
       return {
         kind: target.kind,
-        host: target.primary.host,
-        port: target.primary.port,
+        host: target.primary!.host,
+        port: target.primary!.port,
         status: isUp ? 'up' as const : 'down' as const,
       };
     }),

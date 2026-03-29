@@ -130,12 +130,24 @@ function validateTarget(target: Record<string, unknown>): void {
       `  Supported kinds are determined by registered agents.`,
     );
   }
-  const primary = target.primary as Record<string, unknown> | undefined;
-  if (!primary || typeof primary.host !== 'string' || typeof primary.port !== 'number') {
-    throw new Error(
-      `Target "${target.name}" must have a primary with host (string) and port (number).\n` +
-      `  Example: primary: { host: localhost, port: 5432 }`,
-    );
+  // AWS target kinds use the aws config block instead of primary
+  const isAwsKind = typeof target.kind === 'string' && target.kind.startsWith('aws-');
+  if (isAwsKind) {
+    const aws = target.aws as Record<string, unknown> | undefined;
+    if (!aws || typeof aws.region !== 'string') {
+      throw new Error(
+        `Target "${target.name}" (kind: ${String(target.kind)}) requires an "aws" block with at least "region".\n` +
+        `  Example: aws: { region: us-east-1, bucket: my-bucket }`,
+      );
+    }
+  } else {
+    const primary = target.primary as Record<string, unknown> | undefined;
+    if (!primary || typeof primary.host !== 'string' || typeof primary.port !== 'number') {
+      throw new Error(
+        `Target "${target.name}" must have a primary with host (string) and port (number).\n` +
+        `  Example: primary: { host: localhost, port: 5432 }`,
+      );
+    }
   }
 
   // Validate version format if provided
