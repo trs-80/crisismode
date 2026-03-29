@@ -28,8 +28,24 @@ import type { AgentContext } from './types/agent-context.js';
 import type { HumanApprovalStep } from './types/step-types.js';
 import type { PgLiveClient } from './agent/pg-replication/live-client.js';
 import * as display from './demo/display.js';
+import {
+  getOutputMode, printHealthStatus, printDiagnosis, printPlan,
+  printPlanExplanation, printResults, printOperatorSummary,
+} from './cli/output.js';
 
 const FORENSIC_OUTPUT_PATH = 'output/forensic-record-live.json';
+
+/** Emit a JSON line when in machine output mode. */
+function jsonOut(type: string, data: unknown): void {
+  if (getOutputMode() === 'machine') {
+    console.log(JSON.stringify({ type, ...data as Record<string, unknown> }));
+  }
+}
+
+/** True when display.* human-formatted output should be suppressed. */
+function isJson(): boolean {
+  return getOutputMode() === 'machine';
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -107,24 +123,26 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
   // Cast for PG-specific connectivity display (only used for postgresql targets)
   const pgClient = target.kind === 'postgresql' ? backend as PgLiveClient : null;
 
-  display.banner();
-  console.log('');
-  console.log(`  Config: ${source === 'file' ? filePath : 'env-var fallback (no crisismode.yaml found)'}`);
-  console.log('  ┌─────────────────────────────────────────────┐');
-  console.log(`  │  🔴 LIVE MODE — ${target.kind} target: ${target.name}`);
-  console.log('  │                                              │');
-  console.log(`  │  Primary:  ${target.primary.host}:${target.primary.port}`);
-  if (target.replicas.length > 0) {
-    console.log(`  │  Replica:  ${target.replicas[0].host}:${target.replicas[0].port}`);
+  if (!isJson()) {
+    display.banner();
+    console.log('');
+    console.log(`  Config: ${source === 'file' ? filePath : 'env-var fallback (no crisismode.yaml found)'}`);
+    console.log('  ┌─────────────────────────────────────────────┐');
+    console.log(`  │  🔴 LIVE MODE — ${target.kind} target: ${target.name}`);
+    console.log('  │                                              │');
+    console.log(`  │  Primary:  ${target.primary.host}:${target.primary.port}`);
+    if (target.replicas.length > 0) {
+      console.log(`  │  Replica:  ${target.replicas[0].host}:${target.replicas[0].port}`);
+    }
+    if (target.primary.database) {
+      console.log(`  │  Database: ${target.primary.database}`);
+    }
+    if (target.version) {
+      console.log(`  │  Version:  ${target.version}`);
+    }
+    console.log('  └─────────────────────────────────────────────┘');
+    console.log('');
   }
-  if (target.primary.database) {
-    console.log(`  │  Database: ${target.primary.database}`);
-  }
-  if (target.version) {
-    console.log(`  │  Version:  ${target.version}`);
-  }
-  console.log('  └─────────────────────────────────────────────┘');
-  console.log('');
 
   try {
     // Quick connectivity check (PG-specific display)
@@ -132,42 +150,46 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
     let replicaStatus: Awaited<ReturnType<PgLiveClient['queryReplicaStatus']>> = null;
 
     if (pgClient) {
-      console.log('  Connecting to PostgreSQL...');
+      if (!isJson()) console.log('  Connecting to PostgreSQL...');
       replStatus = await pgClient.queryReplicationStatus();
       replicaStatus = await pgClient.queryReplicaStatus();
       const connCount = await pgClient.queryConnectionCount();
       const slots = await pgClient.queryReplicationSlots();
 
-      console.log(`  ✅ Primary connected — ${connCount} active connections`);
-      console.log(`  ✅ Replication: ${replStatus.length} replica(s) streaming`);
-      if (replicaStatus) {
-        console.log(`  ✅ Replica connected — recovery mode: ${replicaStatus.isInRecovery}, lag: ${replicaStatus.lagSeconds}s`);
-      }
-      console.log(`  ✅ Slots: ${slots.length} replication slot(s)`);
-      console.log('');
+      if (!isJson()) {
+        console.log(`  ✅ Primary connected — ${connCount} active connections`);
+        console.log(`  ✅ Replication: ${replStatus.length} replica(s) streaming`);
+        if (replicaStatus) {
+          console.log(`  ✅ Replica connected — recovery mode: ${replicaStatus.isInRecovery}, lag: ${replicaStatus.lagSeconds}s`);
+        }
+        console.log(`  ✅ Slots: ${slots.length} replication slot(s)`);
+        console.log('');
 
-      // Show live replication data
-      console.log('  ── Live Replication Status ──');
-      for (const r of replStatus) {
-        const lagColor = r.lag_seconds > 30 ? '🔴' : r.lag_seconds > 10 ? '🟡' : '🟢';
-        console.log(`  ${lagColor} ${r.client_addr} | ${r.state} | lag: ${r.lag_seconds}s | sent: ${r.sent_lsn} | replay: ${r.replay_lsn}`);
-      }
-      console.log('');
+        // Show live replication data
+        console.log('  ── Live Replication Status ──');
+        for (const r of replStatus) {
+          const lagColor = r.lag_seconds > 30 ? '🔴' : r.lag_seconds > 10 ? '🟡' : '🟢';
+          console.log(`  ${lagColor} ${r.client_addr} | ${r.state} | lag: ${r.lag_seconds}s | sent: ${r.sent_lsn} | replay: ${r.replay_lsn}`);
+        }
+        console.log('');
 
-      for (const s of slots) {
-        const statusIcon = s.active ? '🟢' : '🔴';
-        console.log(`  ${statusIcon} Slot: ${s.slot_name} | type: ${s.slot_type} | active: ${s.active} | wal: ${s.wal_status}`);
+        for (const s of slots) {
+          const statusIcon = s.active ? '🟢' : '🔴';
+          console.log(`  ${statusIcon} Slot: ${s.slot_name} | type: ${s.slot_type} | active: ${s.active} | wal: ${s.wal_status}`);
+        }
+        console.log('');
       }
-      console.log('');
     } else {
-      console.log(`  Connecting to ${target.kind} target "${target.name}"...`);
+      if (!isJson()) console.log(`  Connecting to ${target.kind} target "${target.name}"...`);
     }
 
-    await sleep(500);
+    if (!isJson()) await sleep(500);
 
     // ── Phase 1: Trigger ──
-    display.phase(1, 'Trigger (Live)');
-    display.step(1, 'Simulating Prometheus alert from live data');
+    if (!isJson()) {
+      display.phase(1, 'Trigger (Live)');
+      display.step(1, 'Simulating Prometheus alert from live data');
+    }
 
     // Build trigger from live data
     const primaryViewLag = replStatus.reduce((max, r) => Math.max(max, r.lag_seconds), 0);
@@ -189,75 +211,100 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
       },
       receivedAt: new Date().toISOString(),
     };
-    display.displayTrigger(trigger);
+    if (!isJson()) display.displayTrigger(trigger);
 
     // ── Phase 2: Agent + Context ──
-    display.phase(2, 'Agent Selection & Context');
+    if (!isJson()) {
+      display.phase(2, 'Agent Selection & Context');
+      display.displayManifest(
+        agent.manifest.metadata.name,
+        agent.manifest.metadata.version,
+        agent.manifest.metadata.description,
+      );
+    }
 
     const context = assembleContext(trigger, agent.manifest);
-    display.displayManifest(
-      agent.manifest.metadata.name,
-      agent.manifest.metadata.version,
-      agent.manifest.metadata.description,
-    );
-    await sleep(300);
+    if (!isJson()) await sleep(300);
 
     // ── Phase 3: Health Assessment ──
-    display.phase(3, healthOnly ? 'Health Assessment (Live — Standalone)' : 'Health Assessment (Live)');
-    display.step(3, 'Agent probing live PostgreSQL health directly');
+    if (!isJson()) {
+      display.phase(3, healthOnly ? 'Health Assessment (Live — Standalone)' : 'Health Assessment (Live)');
+      display.step(3, 'Agent probing live PostgreSQL health directly');
+    }
     const initialHealth = await agent.assessHealth(context);
-    display.displayHealthAssessment(initialHealth);
+    if (isJson()) {
+      printHealthStatus(initialHealth);
+    } else {
+      display.displayHealthAssessment(initialHealth);
+    }
 
     if (healthOnly || initialHealth.status === 'healthy') {
-      if (initialHealth.status === 'healthy' && !healthOnly) {
-        display.success('Direct health probe indicates the system is healthy. No recovery action is required.');
-        display.warning('The triggering alert may be stale or delayed relative to current system state.');
+      if (!isJson()) {
+        if (initialHealth.status === 'healthy' && !healthOnly) {
+          display.success('Direct health probe indicates the system is healthy. No recovery action is required.');
+          display.warning('The triggering alert may be stale or delayed relative to current system state.');
+        }
+        display.phase(4, 'Operator Summary');
       }
 
-      display.phase(4, 'Operator Summary');
-      display.displayOperatorSummary(buildOperatorSummary({
+      const earlySummary = buildOperatorSummary({
         health: initialHealth,
         mode: execMode,
         healthCheckOnly: healthOnly,
-      }));
-
-      if (!healthOnly && initialHealth.status === 'healthy') {
-        console.log('  💡 To create a test failure, run:');
-        console.log('     ./test/failures/inject-replication-lag.sh');
-        console.log('');
-        console.log('  Then re-run: pnpm run live');
+      });
+      if (isJson()) {
+        printOperatorSummary(earlySummary);
+      } else {
+        display.displayOperatorSummary(earlySummary);
+        if (!healthOnly && initialHealth.status === 'healthy') {
+          console.log('  💡 To create a test failure, run:');
+          console.log('     ./test/failures/inject-replication-lag.sh');
+          console.log('');
+          console.log('  Then re-run: pnpm run live');
+        }
       }
       return;
     }
 
-    await sleep(300);
+    if (!isJson()) await sleep(300);
 
     // ── Phase 4: Diagnosis ──
     const hasAiKey = !!process.env.ANTHROPIC_API_KEY;
-    display.phase(4, hasAiKey ? 'Diagnosis (Live — AI-Powered)' : 'Diagnosis (Live — Rule-Based)');
-    if (hasAiKey) {
-      console.log('  🤖 AI analyzing system state via Claude...');
-    } else {
-      console.log('  📋 Using rule-based diagnosis (set ANTHROPIC_API_KEY for AI diagnosis)');
+    if (!isJson()) {
+      display.phase(4, hasAiKey ? 'Diagnosis (Live — AI-Powered)' : 'Diagnosis (Live — Rule-Based)');
+      if (hasAiKey) {
+        console.log('  🤖 AI analyzing system state via Claude...');
+      } else {
+        console.log('  📋 Using rule-based diagnosis (set ANTHROPIC_API_KEY for AI diagnosis)');
+      }
+      display.step(4, 'Agent querying real PostgreSQL for diagnosis');
     }
-    display.step(4, 'Agent querying real PostgreSQL for diagnosis');
 
     const diagnosis = await agent.diagnose(context);
-    display.displayDiagnosis(diagnosis);
-    display.success(`Diagnosis: ${diagnosis.scenario} (${(diagnosis.confidence * 100).toFixed(0)}% confidence)`);
-    await sleep(300);
+    if (isJson()) {
+      printDiagnosis(diagnosis);
+    } else {
+      display.displayDiagnosis(diagnosis);
+      display.success(`Diagnosis: ${diagnosis.scenario} (${(diagnosis.confidence * 100).toFixed(0)}% confidence)`);
+    }
+    if (!isJson()) await sleep(300);
 
     // ── Phase 5: Plan ──
-    display.phase(5, 'Plan Creation');
+    if (!isJson()) display.phase(5, 'Plan Creation');
     const plan = await agent.plan(context, diagnosis);
-    display.displayPlanTable(plan);
 
     // AI plan explanation (falls back to structural summary if no API key)
     const explanation = await explainPlan(plan, diagnosis);
-    display.displayPlanExplanation(explanation);
+    if (isJson()) {
+      printPlan(plan);
+      printPlanExplanation(explanation);
+    } else {
+      display.displayPlanTable(plan);
+      display.displayPlanExplanation(explanation);
+    }
 
     // ── Phase 6: Validation ──
-    display.phase(6, 'Validation');
+    if (!isJson()) display.phase(6, 'Validation');
     const validation = validatePlan(plan, agent.manifest, {
       backend,
       executionMode: execMode,
@@ -268,43 +315,54 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
       executionMode: 'execute',
       requireExecutableCapabilities: true,
     });
-    display.displayValidation(validation);
-    if (execMode === 'dry-run' && !executeReadinessValidation.valid) {
-      display.warning('Dry-run can continue, but execute mode is currently blocked by live capability/provider readiness.');
+    if (!isJson()) {
+      display.displayValidation(validation);
+      if (execMode === 'dry-run' && !executeReadinessValidation.valid) {
+        display.warning('Dry-run can continue, but execute mode is currently blocked by live capability/provider readiness.');
+      }
     }
     if (!validation.valid) {
       const blockedHealth = await agent.assessHealth(context);
-      display.phase(7, 'Operator Summary');
-      display.displayOperatorSummary(buildOperatorSummary({
+      const blockedSummary = buildOperatorSummary({
         health: blockedHealth,
         mode: execMode,
         currentValidation: validation,
         executeValidation: executeReadinessValidation,
-      }));
-      display.error('Plan validation failed');
+      });
+      if (isJson()) {
+        printOperatorSummary(blockedSummary);
+      } else {
+        display.phase(7, 'Operator Summary');
+        display.displayOperatorSummary(blockedSummary);
+        display.error('Plan validation failed');
+      }
       return;
     }
-    display.success('Plan validated');
+    if (!isJson()) display.success('Plan validated');
 
     // ── Phase 7: Catalog Match ──
-    display.phase(7, 'Catalog Match');
+    if (!isJson()) display.phase(7, 'Catalog Match');
     const catalogMatch = matchCatalog(plan);
-    display.displayCatalogMatch(catalogMatch);
-    await sleep(300);
+    if (!isJson()) {
+      display.displayCatalogMatch(catalogMatch);
+      await sleep(300);
+    }
 
     // ── Phase 8: Execution ──
-    if (execMode === 'execute') {
-      display.phase(8, 'Execution (Live — EXECUTE MODE)');
-      console.log('');
-      console.log('  🔴 EXECUTE MODE — SQL mutations WILL be run against real PostgreSQL.');
-      console.log('');
-    } else {
-      display.phase(8, 'Execution (Live — DRY-RUN)');
-      console.log('');
-      console.log('  🟡 DRY-RUN — Diagnosis and checks run against real PG.');
-      console.log('     System actions are logged but NOT executed.');
-      console.log('     To execute mutations: pnpm run live -- --execute');
-      console.log('');
+    if (!isJson()) {
+      if (execMode === 'execute') {
+        display.phase(8, 'Execution (Live — EXECUTE MODE)');
+        console.log('');
+        console.log('  🔴 EXECUTE MODE — SQL mutations WILL be run against real PostgreSQL.');
+        console.log('');
+      } else {
+        display.phase(8, 'Execution (Live — DRY-RUN)');
+        console.log('');
+        console.log('  🟡 DRY-RUN — Diagnosis and checks run against real PG.');
+        console.log('     System actions are logged but NOT executed.');
+        console.log('     To execute mutations: pnpm run live -- --execute');
+        console.log('');
+      }
     }
 
     const recorder = new ForensicRecorder();
@@ -313,7 +371,7 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
     recorder.addPlan(plan);
     recorder.setCatalogMatchUsed(catalogMatch.matched);
 
-    const callbacks: EngineCallbacks = {
+    const callbacks: EngineCallbacks = isJson() ? {} : {
       onStepStart: (s, i) => display.displayStepExecution(s, i),
       onStepComplete: (s, result) => display.displayStepResult(s, result),
       onPreConditionCheck: (_s, passed, desc) => display.displayPreCondition(passed, desc),
@@ -348,23 +406,33 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
     engine.setCoveredRiskLevels(catalogMatch.coveredRiskLevels);
 
     const results = await engine.executePlan(plan, diagnosis);
+    if (isJson()) printResults(results);
 
     // ── Phase 9: Operator Summary ──
-    display.phase(9, 'Operator Summary');
+    if (!isJson()) display.phase(9, 'Operator Summary');
     const finalHealth = await agent.assessHealth(context);
-    display.displayOperatorSummary(buildOperatorSummary({
+    const finalSummary = buildOperatorSummary({
       health: finalHealth,
       mode: execMode,
       currentValidation: validation,
       executeValidation: executeReadinessValidation,
       results,
-    }));
+    });
+    if (isJson()) {
+      printOperatorSummary(finalSummary);
+    } else {
+      display.displayOperatorSummary(finalSummary);
+    }
 
     // ── Phase 10: Forensics ──
-    display.phase(10, 'Forensic Record');
-    const record = recorder.writeToFile(FORENSIC_OUTPUT_PATH);
-    display.displayForensicSummary(record);
-    display.displayComplete(FORENSIC_OUTPUT_PATH);
+    if (!isJson()) {
+      display.phase(10, 'Forensic Record');
+      const record = recorder.writeToFile(FORENSIC_OUTPUT_PATH);
+      display.displayForensicSummary(record);
+      display.displayComplete(FORENSIC_OUTPUT_PATH);
+    } else {
+      recorder.writeToFile(FORENSIC_OUTPUT_PATH);
+    }
 
   } finally {
     await backend.close();
