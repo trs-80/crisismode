@@ -30,7 +30,7 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
-  build:
+  build-linux:
     needs: validate
     runs-on: ubuntu-latest
     steps:
@@ -47,32 +47,128 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Build all platform binaries
-        run: bash scripts/build-binary.sh --all
+      - name: Build Linux binaries
+        run: |
+          TARGET=bun-linux-x64 bash scripts/build-binary.sh
+          TARGET=bun-linux-arm64 bash scripts/build-binary.sh
 
       - name: Generate checksums
         run: |
           cd dist
-          for bin in crisismode-linux-x64 crisismode-linux-arm64 crisismode-darwin-x64 crisismode-darwin-arm64; do
+          for bin in crisismode-linux-x64 crisismode-linux-arm64; do
             sha256sum "$bin" > "${bin}.sha256"
           done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binaries-linux
           path: |
             dist/crisismode-linux-x64
             dist/crisismode-linux-x64.sha256
             dist/crisismode-linux-arm64
             dist/crisismode-linux-arm64.sha256
+
+  build-darwin:
+    needs: validate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build Darwin binaries
+        run: |
+          TARGET=bun-darwin-x64 bash scripts/build-binary.sh
+          TARGET=bun-darwin-arm64 bash scripts/build-binary.sh
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+
+          echo "$APPLE_CERTIFICATE_P12" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+      - name: Sign binaries
+        run: |
+          IDENTITY="Developer ID Application: Aaron Johnson (CF4U8Z52PH)"
+          for bin in dist/crisismode-darwin-x64 dist/crisismode-darwin-arm64; do
+            codesign --force --options runtime --timestamp --sign "$IDENTITY" "$bin"
+            echo "Signed: $bin"
+            codesign --verify --verbose "$bin"
+          done
+
+      - name: Notarize binaries
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+        run: |
+          for bin in dist/crisismode-darwin-x64 dist/crisismode-darwin-arm64; do
+            BASENAME=$(basename "$bin")
+            ZIP_PATH="$RUNNER_TEMP/${BASENAME}.zip"
+
+            ditto -c -k --keepParent "$bin" "$ZIP_PATH"
+
+            xcrun notarytool submit "$ZIP_PATH" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_ID_PASSWORD" \
+              --wait
+
+            echo "Notarized: $BASENAME"
+          done
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          for bin in crisismode-darwin-x64 crisismode-darwin-arm64; do
+            shasum -a 256 "$bin" > "${bin}.sha256"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-darwin
+          path: |
             dist/crisismode-darwin-x64
             dist/crisismode-darwin-x64.sha256
             dist/crisismode-darwin-arm64
             dist/crisismode-darwin-arm64.sha256
 
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
   release:
-    needs: build
+    needs: [build-linux, build-darwin]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,10 +186,16 @@ jobs:
             exit 1
           fi
 
-      - name: Download artifacts
+      - name: Download Linux artifacts
         uses: actions/download-artifact@v4
         with:
-          name: binaries
+          name: binaries-linux
+          path: release
+
+      - name: Download Darwin artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-darwin
           path: release
 
       - name: Create GitHub Release
@@ -113,7 +215,6 @@ jobs:
             'chmod +x crisismode' './crisismode scan' '```' '' \
             '**macOS:**' '```bash' \
             'curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-darwin-arm64 -o crisismode' \
-            'chmod +x crisismode' 'xattr -cr crisismode   # remove macOS quarantine flag' \
-            './crisismode scan' '```' '' '---' > /tmp/release-notes.md
+            'chmod +x crisismode' './crisismode scan' '```' '' '---' > /tmp/release-notes.md
           printf '%s' "$EXISTING_NOTES" >> /tmp/release-notes.md
           gh release edit "${{ github.ref_name }}" --notes-file /tmp/release-notes.md
