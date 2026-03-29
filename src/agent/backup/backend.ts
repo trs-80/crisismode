@@ -23,7 +23,9 @@ export type BackupProviderKind =
   | 'lvm_snapshot'
   | 'etcd_snapshot'
   | 'velero'
-  | string; // allows future cloud providers (aws_rds, gcp_cloudsql, etc.)
+  | 'aws_rds'
+  | 'aws_s3'
+  | string; // allows future cloud providers (gcp_cloudsql, azure_sql, etc.)
 
 /** A single backup artifact discovered by a provider. */
 export interface BackupInventoryItem {
@@ -44,6 +46,10 @@ export interface BackupInventoryItem {
   /** Optional region/account for cloud-based backups */
   region?: string;
   account?: string;
+  /** Snapshot status for cloud providers (e.g. 'available', 'creating', 'error') */
+  snapshotStatus?: string;
+  /** Storage class for object-store backups (e.g. 'STANDARD', 'GLACIER') */
+  storageClass?: string;
 }
 
 /** Result of verifying a single backup. */
@@ -95,7 +101,29 @@ export const CHECK_NAMES = {
   RECENCY: 'recency',
   SIZE_TREND: 'size_trend',
   INTEGRITY: 'integrity',
+  SNAPSHOT_STATUS: 'snapshot_status',
+  RETENTION_POLICY: 'retention_policy',
+  STORAGE_CLASS: 'storage_class',
+  VERSIONING: 'versioning',
 } as const;
+
+/** AWS-specific configuration for cloud backup providers. */
+export interface AwsBackupConfig {
+  region?: string;
+  profile?: string;
+  /** RDS: filter to specific DB instances */
+  dbInstanceIdentifiers?: string[];
+  /** RDS: filter to specific Aurora clusters */
+  dbClusterIdentifiers?: string[];
+  /** RDS: include automated snapshots (default: true) */
+  includeAutomated?: boolean;
+  /** S3: bucket name */
+  bucket?: string;
+  /** S3: key prefix to filter objects */
+  prefix?: string;
+  /** S3: glob pattern for backup file names */
+  filePattern?: string;
+}
 
 /** Configuration for a single backup provider. */
 export interface BackupProviderConfig {
@@ -108,6 +136,8 @@ export interface BackupProviderConfig {
   rpoSeconds?: number;
   /** Target RTO in seconds (optional) */
   rtoSeconds?: number;
+  /** AWS-specific configuration for aws_rds and aws_s3 providers */
+  aws?: AwsBackupConfig;
 }
 
 /**

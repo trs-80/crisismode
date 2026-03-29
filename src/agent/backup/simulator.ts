@@ -26,6 +26,9 @@ export type SimulatorState =
   | 'integrity_failure'
   | 'incomplete_coverage'
   | 'rto_at_risk'
+  | 'rds_snapshot_error'
+  | 'glacier_restore_delay'
+  | 's3_versioning_disabled'
   | 'healthy';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -41,7 +44,7 @@ export class BackupSimulator implements BackupBackend {
   }
 
   listProviderKinds(): BackupProviderKind[] {
-    return ['file_directory', 'pg_dump'];
+    return ['file_directory', 'pg_dump', 'aws_rds', 'aws_s3'];
   }
 
   async verifyAll(configs: BackupProviderConfig[]): Promise<BackupVerificationReport> {
@@ -61,6 +64,12 @@ export class BackupSimulator implements BackupBackend {
         return this.buildIncompleteCoverageReport(configs, now, verifiedAt);
       case 'rto_at_risk':
         return this.buildRtoAtRiskReport(configs, now, verifiedAt);
+      case 'rds_snapshot_error':
+        return this.buildRdsSnapshotErrorReport(configs, now, verifiedAt);
+      case 'glacier_restore_delay':
+        return this.buildGlacierRestoreDelayReport(configs, now, verifiedAt);
+      case 's3_versioning_disabled':
+        return this.buildS3VersioningDisabledReport(configs, now, verifiedAt);
       case 'healthy':
         return this.buildHealthyReport(configs, now, verifiedAt);
     }
@@ -214,6 +223,74 @@ export class BackupSimulator implements BackupBackend {
     return report;
   }
 
+  private buildRdsSnapshotErrorReport(
+    configs: BackupProviderConfig[],
+    now: Date,
+    verifiedAt: string,
+  ): BackupVerificationReport {
+    // RDS snapshot exists but is in error state
+    const items = this.makeItems(configs, now, 2 * HOUR, 50 * GB, 48 * GB);
+    return this.buildReport(configs, items, now, verifiedAt, (item) => ({
+      item: { ...item, providerKind: 'aws_rds', snapshotStatus: 'error' },
+      passed: false,
+      checks: [
+        { name: CHECK_NAMES.EXISTS, passed: true, detail: `Snapshot found: ${item.location}`, severity: 'info' },
+        { name: 'snapshot_status', passed: false, detail: 'Snapshot status: error — snapshot may not be usable for restore', severity: 'critical' },
+        { name: CHECK_NAMES.RECENCY, passed: true, detail: 'Snapshot is recent (2h old)', severity: 'info' },
+        { name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'Size is consistent with previous snapshot', severity: 'info' },
+      ],
+    }));
+  }
+
+  private buildGlacierRestoreDelayReport(
+    configs: BackupProviderConfig[],
+    now: Date,
+    verifiedAt: string,
+  ): BackupVerificationReport {
+    // S3 backup exists but is in Glacier — RTO blows up
+    const items = this.makeItems(configs, now, 6 * HOUR, 100 * GB, 98 * GB);
+    const report = this.buildReport(configs, items, now, verifiedAt, (item) => ({
+      item: { ...item, providerKind: 'aws_s3', storageClass: 'GLACIER' },
+      passed: false,
+      checks: [
+        { name: CHECK_NAMES.EXISTS, passed: true, detail: `Object found: ${item.location}`, severity: 'info' },
+        { name: CHECK_NAMES.RECENCY, passed: true, detail: 'Object is recent (6h old)', severity: 'info' },
+        { name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
+        { name: 'storage_class', passed: false, detail: 'Storage class: GLACIER — restore requires 3-12 hours before data is accessible', severity: 'warning' },
+      ],
+    }));
+
+    // Glacier adds ~5h to RTO
+    report.rtoEstimates = configs.map((c) => ({
+      source: c.source,
+      providerKind: 'aws_s3' as BackupProviderKind,
+      estimatedSeconds: 20000, // ~5.5 hours
+      basis: `S3 download at ~50MB/s for ${formatBytes(100 * GB)} + ~5h Glacier restore wait`,
+    }));
+
+    return report;
+  }
+
+  private buildS3VersioningDisabledReport(
+    configs: BackupProviderConfig[],
+    now: Date,
+    verifiedAt: string,
+  ): BackupVerificationReport {
+    // S3 backup is healthy but bucket versioning is off
+    const items = this.makeItems(configs, now, 6 * HOUR, 2.5 * GB, 2.4 * GB);
+    return this.buildReport(configs, items, now, verifiedAt, (item) => ({
+      item: { ...item, providerKind: 'aws_s3', storageClass: 'STANDARD' },
+      passed: false,
+      checks: [
+        { name: CHECK_NAMES.EXISTS, passed: true, detail: `Object found: ${item.location}`, severity: 'info' },
+        { name: CHECK_NAMES.RECENCY, passed: true, detail: 'Object is recent (6h old)', severity: 'info' },
+        { name: CHECK_NAMES.SIZE_TREND, passed: true, detail: 'Size is consistent with previous backup', severity: 'info' },
+        { name: 'storage_class', passed: true, detail: 'Storage class: STANDARD', severity: 'info' },
+        { name: 'versioning', passed: false, detail: 'Bucket versioning is not enabled — accidental deletions are permanent', severity: 'warning' },
+      ],
+    }));
+  }
+
   private buildHealthyReport(
     configs: BackupProviderConfig[],
     now: Date,
@@ -333,6 +410,9 @@ export class BackupSimulator implements BackupBackend {
         integrity_failure: 8 * 3600,
         incomplete_coverage: 6 * 3600,
         rto_at_risk: 4 * 3600,
+        rds_snapshot_error: 2 * 3600,
+        glacier_restore_delay: 6 * 3600,
+        s3_versioning_disabled: 6 * 3600,
         healthy: 6 * 3600,
       };
       return compareCheckValue(ageMap[this.state], check.expect.operator, check.expect.value);

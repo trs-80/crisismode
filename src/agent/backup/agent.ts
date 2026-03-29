@@ -146,6 +146,15 @@ export class BackupVerificationAgent implements RecoveryAgent {
     } else if (hasStaleBackups || (hasFailedVerifications && !hasStructuralFailures)) {
       scenario = 'stale_backup';
       confidence = 0.95;
+    } else if (this.hasSnapshotStatusFailure(report)) {
+      scenario = 'rds_snapshot_error';
+      confidence = 0.95;
+    } else if (this.hasGlacierDelay(report)) {
+      scenario = 'glacier_restore_delay';
+      confidence = 0.90;
+    } else if (this.hasVersioningDisabled(report)) {
+      scenario = 's3_versioning_disabled';
+      confidence = 0.88;
     } else if (hasUncoveredSources) {
       scenario = 'incomplete_coverage';
       confidence = 0.90;
@@ -408,18 +417,79 @@ export class BackupVerificationAgent implements RecoveryAgent {
       return payload.backupConfigs as BackupProviderConfig[];
     }
 
-    // Build default configs from target info
-    const host = String(payload.instance || payload.host || '/var/backups');
+    const configs: BackupProviderConfig[] = [];
     const source = String(payload.database || payload.source || 'default');
 
-    return [
-      {
-        kind: 'file_directory',
-        locations: [host],
+    // Filesystem backup config
+    const host = String(payload.instance || payload.host || '/var/backups');
+    configs.push({
+      kind: 'file_directory',
+      locations: [host],
+      source,
+      rpoSeconds: DEFAULT_RPO_SECONDS,
+    });
+
+    // AWS RDS config — if RDS identifiers are in the payload
+    const rdsInstances = payload.rdsInstances as string[] | undefined;
+    const rdsClusters = payload.rdsClusters as string[] | undefined;
+    if (rdsInstances || rdsClusters) {
+      configs.push({
+        kind: 'aws_rds',
+        locations: [],
+        source: String(rdsInstances?.[0] || rdsClusters?.[0] || source),
+        rpoSeconds: DEFAULT_RPO_SECONDS,
+        aws: {
+          region: payload.awsRegion as string | undefined,
+          profile: payload.awsProfile as string | undefined,
+          dbInstanceIdentifiers: rdsInstances,
+          dbClusterIdentifiers: rdsClusters,
+        },
+      });
+    }
+
+    // AWS S3 config — if bucket is in the payload
+    const s3Bucket = payload.s3Bucket as string | undefined;
+    if (s3Bucket) {
+      configs.push({
+        kind: 'aws_s3',
+        locations: [`s3://${s3Bucket}`],
         source,
         rpoSeconds: DEFAULT_RPO_SECONDS,
-      },
-    ];
+        aws: {
+          region: payload.awsRegion as string | undefined,
+          profile: payload.awsProfile as string | undefined,
+          bucket: s3Bucket,
+          prefix: payload.s3Prefix as string | undefined,
+          filePattern: payload.s3FilePattern as string | undefined,
+        },
+      });
+    }
+
+    return configs;
+  }
+
+  private hasSnapshotStatusFailure(report: BackupVerificationReport): boolean {
+    return report.providers.some((p) =>
+      p.verifications.some((v) =>
+        v.checks.some((c) => c.name === CHECK_NAMES.SNAPSHOT_STATUS && !c.passed),
+      ),
+    );
+  }
+
+  private hasGlacierDelay(report: BackupVerificationReport): boolean {
+    return report.providers.some((p) =>
+      p.verifications.some((v) =>
+        v.checks.some((c) => c.name === CHECK_NAMES.STORAGE_CLASS && !c.passed),
+      ),
+    );
+  }
+
+  private hasVersioningDisabled(report: BackupVerificationReport): boolean {
+    return report.providers.some((p) =>
+      p.verifications.some((v) =>
+        v.checks.some((c) => c.name === CHECK_NAMES.VERSIONING && !c.passed),
+      ),
+    );
   }
 
   private classifyReport(report: BackupVerificationReport) {
@@ -512,8 +582,12 @@ export class BackupVerificationAgent implements RecoveryAgent {
       case 'stale_backup':
       case 'size_anomaly':
         return 'high';
+      case 'rds_snapshot_error':
+        return 'critical';
       case 'incomplete_coverage':
       case 'rto_at_risk':
+      case 'glacier_restore_delay':
+      case 's3_versioning_disabled':
         return 'medium';
       default:
         return 'medium';
@@ -593,6 +667,41 @@ export class BackupVerificationAgent implements RecoveryAgent {
         parts.push('3. Test actual restore time with a DR drill');
         parts.push('4. Evaluate parallel restore capabilities');
         parts.push('5. Consider point-in-time recovery (WAL archiving) for databases');
+        break;
+
+      case 'rds_snapshot_error':
+        parts.push('CRITICAL: RDS snapshot is in error state — cannot be used for restore.');
+        parts.push('The snapshot creation or copy process failed.');
+        parts.push('');
+        parts.push('Immediate actions:');
+        parts.push('1. Check RDS event logs in the AWS Console for snapshot failure details');
+        parts.push('2. Verify sufficient storage space on the RDS instance');
+        parts.push('3. Check for ongoing maintenance or pending modifications');
+        parts.push('4. Create a new manual snapshot to restore backup coverage');
+        parts.push('5. Verify automated backup configuration is enabled with adequate retention');
+        break;
+
+      case 'glacier_restore_delay':
+        parts.push('WARNING: S3 backup is in Glacier storage — restore requires 3-12 hours.');
+        parts.push('If a disaster occurs now, you cannot access this backup immediately.');
+        parts.push('');
+        parts.push('Recommendations:');
+        parts.push('1. Initiate a Glacier restore request now to pre-stage the backup');
+        parts.push('2. Consider moving recent backups to STANDARD or STANDARD_IA storage class');
+        parts.push('3. Set up S3 Lifecycle rules to keep recent backups in accessible storage');
+        parts.push('4. Maintain at least one recent backup in a non-archived storage class');
+        parts.push('5. Factor Glacier restore time into your RTO calculations');
+        break;
+
+      case 's3_versioning_disabled':
+        parts.push('WARNING: S3 bucket versioning is not enabled.');
+        parts.push('Accidental deletions or overwrites will permanently destroy your backups.');
+        parts.push('');
+        parts.push('Recommendations:');
+        parts.push('1. Enable bucket versioning to protect against accidental deletion');
+        parts.push('2. Consider adding MFA Delete for additional protection');
+        parts.push('3. Set up S3 Object Lock for compliance-grade immutability');
+        parts.push('4. Configure lifecycle rules to clean up old versions automatically');
         break;
 
       default:

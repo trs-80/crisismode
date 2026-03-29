@@ -26,12 +26,13 @@ export const backupManifest: AgentManifest = {
       {
         technology: 'backup',
         versionConstraint: '*',
-        components: ['file-directory', 'pg-dump', 'pg-basebackup', 'zfs-snapshot', 'lvm-snapshot'],
+        components: ['file-directory', 'pg-dump', 'pg-basebackup', 'zfs-snapshot', 'lvm-snapshot', 'aws-rds-snapshot', 'aws-s3-backup'],
       },
     ],
     triggerConditions: [
       { type: 'alert', source: 'prometheus', matchLabels: { alertname: 'BackupStale' } },
       { type: 'alert', source: 'prometheus', matchLabels: { alertname: 'BackupFailed' } },
+      { type: 'alert', source: 'cloudwatch', matchLabels: { alertname: 'RDSSnapshotFailed' } },
       { type: 'health_check', name: 'backup_verification_status', status: 'degraded' },
       { type: 'manual', description: 'Operator-initiated backup verification' },
     ],
@@ -42,6 +43,9 @@ export const backupManifest: AgentManifest = {
       'integrity_failure',
       'incomplete_coverage',
       'rto_at_risk',
+      'rds_snapshot_error',
+      'glacier_restore_delay',
+      's3_versioning_disabled',
     ],
     executionContexts: [
       {
@@ -50,7 +54,7 @@ export const backupManifest: AgentManifest = {
         privilege: 'read',
         target: 'backup-storage',
         allowedOperations: ['verify_backups', 'list_providers', 'inventory_backups', 'check_integrity'],
-        capabilities: ['backup.inventory.list', 'backup.verify.integrity', 'backup.rpo.evaluate', 'backup.schedule.check'],
+        capabilities: ['backup.inventory.list', 'backup.verify.integrity', 'backup.rpo.evaluate', 'backup.schedule.check', 'backup.aws.rds.describe', 'backup.aws.s3.list', 'backup.aws.sts.verify'],
       },
     ],
     observabilityDependencies: {

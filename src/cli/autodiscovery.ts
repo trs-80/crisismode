@@ -109,6 +109,10 @@ const ENV_HINTS: Array<{ name: string; kind: string; inferredService?: string }>
   { name: 'MONGO_URL', kind: 'database_url', inferredService: 'mongodb' },
   { name: 'MYSQL_URL', kind: 'database_url', inferredService: 'mysql' },
   { name: 'AMQP_URL', kind: 'queue_url', inferredService: 'rabbitmq' },
+  { name: 'AWS_REGION', kind: 'aws_region' },
+  { name: 'AWS_DEFAULT_REGION', kind: 'aws_region' },
+  { name: 'AWS_PROFILE', kind: 'aws_profile' },
+  { name: 'AWS_ACCESS_KEY_ID', kind: 'aws_credentials' },
 ];
 
 /** AI provider env vars */

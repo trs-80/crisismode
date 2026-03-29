@@ -339,15 +339,18 @@ describe('BackupVerificationAgent', () => {
       expect(agent.manifest.spec.riskProfile.dataLossPossible).toBe(false);
     });
 
-    it('declares all 6 failure scenarios', () => {
+    it('declares all 9 failure scenarios', () => {
       const { agent } = setup();
-      expect(agent.manifest.spec.failureScenarios).toHaveLength(6);
+      expect(agent.manifest.spec.failureScenarios).toHaveLength(9);
       expect(agent.manifest.spec.failureScenarios).toContain('no_backups_found');
       expect(agent.manifest.spec.failureScenarios).toContain('stale_backup');
       expect(agent.manifest.spec.failureScenarios).toContain('size_anomaly');
       expect(agent.manifest.spec.failureScenarios).toContain('integrity_failure');
       expect(agent.manifest.spec.failureScenarios).toContain('incomplete_coverage');
       expect(agent.manifest.spec.failureScenarios).toContain('rto_at_risk');
+      expect(agent.manifest.spec.failureScenarios).toContain('rds_snapshot_error');
+      expect(agent.manifest.spec.failureScenarios).toContain('glacier_restore_delay');
+      expect(agent.manifest.spec.failureScenarios).toContain('s3_versioning_disabled');
     });
   });
 });

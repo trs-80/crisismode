@@ -115,6 +115,58 @@ describe('BackupSimulator', () => {
       expect(report.rtoEstimates.every((r) => r.estimatedSeconds > 3600)).toBe(true);
     });
 
+    it('rds_snapshot_error: snapshot exists but status is error', async () => {
+      const sim = new BackupSimulator();
+      sim.transition('rds_snapshot_error');
+      const report = await sim.verifyAll(makeConfigs());
+
+      for (const provider of report.providers) {
+        expect(provider.detected).toBe(true);
+        const v = provider.verifications[0];
+        expect(v.passed).toBe(false);
+
+        const statusCheck = v.checks.find((c) => c.name === 'snapshot_status');
+        expect(statusCheck?.passed).toBe(false);
+        expect(statusCheck?.severity).toBe('critical');
+      }
+    });
+
+    it('glacier_restore_delay: S3 backup in Glacier with high RTO', async () => {
+      const sim = new BackupSimulator();
+      sim.transition('glacier_restore_delay');
+      const report = await sim.verifyAll(makeConfigs());
+
+      for (const provider of report.providers) {
+        expect(provider.detected).toBe(true);
+        const v = provider.verifications[0];
+        expect(v.passed).toBe(false);
+
+        const storageCheck = v.checks.find((c) => c.name === 'storage_class');
+        expect(storageCheck?.passed).toBe(false);
+        expect(storageCheck?.detail).toContain('GLACIER');
+      }
+
+      // RTO should include Glacier restore delay
+      expect(report.rtoEstimates.length).toBeGreaterThan(0);
+      expect(report.rtoEstimates.every((r) => r.estimatedSeconds > 10000)).toBe(true);
+    });
+
+    it('s3_versioning_disabled: backup healthy but versioning off', async () => {
+      const sim = new BackupSimulator();
+      sim.transition('s3_versioning_disabled');
+      const report = await sim.verifyAll(makeConfigs());
+
+      for (const provider of report.providers) {
+        expect(provider.detected).toBe(true);
+        const v = provider.verifications[0];
+        expect(v.passed).toBe(false);
+
+        const versioningCheck = v.checks.find((c) => c.name === 'versioning');
+        expect(versioningCheck?.passed).toBe(false);
+        expect(versioningCheck?.severity).toBe('warning');
+      }
+    });
+
     it('healthy: all verifications pass, RPO met, no gaps', async () => {
       const sim = new BackupSimulator();
       sim.transition('healthy');
@@ -156,11 +208,13 @@ describe('BackupSimulator', () => {
   // listProviderKinds()
   // ---------------------------------------------------------------------------
   describe('listProviderKinds()', () => {
-    it('returns file_directory and pg_dump', () => {
+    it('returns all provider kinds including AWS', () => {
       const sim = new BackupSimulator();
       const kinds = sim.listProviderKinds();
       expect(kinds).toContain('file_directory');
       expect(kinds).toContain('pg_dump');
+      expect(kinds).toContain('aws_rds');
+      expect(kinds).toContain('aws_s3');
     });
   });
 
@@ -302,7 +356,9 @@ describe('BackupSimulator', () => {
       const sim = new BackupSimulator();
       const states = [
         'no_backups_found', 'stale_backup', 'size_anomaly',
-        'integrity_failure', 'incomplete_coverage', 'rto_at_risk', 'healthy',
+        'integrity_failure', 'incomplete_coverage', 'rto_at_risk',
+        'rds_snapshot_error', 'glacier_restore_delay', 's3_versioning_disabled',
+        'healthy',
       ];
 
       for (const state of states) {
