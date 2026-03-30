@@ -148,36 +148,45 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
     // Quick connectivity check (PG-specific display)
     let replStatus: Awaited<ReturnType<PgLiveClient['queryReplicationStatus']>> = [];
     let replicaStatus: Awaited<ReturnType<PgLiveClient['queryReplicaStatus']>> = null;
+    let pgConnected = true;
 
     if (pgClient) {
       if (!isJson()) console.log('  Connecting to PostgreSQL...');
-      replStatus = await pgClient.queryReplicationStatus();
-      replicaStatus = await pgClient.queryReplicaStatus();
-      const connCount = await pgClient.queryConnectionCount();
-      const slots = await pgClient.queryReplicationSlots();
+      try {
+        replStatus = await pgClient.queryReplicationStatus();
+        replicaStatus = await pgClient.queryReplicaStatus();
+        const connCount = await pgClient.queryConnectionCount();
+        const slots = await pgClient.queryReplicationSlots();
 
-      if (!isJson()) {
-        console.log(`  ✅ Primary connected — ${connCount} active connections`);
-        console.log(`  ✅ Replication: ${replStatus.length} replica(s) streaming`);
-        if (replicaStatus) {
-          console.log(`  ✅ Replica connected — recovery mode: ${replicaStatus.isInRecovery}, lag: ${replicaStatus.lagSeconds}s`);
-        }
-        console.log(`  ✅ Slots: ${slots.length} replication slot(s)`);
-        console.log('');
+        if (!isJson()) {
+          console.log(`  ✅ Primary connected — ${connCount} active connections`);
+          console.log(`  ✅ Replication: ${replStatus.length} replica(s) streaming`);
+          if (replicaStatus) {
+            console.log(`  ✅ Replica connected — recovery mode: ${replicaStatus.isInRecovery}, lag: ${replicaStatus.lagSeconds}s`);
+          }
+          console.log(`  ✅ Slots: ${slots.length} replication slot(s)`);
+          console.log('');
 
-        // Show live replication data
-        console.log('  ── Live Replication Status ──');
-        for (const r of replStatus) {
-          const lagColor = r.lag_seconds > 30 ? '🔴' : r.lag_seconds > 10 ? '🟡' : '🟢';
-          console.log(`  ${lagColor} ${r.client_addr} | ${r.state} | lag: ${r.lag_seconds}s | sent: ${r.sent_lsn} | replay: ${r.replay_lsn}`);
-        }
-        console.log('');
+          // Show live replication data
+          console.log('  ── Live Replication Status ──');
+          for (const r of replStatus) {
+            const lagColor = r.lag_seconds > 30 ? '🔴' : r.lag_seconds > 10 ? '🟡' : '🟢';
+            console.log(`  ${lagColor} ${r.client_addr} | ${r.state} | lag: ${r.lag_seconds}s | sent: ${r.sent_lsn} | replay: ${r.replay_lsn}`);
+          }
+          console.log('');
 
-        for (const s of slots) {
-          const statusIcon = s.active ? '🟢' : '🔴';
-          console.log(`  ${statusIcon} Slot: ${s.slot_name} | type: ${s.slot_type} | active: ${s.active} | wal: ${s.wal_status}`);
+          for (const s of slots) {
+            const statusIcon = s.active ? '🟢' : '🔴';
+            console.log(`  ${statusIcon} Slot: ${s.slot_name} | type: ${s.slot_type} | active: ${s.active} | wal: ${s.wal_status}`);
+          }
+          console.log('');
         }
-        console.log('');
+      } catch {
+        pgConnected = false;
+        if (!isJson()) {
+          console.log('  ❌ PostgreSQL unreachable — target is down or connection refused');
+          console.log('');
+        }
       }
     } else {
       if (!isJson()) console.log(`  Connecting to ${target.kind} target "${target.name}"...`);

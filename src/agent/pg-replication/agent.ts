@@ -63,9 +63,37 @@ export class PgReplicationAgent implements RecoveryAgent {
 
   async assessHealth(_context: AgentContext): Promise<HealthAssessment> {
     const observedAt = new Date().toISOString();
-    const replicas = await this.backend.queryReplicationStatus();
-    const slots = await this.backend.queryReplicationSlots();
-    const connectionCount = await this.backend.queryConnectionCount();
+
+    let replicas: ReplicaStatus[];
+    let slots: import('./backend.js').ReplicationSlot[];
+    let connectionCount: number;
+    try {
+      replicas = await this.backend.queryReplicationStatus();
+      slots = await this.backend.queryReplicationSlots();
+      connectionCount = await this.backend.queryConnectionCount();
+    } catch (err) {
+      // Connection failed — PG is unreachable
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        status: 'unhealthy',
+        confidence: 0.99,
+        summary: `PostgreSQL is unreachable. Connection failed: ${message}`,
+        observedAt,
+        signals: [
+          {
+            source: 'pg_connection',
+            status: 'critical',
+            detail: `Cannot connect to PostgreSQL: ${message}`,
+            observedAt,
+          },
+        ],
+        recommendedActions: [
+          'Verify the PostgreSQL process is running and accepting connections.',
+          'Check network connectivity, firewall rules, and pg_hba.conf.',
+          'If the instance was intentionally stopped, investigate what caused the outage.',
+        ],
+      };
+    }
 
     if (replicas.length === 0) {
       return {
@@ -157,9 +185,31 @@ export class PgReplicationAgent implements RecoveryAgent {
   }
 
   async diagnose(context: AgentContext): Promise<DiagnosisResult> {
-    const replStatus = await this.backend.queryReplicationStatus();
-    const slots = await this.backend.queryReplicationSlots();
-    const connCount = await this.backend.queryConnectionCount();
+    let replStatus: ReplicaStatus[];
+    let slots: import('./backend.js').ReplicationSlot[];
+    let connCount: number;
+    try {
+      replStatus = await this.backend.queryReplicationStatus();
+      slots = await this.backend.queryReplicationSlots();
+      connCount = await this.backend.queryConnectionCount();
+    } catch (err) {
+      // Connection failed — PG is unreachable
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        status: 'identified',
+        scenario: 'database_unreachable',
+        confidence: 0.99,
+        findings: [
+          {
+            source: 'pg_connection',
+            observation: `PostgreSQL is unreachable: ${message}`,
+            severity: 'critical',
+            data: { error: message },
+          },
+        ],
+        diagnosticPlanNeeded: false,
+      };
+    }
 
     // Try AI-powered diagnosis first
     const aiResult = await aiDiagnose({
@@ -251,12 +301,18 @@ export class PgReplicationAgent implements RecoveryAgent {
   }
 
   async plan(_context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
+    const primaryId = String(_context.trigger.payload.instance || 'pg-primary');
+
+    // Handle unreachable database — generate investigation/restart plan
+    if (diagnosis.scenario === 'database_unreachable') {
+      return this.planForUnreachable(primaryId, diagnosis);
+    }
+
     // Dynamic target resolution: find the worst-lagging replica from diagnosis
     const replicas = (diagnosis.findings[0]?.data as { replicas: ReplicaStatus[] })?.replicas ?? [];
     const target = this.findWorstReplica(replicas);
     const targetAddr = target ? validateIPv4(target.client_addr) : 'unknown';
     const targetId = `pg-replica-${targetAddr.replace(/[./]/g, '-')}`;
-    const primaryId = String(_context.trigger.payload.instance || 'pg-primary');
 
     const steps: RecoveryStep[] = [
       // Step 1: diagnosis_action
@@ -827,6 +883,192 @@ export class PgReplicationAgent implements RecoveryAgent {
     }
 
     return { action: 'continue' };
+  }
+
+  private planForUnreachable(primaryId: string, diagnosis: DiagnosisResult): RecoveryPlan {
+    const errorMsg = diagnosis.findings[0]?.observation ?? 'Connection failed';
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'diagnosis_action',
+        name: 'Verify PostgreSQL process and network reachability',
+        executionContext: 'linux_process',
+        target: primaryId,
+        command: {
+          type: 'structured_command',
+          operation: 'service_status',
+          parameters: { service: 'postgresql', checks: ['process', 'port', 'network'] },
+        },
+        outputCapture: {
+          name: 'pg_reachability_check',
+          format: 'structured',
+          availableTo: 'subsequent_steps',
+        },
+        timeout: 'PT30S',
+      },
+      {
+        stepId: 'step-002',
+        type: 'human_notification',
+        name: 'Alert on-call DBA: PostgreSQL unreachable',
+        recipients: [
+          { role: 'on_call_dba', urgency: 'critical' },
+          { role: 'incident_commander', urgency: 'high' },
+        ],
+        message: {
+          summary: `PostgreSQL instance ${primaryId} is unreachable`,
+          detail: `${errorMsg}. Automated investigation has been initiated. Dependent services may be experiencing cascading failures.`,
+          contextReferences: ['pg_reachability_check'],
+          actionRequired: true,
+        },
+        channel: 'auto',
+      },
+      {
+        stepId: 'step-003',
+        type: 'checkpoint',
+        name: 'Capture system state before recovery attempt',
+        description: 'Snapshot available system state for forensic analysis.',
+        stateCaptures: [
+          {
+            name: 'system_logs',
+            captureType: 'command_output',
+            statement: 'journalctl -u postgresql --since "10 minutes ago" --no-pager',
+            captureCost: 'negligible',
+            capturePolicy: 'best_effort',
+          },
+          {
+            name: 'disk_state',
+            captureType: 'command_output',
+            statement: 'df -h /var/lib/postgresql',
+            captureCost: 'negligible',
+            capturePolicy: 'best_effort',
+          },
+        ],
+      },
+      {
+        stepId: 'step-004',
+        type: 'human_approval',
+        name: 'Approve PostgreSQL restart attempt',
+        description: 'Confirm before attempting to restart the PostgreSQL service.',
+        approvers: [{ role: 'on_call_dba', required: true }],
+        requiredApprovals: 1,
+        presentation: {
+          summary: `PostgreSQL ${primaryId} is down — approve restart?`,
+          detail: 'A service restart will attempt to restore database connectivity. Check system logs for root cause before approving.',
+          contextReferences: ['pg_reachability_check', 'system_logs', 'disk_state'],
+          proposedActions: ['Restart PostgreSQL service', 'Verify connectivity after restart'],
+          riskSummary: 'Service restart may cause brief connection drops for already-reconnecting clients.',
+          alternatives: [
+            { action: 'skip', description: 'Skip restart — investigate manually first.' },
+            { action: 'abort', description: 'Abort recovery plan entirely.' },
+          ],
+        },
+        timeout: 'PT15M',
+        timeoutAction: 'escalate',
+        escalateTo: {
+          role: 'engineering_lead',
+          message: 'PostgreSQL restart approval timed out. Database remains unreachable.',
+        },
+      },
+      {
+        stepId: 'step-005',
+        type: 'system_action',
+        name: 'Restart PostgreSQL service',
+        description: 'Attempt to restart the PostgreSQL process and restore connectivity.',
+        executionContext: 'linux_process',
+        target: primaryId,
+        riskLevel: 'elevated',
+        requiredCapabilities: ['db.service.restart'],
+        command: {
+          type: 'structured_command',
+          operation: 'service_restart',
+          parameters: { service: 'postgresql' },
+        },
+        preConditions: [],
+        statePreservation: { before: [], after: [] },
+        successCriteria: {
+          description: 'PostgreSQL is accepting connections',
+          check: {
+            type: 'sql',
+            statement: 'SELECT 1;',
+            expect: { operator: 'eq', value: 1 },
+          },
+        },
+        rollback: {
+          type: 'manual',
+          description: 'If restart fails, manual investigation of PostgreSQL logs and system state is required.',
+        },
+        blastRadius: {
+          directComponents: [primaryId],
+          indirectComponents: ['application', 'read-pool'],
+          maxImpact: 'brief_connection_reset',
+          cascadeRisk: 'medium',
+        },
+        timeout: 'PT2M',
+        retryPolicy: { maxRetries: 1, retryable: true },
+      },
+      {
+        stepId: 'step-006',
+        type: 'replanning_checkpoint',
+        name: 'Verify database recovery and assess downstream impact',
+        description: 'Check if PostgreSQL is back online and whether dependent services are recovering.',
+        fastReplan: true,
+        replanTimeout: 'PT30S',
+        diagnosticCaptures: [
+          {
+            name: 'post_restart_status',
+            captureType: 'command_output',
+            statement: 'pg_isready',
+            captureCost: 'negligible',
+            capturePolicy: 'required',
+          },
+        ],
+      },
+      {
+        stepId: 'step-007',
+        type: 'human_notification',
+        name: 'Send recovery summary',
+        recipients: [
+          { role: 'on_call_dba', urgency: 'medium' },
+          { role: 'incident_commander', urgency: 'medium' },
+        ],
+        message: {
+          summary: `PostgreSQL ${primaryId} recovery attempt completed`,
+          detail: 'Check post-restart status to confirm the database is accepting connections. Monitor dependent services for cascading recovery.',
+          contextReferences: ['post_restart_status'],
+          actionRequired: false,
+        },
+        channel: 'auto',
+      },
+    ];
+
+    return {
+      ...createPlanEnvelope({
+        planIdSuffix: 'pg-unreachable',
+        agentName: 'postgresql-replication-recovery',
+        agentVersion: '1.2.0',
+        scenario: 'database_unreachable',
+        estimatedDuration: 'PT10M',
+        summary: `Investigate and recover unreachable PostgreSQL instance ${primaryId}.`,
+      }),
+      impact: {
+        affectedSystems: [
+          {
+            identifier: primaryId,
+            technology: 'postgresql',
+            role: 'primary',
+            impactType: 'complete_unavailability',
+          },
+        ],
+        affectedServices: ['database', 'application', 'read-pool'],
+        estimatedUserImpact: 'All database-dependent services are unavailable until PostgreSQL is restored.',
+        dataLossRisk: 'none',
+      },
+      steps,
+      rollbackStrategy: {
+        type: 'stepwise',
+        description: 'Each step is independently recoverable. If restart fails, manual investigation is required.',
+      },
+    };
   }
 
   private findWorstReplica(replicas: ReplicaStatus[]): ReplicaStatus | undefined {
