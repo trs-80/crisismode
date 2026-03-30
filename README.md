@@ -115,6 +115,7 @@ See [QUICKSTART.md](QUICKSTART.md) for a full walkthrough.
 | Kubernetes | Node not-ready cascade, pod crashloop, stuck reconciliation | Simulator ready |
 | Ceph | OSD down cascade, degraded PGs, pool near-full | Simulator ready |
 | Flink | Checkpoint failure cascade, TaskManager loss, backpressure | Simulator ready |
+| AWS Backups | S3 backup verification, DynamoDB PITR, RDS snapshot staleness | Live -- tested against real AWS |
 
 ## Building Agents
 
@@ -206,7 +207,27 @@ crisismode webhook     # Start webhook receiver for AlertManager
 crisismode watch       # Continuous shadow observation
 ```
 
-Output modes: `--json` for machine-readable JSON, plain text auto-detected when piped, colored TTY output by default.
+Output modes: `--json` for machine-readable output, plain text auto-detected when piped, colored TTY output by default.
+
+### JSON output format
+
+The `--json` flag emits **JSON lines** (one JSON object per line), not a single JSON document. Each line has a `type` field indicating the data it carries:
+
+| Type | Description |
+|---|---|
+| `health` | Health assessment with `status` and `signals` array |
+| `diagnosis` | AI-powered diagnosis with `scenario`, `confidence`, and root cause |
+| `plan` | Recovery plan with `steps` array |
+
+Example usage:
+
+```bash
+# Pipe to jq for human-readable inspection
+crisismode recover --target my-db --json | jq 'select(.type == "diagnosis")'
+
+# Extract just the plan steps
+crisismode recover --target my-db --json | jq 'select(.type == "plan") | .plan.steps'
+```
 
 ## Check Plugin Ecosystem
 

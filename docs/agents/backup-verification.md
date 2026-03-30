@@ -86,6 +86,36 @@ targets:
       database: app-config       # "database" field is used as the source name
 ```
 
+### AWS backup targets
+
+CrisisMode can verify backups stored in AWS services. Each AWS target type uses an `aws` block with service-specific fields:
+
+```yaml
+targets:
+  # S3 backup bucket
+  - name: s3-backups
+    kind: aws-s3
+    aws:
+      bucket: my-backup-bucket
+      region: us-east-1
+
+  # DynamoDB table — checks point-in-time recovery (PITR) status
+  - name: orders-table
+    kind: aws-dynamodb
+    aws:
+      table: orders
+      region: us-east-1
+
+  # RDS instance — checks automated backups and snapshot recency
+  - name: prod-rds
+    kind: aws-rds
+    aws:
+      instance_id: prod-postgres
+      region: us-east-1
+```
+
+AWS credentials are resolved via the standard SDK chain (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `~/.aws/credentials`, IAM roles, IRSA). The IAM principal needs read access to the relevant service (e.g., `s3:ListBucket`, `dynamodb:DescribeContinuousBackups`, `rds:DescribeDBInstances`).
+
 ### Configuration fields
 
 | Field | Description | Default |
@@ -210,7 +240,15 @@ Registered but not yet implemented (ready for expansion):
 | `etcd_snapshot` | etcd cluster snapshots |
 | `velero` | Kubernetes backup via Velero |
 
-The `BackupProviderKind` type is string-extensible, so cloud providers (`aws_rds`, `gcp_cloudsql`, `azure_sql`) can be added without modifying existing code.
+AWS cloud providers are now live:
+
+| Kind | Description | Detection |
+|---|---|---|
+| `aws-s3` | S3 backup bucket verification | Checks bucket for backup objects |
+| `aws-dynamodb` | DynamoDB point-in-time recovery status | Checks PITR configuration |
+| `aws-rds` | RDS automated backup and snapshot verification | Checks backup retention and snapshot recency |
+
+The `BackupProviderKind` type is string-extensible, so additional cloud providers (`gcp_cloudsql`, `azure_sql`) can be added without modifying existing code.
 
 ### Verification checks
 

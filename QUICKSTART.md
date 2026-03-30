@@ -122,6 +122,36 @@ targets:
       passwordVar: PG_PASSWORD
 ```
 
+### AWS targets
+
+CrisisMode can verify backups stored in AWS services. Add an `aws` block with service-specific fields:
+
+```yaml
+targets:
+  # S3 backup bucket
+  - name: s3-backups
+    kind: aws-s3
+    aws:
+      bucket: my-backup-bucket
+      region: us-east-1
+
+  # DynamoDB table (point-in-time recovery check)
+  - name: orders-table
+    kind: aws-dynamodb
+    aws:
+      table: orders
+      region: us-east-1
+
+  # RDS instance (automated backup / snapshot check)
+  - name: prod-rds
+    kind: aws-rds
+    aws:
+      instance_id: prod-postgres
+      region: us-east-1
+```
+
+AWS credentials are resolved via the standard SDK chain (environment variables, `~/.aws/credentials`, IAM roles, IRSA).
+
 Then scan picks it up automatically:
 
 ```bash
