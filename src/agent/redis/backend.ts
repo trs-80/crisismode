@@ -37,6 +37,36 @@ export interface RedisSlowlogEntry {
   command: string;
 }
 
+export interface RedisClusterNodeInfo {
+  id: string;
+  address: string;
+  role: 'master' | 'slave';
+  flags: string[];
+  linkState: 'connected' | 'disconnected';
+  slots: string;
+}
+
+export interface RedisClusterInfo {
+  /** Whether this Redis instance is part of a cluster */
+  enabled: boolean;
+  /** Cluster state: 'ok' or 'fail' */
+  state: 'ok' | 'fail';
+  /** Total hash slots assigned */
+  slotsAssigned: number;
+  /** Hash slots in ok state */
+  slotsOk: number;
+  /** Hash slots in pfail state */
+  slotsPfail: number;
+  /** Hash slots in fail state */
+  slotsFail: number;
+  /** Known cluster nodes */
+  knownNodes: number;
+  /** Cluster size (master count) */
+  clusterSize: number;
+  /** Node details from CLUSTER NODES */
+  nodes: RedisClusterNodeInfo[];
+}
+
 export interface RedisBackend extends ExecutionBackend {
   /** Get server INFO (memory, connections, replication) */
   getInfo(): Promise<RedisInfo>;
@@ -52,6 +82,9 @@ export interface RedisBackend extends ExecutionBackend {
 
   /** Get current memory fragmentation ratio */
   getFragmentationRatio(): Promise<number>;
+
+  /** Get cluster info (returns enabled: false for standalone instances) */
+  getClusterInfo(): Promise<RedisClusterInfo>;
 
   /** Optional simulator-only state transitions */
   transition?(to: string): void;

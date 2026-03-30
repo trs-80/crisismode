@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { RedisBackend, RedisInfo, RedisSlaveInfo, RedisSlowlogEntry } from './backend.js';
+import type { RedisBackend, RedisInfo, RedisSlaveInfo, RedisSlowlogEntry, RedisClusterInfo } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 
@@ -105,6 +105,21 @@ export class RedisSimulator implements RedisBackend {
       case 'recovering': return 1.6;
       case 'recovered': return 1.1;
     }
+  }
+
+  async getClusterInfo(): Promise<RedisClusterInfo> {
+    // Simulator defaults to standalone mode (no cluster)
+    return {
+      enabled: false,
+      state: 'ok',
+      slotsAssigned: 0,
+      slotsOk: 0,
+      slotsPfail: 0,
+      slotsFail: 0,
+      knownNodes: 1,
+      clusterSize: 0,
+      nodes: [],
+    };
   }
 
   async executeCommand(command: Command): Promise<unknown> {

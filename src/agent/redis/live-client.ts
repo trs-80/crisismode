@@ -9,7 +9,7 @@
  */
 
 import { Redis as RedisClient } from 'ioredis';
-import type { RedisBackend, RedisInfo, RedisSlaveInfo, RedisSlowlogEntry } from './backend.js';
+import type { RedisBackend, RedisInfo, RedisSlaveInfo, RedisSlowlogEntry, RedisClusterInfo, RedisClusterNodeInfo } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 
@@ -127,6 +127,66 @@ export class RedisLiveClient implements RedisBackend {
     const raw = await this.client.info('memory');
     const sections = this.parseInfo(raw);
     return parseFloat(sections['mem_fragmentation_ratio'] ?? '1.0');
+  }
+
+  async getClusterInfo(): Promise<RedisClusterInfo> {
+    // Check if cluster mode is enabled via INFO server
+    const serverRaw = await this.client.info('server');
+    const serverFields = this.parseInfo(serverRaw);
+    const clusterEnabled = serverFields['redis_mode'] === 'cluster';
+
+    if (!clusterEnabled) {
+      return {
+        enabled: false,
+        state: 'ok',
+        slotsAssigned: 0,
+        slotsOk: 0,
+        slotsPfail: 0,
+        slotsFail: 0,
+        knownNodes: 1,
+        clusterSize: 0,
+        nodes: [],
+      };
+    }
+
+    // Parse CLUSTER INFO
+    const clusterRaw = await this.client.call('CLUSTER', 'INFO') as string;
+    const fields = this.parseInfo(clusterRaw);
+
+    // Parse CLUSTER NODES
+    const nodesRaw = await this.client.call('CLUSTER', 'NODES') as string;
+    const nodes: RedisClusterNodeInfo[] = [];
+    for (const line of nodesRaw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      // Format: <id> <ip:port@cport> <flags> <master> <ping-sent> <pong-recv> <config-epoch> <link-state> <slot> <slot> ...
+      const parts = trimmed.split(' ');
+      if (parts.length < 8) continue;
+      const flags = parts[2].split(',');
+      const isMaster = flags.includes('master');
+      const linkState = parts[7] as 'connected' | 'disconnected';
+      const slots = parts.slice(8).join(' ');
+      nodes.push({
+        id: parts[0],
+        address: parts[1],
+        role: isMaster ? 'master' : 'slave',
+        flags,
+        linkState,
+        slots,
+      });
+    }
+
+    return {
+      enabled: true,
+      state: (fields['cluster_state'] ?? 'ok') as 'ok' | 'fail',
+      slotsAssigned: parseInt(fields['cluster_slots_assigned'] ?? '0', 10),
+      slotsOk: parseInt(fields['cluster_slots_ok'] ?? '0', 10),
+      slotsPfail: parseInt(fields['cluster_slots_pfail'] ?? '0', 10),
+      slotsFail: parseInt(fields['cluster_slots_fail'] ?? '0', 10),
+      knownNodes: parseInt(fields['cluster_known_nodes'] ?? '0', 10),
+      clusterSize: parseInt(fields['cluster_size'] ?? '0', 10),
+      nodes,
+    };
   }
 
   async executeCommand(command: Command): Promise<unknown> {

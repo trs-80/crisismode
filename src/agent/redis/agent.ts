@@ -4,7 +4,7 @@
 import { defaultReplan } from '../interface.js';
 import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
-import type { DiagnosisResult } from '../../types/diagnosis-result.js';
+import type { DiagnosisFinding, DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
@@ -28,6 +28,7 @@ export class RedisMemoryAgent implements RecoveryAgent {
     const slaves = await this.backend.getSlaves();
     const slowlog = await this.backend.getSlowlog(10);
     const fragmentationRatio = await this.backend.getFragmentationRatio();
+    const cluster = await this.backend.getClusterInfo();
 
     const maxReplicaLag = Math.max(0, ...slaves.map((slave) => slave.lag));
     const memoryCritical = info.memoryUsagePercent > 80;
@@ -39,9 +40,13 @@ export class RedisMemoryAgent implements RecoveryAgent {
     const replicaCritical = maxReplicaLag > 30;
     const replicaWarning = maxReplicaLag > 5;
 
-    const status: HealthStatus = memoryCritical || clientCritical || slowlogCritical || replicaCritical
+    const failedNodes = cluster.enabled ? cluster.nodes.filter((n) => n.flags.includes('fail') || n.flags.includes('pfail')) : [];
+    const clusterCritical = cluster.enabled && (cluster.state === 'fail' || failedNodes.length > 0);
+    const clusterWarning = cluster.enabled && (cluster.slotsPfail > 0 || cluster.slotsOk < cluster.slotsAssigned);
+
+    const status: HealthStatus = memoryCritical || clientCritical || slowlogCritical || replicaCritical || clusterCritical
       ? 'unhealthy'
-      : memoryWarning || clientWarning || slowlogWarning || replicaWarning
+      : memoryWarning || clientWarning || slowlogWarning || replicaWarning || clusterWarning
         ? 'recovering'
         : 'healthy';
 
@@ -74,6 +79,20 @@ export class RedisMemoryAgent implements RecoveryAgent {
       },
     ];
 
+    if (cluster.enabled) {
+      const failedNodeList = failedNodes.map((n) => n.address).join(', ');
+      signals.push({
+        source: 'redis_cluster_health',
+        status: signalStatus(clusterCritical, clusterWarning),
+        detail: clusterCritical
+          ? `Cluster state: ${cluster.state}. ${failedNodes.length} node(s) in fail/pfail state: ${failedNodeList}. ${cluster.slotsFail} slots unavailable.`
+          : clusterWarning
+            ? `Cluster state: ${cluster.state}. ${cluster.slotsOk}/${cluster.slotsAssigned} slots ok, ${cluster.slotsPfail} pfail.`
+            : `Cluster state: ok. ${cluster.slotsOk}/${cluster.slotsAssigned} slots healthy across ${cluster.clusterSize} masters.`,
+        observedAt,
+      });
+    }
+
     return buildHealthAssessment({
       status,
       signals,
@@ -81,7 +100,7 @@ export class RedisMemoryAgent implements RecoveryAgent {
       summary: {
         healthy: 'Redis health is healthy. Memory, client pressure, slow queries, and replica lag are all within normal thresholds.',
         recovering: 'Redis health is recovering. Direct signals are improved but at least one pressure indicator is still above the healthy target.',
-        unhealthy: 'Redis health is unhealthy. Direct signals show memory, client, slowlog, or replication pressure still requires action.',
+        unhealthy: 'Redis health is unhealthy. Direct signals show memory, client, slowlog, replication, or cluster pressure still requires action.',
       },
       actions: {
         healthy: ['No action required. Continue monitoring Redis memory and client pressure.'],
@@ -97,47 +116,69 @@ export class RedisMemoryAgent implements RecoveryAgent {
     const slowlog = await this.backend.getSlowlog(10);
     const keyCount = await this.backend.getKeyCount();
     const fragRatio = await this.backend.getFragmentationRatio();
+    const cluster = await this.backend.getClusterInfo();
 
-    const scenario = info.memoryUsagePercent > 80
-      ? 'memory_pressure'
-      : info.connectedClients > 500
-        ? 'client_exhaustion'
-        : 'slow_query_storm';
+    const failedNodes = cluster.enabled ? cluster.nodes.filter((n) => n.flags.includes('fail') || n.flags.includes('pfail')) : [];
+    const clusterDegraded = cluster.enabled && (cluster.state === 'fail' || failedNodes.length > 0);
 
-    const confidence = info.memoryUsagePercent > 80 && info.evictedKeys > 0 ? 0.95 : 0.82;
+    const scenario = clusterDegraded
+      ? 'network_partition'
+      : info.memoryUsagePercent > 80
+        ? 'memory_pressure'
+        : info.connectedClients > 500
+          ? 'client_exhaustion'
+          : 'slow_query_storm';
+
+    const confidence = clusterDegraded
+      ? 0.95
+      : info.memoryUsagePercent > 80 && info.evictedKeys > 0 ? 0.95 : 0.82;
+
+    const findings: DiagnosisFinding[] = [
+      {
+        source: 'redis_info_memory',
+        observation: `Memory: ${(info.usedMemoryBytes / 1_073_741_824).toFixed(1)}GB / ${(info.maxMemoryBytes / 1_073_741_824).toFixed(1)}GB (${info.memoryUsagePercent.toFixed(1)}%). Fragmentation ratio: ${fragRatio.toFixed(1)}. Keys: ${(keyCount / 1_000_000).toFixed(1)}M.`,
+        severity: info.memoryUsagePercent > 80 ? 'critical' : 'warning',
+        data: { usedMemory: info.usedMemoryBytes, maxMemory: info.maxMemoryBytes, memoryPercent: info.memoryUsagePercent, fragRatio, keyCount },
+      },
+      {
+        source: 'redis_info_clients',
+        observation: `${info.connectedClients} connected clients, ${info.blockedClients} blocked. ${info.evictedKeys.toLocaleString()} keys evicted.`,
+        severity: info.blockedClients > 10 ? 'critical' : info.connectedClients > 500 ? 'warning' : 'info',
+        data: { clients: info.connectedClients, blocked: info.blockedClients, evicted: info.evictedKeys },
+      },
+      {
+        source: 'redis_slowlog',
+        observation: slowlog.length > 0
+          ? `${slowlog.length} slow queries detected. Worst: ${slowlog[0]?.command} (${(slowlog[0]?.durationMicros / 1000).toFixed(0)}ms).`
+          : 'No slow queries in recent slowlog.',
+        severity: slowlog.length > 5 ? 'critical' : slowlog.length > 0 ? 'warning' : 'info',
+        data: { slowlog },
+      },
+      {
+        source: 'redis_replication',
+        observation: `${slaves.length} replicas. Max lag: ${Math.max(0, ...slaves.map(s => s.lag))}s.`,
+        severity: slaves.some(s => s.lag > 30) ? 'warning' : 'info',
+        data: { slaves },
+      },
+    ];
+
+    if (cluster.enabled) {
+      const failedNodeList = failedNodes.map((n) => n.address).join(', ');
+      findings.push({
+        source: 'redis_cluster_health',
+        observation: clusterDegraded
+          ? `Cluster state: ${cluster.state}. ${failedNodes.length} node(s) failed: ${failedNodeList}. ${cluster.slotsFail} slots unavailable out of ${cluster.slotsAssigned}.`
+          : `Cluster healthy. ${cluster.slotsOk}/${cluster.slotsAssigned} slots ok across ${cluster.clusterSize} masters.`,
+        severity: clusterDegraded ? 'critical' as const : 'info' as const,
+        data: { clusterState: cluster.state, failedNodes: failedNodes.length, slotsFail: cluster.slotsFail, slotsAssigned: cluster.slotsAssigned },
+      });
+    }
 
     return {
       status: 'identified',
       scenario,
       confidence,
-      findings: [
-        {
-          source: 'redis_info_memory',
-          observation: `Memory: ${(info.usedMemoryBytes / 1_073_741_824).toFixed(1)}GB / ${(info.maxMemoryBytes / 1_073_741_824).toFixed(1)}GB (${info.memoryUsagePercent.toFixed(1)}%). Fragmentation ratio: ${fragRatio.toFixed(1)}. Keys: ${(keyCount / 1_000_000).toFixed(1)}M.`,
-          severity: info.memoryUsagePercent > 80 ? 'critical' : 'warning',
-          data: { usedMemory: info.usedMemoryBytes, maxMemory: info.maxMemoryBytes, memoryPercent: info.memoryUsagePercent, fragRatio, keyCount },
-        },
-        {
-          source: 'redis_info_clients',
-          observation: `${info.connectedClients} connected clients, ${info.blockedClients} blocked. ${info.evictedKeys.toLocaleString()} keys evicted.`,
-          severity: info.blockedClients > 10 ? 'critical' : info.connectedClients > 500 ? 'warning' : 'info',
-          data: { clients: info.connectedClients, blocked: info.blockedClients, evicted: info.evictedKeys },
-        },
-        {
-          source: 'redis_slowlog',
-          observation: slowlog.length > 0
-            ? `${slowlog.length} slow queries detected. Worst: ${slowlog[0]?.command} (${(slowlog[0]?.durationMicros / 1000).toFixed(0)}ms).`
-            : 'No slow queries in recent slowlog.',
-          severity: slowlog.length > 5 ? 'critical' : slowlog.length > 0 ? 'warning' : 'info',
-          data: { slowlog },
-        },
-        {
-          source: 'redis_replication',
-          observation: `${slaves.length} replicas. Max lag: ${Math.max(0, ...slaves.map(s => s.lag))}s.`,
-          severity: slaves.some(s => s.lag > 30) ? 'warning' : 'info',
-          data: { slaves },
-        },
-      ],
+      findings,
       diagnosticPlanNeeded: false,
     };
   }
