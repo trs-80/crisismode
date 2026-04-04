@@ -307,7 +307,6 @@ import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
 import { createPlanEnvelope } from '../../framework/plan-helpers.js';
-import { defaultReplan } from '../interface.js';
 import { websiteManifest } from './manifest.js';
 import type { WebsiteBackend } from './backend.js';
 import { WebsiteSimulator } from './simulator.js';
@@ -387,57 +386,64 @@ export class WebsiteHealthAgent implements RecoveryAgent {
 
     if (!probe.reachable) {
       return {
-        healthy: false,
+        status: 'identified',
         scenario: 'endpoint_unreachable',
-        summary: `Website at ${probe.url} is unreachable: ${probe.error}`,
+        confidence: 0.95,
         findings: [
           {
-            id: 'unreachable',
+            source: 'http_probe',
+            observation: `Cannot connect to ${probe.url}. Error: ${probe.error}`,
             severity: 'critical',
-            title: 'Endpoint unreachable',
-            detail: `Cannot connect to ${probe.url}. Error: ${probe.error}`,
           },
         ],
+        diagnosticPlanNeeded: false,
       };
     }
 
     if (probe.httpStatus !== null && probe.httpStatus >= 500) {
       return {
-        healthy: false,
+        status: 'identified',
         scenario: 'http_error_response',
-        summary: `Website returning HTTP ${probe.httpStatus}`,
+        confidence: 0.9,
         findings: [
           {
-            id: 'http-error',
+            source: 'http_probe',
+            observation: `${probe.url} returned HTTP ${probe.httpStatus}`,
             severity: 'critical',
-            title: 'Server error response',
-            detail: `${probe.url} returned HTTP ${probe.httpStatus}`,
           },
         ],
+        diagnosticPlanNeeded: false,
       };
     }
 
     if (probe.responseTimeMs > config.maxResponseTimeMs) {
       return {
-        healthy: false,
+        status: 'identified',
         scenario: 'high_response_time',
-        summary: `Website response time ${probe.responseTimeMs}ms exceeds ${config.maxResponseTimeMs}ms threshold`,
+        confidence: 0.85,
         findings: [
           {
-            id: 'slow-response',
+            source: 'http_probe',
+            observation: `Response time ${probe.responseTimeMs}ms exceeds threshold of ${config.maxResponseTimeMs}ms`,
             severity: 'warning',
-            title: 'High response time',
-            detail: `Response time ${probe.responseTimeMs}ms exceeds threshold of ${config.maxResponseTimeMs}ms`,
           },
         ],
+        diagnosticPlanNeeded: false,
       };
     }
 
     return {
-      healthy: true,
+      status: 'inconclusive',
       scenario: null,
-      summary: `Website at ${probe.url} is healthy (HTTP ${probe.httpStatus}, ${probe.responseTimeMs}ms)`,
-      findings: [],
+      confidence: 1.0,
+      findings: [
+        {
+          source: 'http_probe',
+          observation: `Website at ${probe.url} is healthy (HTTP ${probe.httpStatus}, ${probe.responseTimeMs}ms)`,
+          severity: 'info',
+        },
+      ],
+      diagnosticPlanNeeded: false,
     };
   }
 
@@ -462,13 +468,14 @@ export class WebsiteHealthAgent implements RecoveryAgent {
     });
 
     // Step 2: Notify the on-call team
+    const topFinding = diagnosis.findings[0]?.observation ?? 'Unknown issue';
     steps.push({
       stepId: 'website-notify-1',
       type: 'human_notification',
       name: 'Notify on-call',
-      description: `Website issue detected: ${diagnosis.summary}`,
+      description: `Website issue detected: ${topFinding}`,
       channel: 'default',
-      message: `CrisisMode detected a website issue:\n\nScenario: ${diagnosis.scenario}\nSummary: ${diagnosis.summary}`,
+      message: `CrisisMode detected a website issue:\n\nScenario: ${diagnosis.scenario}\nFinding: ${topFinding}`,
       templateName: 'incident_start',
     });
 
@@ -554,7 +561,7 @@ export class WebsiteHealthAgent implements RecoveryAgent {
 
     return createPlanEnvelope({
       name: `website-recovery-${diagnosis.scenario ?? 'unknown'}`,
-      description: `Recovery plan for: ${diagnosis.summary}`,
+      description: `Recovery plan for: ${diagnosis.findings[0]?.observation ?? diagnosis.scenario ?? 'unknown'}`,
       steps,
       rollbackStrategy: {
         description: 'Stop the service and page the on-call engineer for manual investigation.',
@@ -677,7 +684,7 @@ describe('WebsiteHealthAgent', () => {
     const agent = new WebsiteHealthAgent(simulator);
 
     const result = await agent.diagnose({} as any);
-    expect(result.healthy).toBe(false);
+    expect(result.status).toBe('identified');
     expect(result.scenario).toBe('endpoint_unreachable');
   });
 
