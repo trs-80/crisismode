@@ -127,6 +127,7 @@ exports[`CLI snapshot — scan JSON mode > scan summary in JSON mode 1`] = `
       "summary": "Leader election in progress",
     },
   ],
+  "recentChanges": [],
   "scannedAt": "<<TIMESTAMP>>",
   "score": 72,
   "type": "scan",

@@ -115,8 +115,18 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
         // Record in watch state
         const transition = watchState.recordHealth(health, cycleCount);
 
-        // Compact one-line status
-        printInfo(`[${health.observedAt}] ${health.status.toUpperCase()} (${confidencePct}% confidence)`);
+        // Compact status line — incident-native: what's the state right now?
+        const statusLabel = health.status === 'healthy' ? 'OK'
+          : health.status === 'unhealthy' ? 'PROBLEM'
+          : health.status === 'recovering' ? 'RECOVERING'
+          : 'CHECKING';
+
+        // Show delta from previous cycle
+        if (transition) {
+          printWarning(`[cycle ${cycleCount}] ${statusLabel} — changed from ${transition.from} to ${transition.to} (${confidencePct}% confidence)`);
+        } else {
+          printInfo(`[cycle ${cycleCount}] ${statusLabel} — ${health.summary} (${confidencePct}% confidence)`);
+        }
 
         // If transitioned from healthy to unhealthy, generate a recovery proposal
         if (transition && transition.from === 'healthy' && transition.to === 'unhealthy') {
@@ -138,7 +148,7 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
           console.log(report.markdown);
           console.log('');
 
-          printWarning('Recovery proposal ready. Run `crisismode recover` to execute.');
+          printWarning('Recovery proposal ready. To fix: `crisismode recover`');
           console.log('');
         }
 
@@ -146,12 +156,12 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
         if (cycleCount > 0 && cycleCount % 10 === 0) {
           const patterns = watchState.detectPatterns();
           for (const pattern of patterns) {
-            printWarning(`Pattern detected: ${pattern.description}`);
+            printWarning(`Pattern: ${pattern.description}`);
           }
           const forecasts = watchState.forecastDegradation();
           for (const forecast of forecasts) {
             printWarning(`Forecast: ${forecast.explanation}`);
-            printInfo(`  → ${forecast.recommendation}`);
+            printInfo(`  -> ${forecast.recommendation}`);
           }
         }
       } catch (err) {
@@ -180,7 +190,7 @@ function printWatchSummary(state: WatchState): void {
   const card = state.getHealthCard();
 
   console.log('');
-  printInfo('--- Observation Summary ---');
+  printInfo('--- Watch Summary ---');
   printInfo(`Target:               ${card.target}`);
   printInfo(`Total cycles:         ${summary.totalCycles}`);
   printInfo(`Health transitions:   ${summary.transitions.length}`);
@@ -192,7 +202,7 @@ function printWatchSummary(state: WatchState): void {
 
   if (summary.transitions.length > 0) {
     console.log('');
-    printInfo('Health transitions:');
+    printInfo('What changed:');
     for (const t of summary.transitions) {
       printInfo(`  ${t.timestamp}: ${t.from} -> ${t.to}`);
     }
@@ -200,7 +210,7 @@ function printWatchSummary(state: WatchState): void {
 
   if (summary.patterns.length > 0) {
     console.log('');
-    printInfo('Detected patterns:');
+    printInfo('Patterns noticed:');
     for (const p of summary.patterns) {
       printWarning(`  [${p.pattern}] ${p.description}`);
     }
@@ -208,11 +218,17 @@ function printWatchSummary(state: WatchState): void {
 
   if (card.forecasts.length > 0) {
     console.log('');
-    printInfo('Degradation forecasts:');
+    printInfo('Risk forecast:');
     for (const f of card.forecasts) {
       printWarning(`  [${f.driver}] ${f.explanation}`);
-      printInfo(`    → ${f.recommendation}`);
+      printInfo(`    -> ${f.recommendation}`);
     }
+  }
+
+  // Suggest next action
+  if (summary.transitions.length > 0) {
+    console.log('');
+    printInfo('Next step: `crisismode diagnose` to investigate, or `crisismode recover` to fix.');
   }
 
   console.log('');

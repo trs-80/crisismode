@@ -38,6 +38,7 @@ function normalizeTimestamps(str: string): string {
 
 const scanResult: ScanResult = {
   score: 72,
+  recentChanges: [],
   findings: [
     {
       id: 'PG-001',

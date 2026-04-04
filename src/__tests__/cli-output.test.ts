@@ -91,6 +91,7 @@ describe('CLI output — JSON mode', () => {
   it('printScanSummary outputs valid JSON in machine mode', () => {
     const result: ScanResult = {
       score: 85,
+      recentChanges: [],
       findings: [
         {
           id: 'PG-001',
@@ -154,6 +155,7 @@ describe('CLI output — pipe mode', () => {
   it('printScanSummary outputs tab-separated lines in pipe mode', () => {
     const result: ScanResult = {
       score: 100,
+      recentChanges: [],
       findings: [
         {
           id: 'REDIS-001',

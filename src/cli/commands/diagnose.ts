@@ -140,7 +140,9 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     }));
 
     if (health.status === 'unhealthy') {
-      printWarning('Run `crisismode recover` to generate and execute a recovery plan.');
+      printWarning('To fix: `crisismode recover`');
+    } else if (health.status === 'recovering') {
+      printInfo('Monitor progress: `crisismode watch`');
     }
   } finally {
     await backend.close();

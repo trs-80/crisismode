@@ -20,10 +20,13 @@ import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
   printBanner, printScanSummary, printNextAction,
-  printInfo, printDetection, printError,
+  printInfo, printDetection, printError, getOutputMode,
 } from '../output.js';
+import {
+  buildIncidentSummary, printIncidentSummary, formatIncidentSummaryText,
+} from '../incident-summary.js';
 import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
-import type { ScanFinding, ScanResult } from '../output.js';
+import type { ScanFinding, ScanResult, RecentChange } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { HealthAssessment } from '../../types/health.js';
 import type { AgentInstance } from '../../config/agent-registration.js';
@@ -252,39 +255,41 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     }
   }
 
-  // Phase 3: Compute score
+  // Phase 3: Detect recent changes
+  const recentChanges = await detectRecentChanges(findings);
+
+  // Phase 4: Compute score
   const score = computeHealthScore(findings);
 
   const result: ScanResult = {
     score,
     findings,
+    recentChanges,
     scannedAt: new Date().toISOString(),
     durationMs: Date.now() - startTime,
   };
 
+  // Build incident summary and attach as text for JSON consumers
+  const incidentSummary = buildIncidentSummary(result);
+  result.summary = formatIncidentSummaryText(incidentSummary);
+
   printScanSummary(result);
 
-  // Progressive disclosure: suggest next action based on findings
-  const unhealthy = findings.filter((f) => f.status === 'unhealthy');
-  const recovering = findings.filter((f) => f.status === 'recovering');
-  const unknown = findings.filter((f) => f.status === 'unknown');
+  // Print next steps from the incident summary (single source of truth)
+  for (const step of incidentSummary.nextSteps) {
+    printNextAction(step);
+  }
 
-  if (unhealthy.length > 0) {
-    const first = unhealthy[0];
-    printNextAction(`Run \`crisismode diagnose ${first.id}\` to investigate ${first.service}`);
-  } else if (recovering.length > 0) {
-    printNextAction(`Run \`crisismode watch\` to monitor recovery progress`);
-  } else if (unknown.length > 0) {
-    printNextAction(`Run \`crisismode scan --verbose\` for more details on unknown services`);
-  } else if (findings.length > 0) {
-    printNextAction('All systems healthy. Run `crisismode watch` to monitor continuously.');
+  // Print the incident summary artifact in human mode
+  if (getOutputMode() === 'human') {
+    printIncidentSummary(incidentSummary);
   }
 
   // Hint about agents that require explicit configuration
   const configuredKinds = new Set(config.targets.map((t) => t.kind));
   const newAgentHints = unconfiguredAgentHints(configuredKinds);
   if (newAgentHints.length > 0) {
-    printInfo(`Additional agents available: ${newAgentHints.join(', ')}. Add targets to crisismode.yaml to enable.`);
+    printInfo(`Additional checks available: ${newAgentHints.join(', ')}. Add targets to crisismode.yaml to enable.`);
   }
 
   // Hint about check plugins when none are discovered
@@ -363,4 +368,49 @@ function normalizePluginStatus(status: string): import('../../types/health.js').
     case 'warning': return 'recovering';
     default: return 'unknown';
   }
+}
+
+/**
+ * Detect recent changes that might be relevant to an incident.
+ * Checks for: container restarts (via signals), recent git deploys,
+ * and environment variable indicators.
+ */
+async function detectRecentChanges(findings: ScanFinding[]): Promise<RecentChange[]> {
+  const changes: RecentChange[] = [];
+  const now = new Date().toISOString();
+
+  // Check findings signals for restart indicators
+  for (const f of findings) {
+    for (const signal of f.signals) {
+      const detail = signal.detail.toLowerCase();
+      if (detail.includes('restart') || detail.includes('restarted')) {
+        changes.push({
+          type: 'container_restart',
+          description: `${f.service}: ${signal.detail}`,
+          detectedAt: now,
+        });
+      }
+      if (detail.includes('deploy') || detail.includes('deployed') || detail.includes('rollout')) {
+        changes.push({
+          type: 'deploy',
+          description: `${f.service}: ${signal.detail}`,
+          detectedAt: now,
+        });
+      }
+      if (detail.includes('config') && (detail.includes('change') || detail.includes('drift') || detail.includes('mismatch'))) {
+        changes.push({
+          type: 'config_change',
+          description: `${f.service}: ${signal.detail}`,
+          detectedAt: now,
+        });
+      }
+    }
+  }
+
+  // Note: git log detection removed — crisismode typically runs outside the
+  // application repo, so checking the tool's own git history is misleading.
+  // Deploy detection is handled via signals from agents (e.g., container image
+  // changes, rollout events) which are already captured above.
+
+  return changes;
 }

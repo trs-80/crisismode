@@ -392,11 +392,20 @@ export interface ScanFinding {
   signals: Array<{ status: string; detail: string }>;
 }
 
+export interface RecentChange {
+  type: 'container_restart' | 'config_change' | 'deploy';
+  description: string;
+  detectedAt: string;
+}
+
 export interface ScanResult {
   score: number;
   findings: ScanFinding[];
+  recentChanges: RecentChange[];
   scannedAt: string;
   durationMs: number;
+  /** Copy-pasteable incident summary (present in --json output). */
+  summary?: string;
 }
 
 export function printScanSummary(result: ScanResult): void {
@@ -414,7 +423,7 @@ export function printScanSummary(result: ScanResult): void {
     return;
   }
 
-  // Human mode — colored, scored table
+  // Human mode — incident-native, grouped by severity
   console.log('');
   const scoreColor = result.score >= 80 ? chalk.green
     : result.score >= 50 ? chalk.yellow
@@ -429,37 +438,65 @@ export function printScanSummary(result: ScanResult): void {
     return;
   }
 
-  // Compute service column width from data (min 20, max 40, +2 for padding)
-  const svcWidth = Math.min(40, Math.max(20, ...result.findings.map((f) => f.service.length + 2)));
+  // Group findings by severity
+  const unhealthy = result.findings.filter((f) => f.status === 'unhealthy');
+  const recovering = result.findings.filter((f) => f.status === 'recovering');
+  const unknown = result.findings.filter((f) => f.status === 'unknown');
+  const healthy = result.findings.filter((f) => f.status === 'healthy');
 
-  // Table header
-  console.log(
-    chalk.dim('  ') +
-    chalk.bold('ID'.padEnd(14)) +
-    chalk.bold('Service'.padEnd(svcWidth)) +
-    chalk.bold('Status'.padEnd(14)) +
-    chalk.bold('Level'.padEnd(10)) +
-    chalk.bold('Summary'),
-  );
-  console.log(chalk.dim('  ' + '-'.repeat(12 + svcWidth + 14 + 10 + 30)));
+  // Unhealthy first — this is what matters during an incident
+  if (unhealthy.length > 0) {
+    console.log(chalk.red.bold('  UNHEALTHY'));
+    printFindingGroup(unhealthy);
+    console.log('');
+  }
 
-  for (const f of result.findings) {
+  // Recovering / needs attention
+  if (recovering.length > 0) {
+    console.log(chalk.yellow.bold('  RECOVERING'));
+    printFindingGroup(recovering);
+    console.log('');
+  }
+
+  // Unknown
+  if (unknown.length > 0) {
+    console.log(chalk.dim.bold('  UNKNOWN'));
+    printFindingGroup(unknown);
+    console.log('');
+  }
+
+  // Healthy — compact
+  if (healthy.length > 0) {
+    console.log(chalk.green.bold('  HEALTHY'));
+    printFindingGroup(healthy);
+    console.log('');
+  }
+
+  // Recent changes
+  if (result.recentChanges.length > 0) {
+    console.log(chalk.cyan.bold('  RECENT CHANGES'));
+    for (const change of result.recentChanges) {
+      const icon = change.type === 'container_restart' ? chalk.yellow('restart')
+        : change.type === 'deploy' ? chalk.cyan('deploy')
+        : change.type === 'config_change' ? chalk.magenta('config')
+        : chalk.dim('env');
+      console.log(`    ${icon}  ${change.description}`);
+    }
+    console.log('');
+  }
+}
+
+function printFindingGroup(findings: ScanFinding[]): void {
+  for (const f of findings) {
     const statusIcon = healthStatusIcon(f.status);
-    const levelBadge = escalationBadge(f.escalationLevel);
-    // Truncate service name if it exceeds column width
-    const svc = f.service.length > svcWidth - 2
-      ? f.service.slice(0, svcWidth - 5) + '...'
-      : f.service;
     console.log(
       chalk.dim('  ') +
-      chalk.cyan(f.id.padEnd(14)) +
-      svc.padEnd(svcWidth) +
-      statusIcon.padEnd(14 + (statusIcon.length - stripAnsi(statusIcon).length)) +
-      levelBadge.padEnd(10 + (levelBadge.length - stripAnsi(levelBadge).length)) +
-      chalk.dim(f.summary),
+      chalk.cyan(f.id.padEnd(12)) +
+      statusIcon + ' ' +
+      f.service +
+      chalk.dim(` — ${f.summary}`),
     );
   }
-  console.log('');
 }
 
 function healthStatusIcon(status: HealthStatus): string {
