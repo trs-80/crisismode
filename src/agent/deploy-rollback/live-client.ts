@@ -29,7 +29,8 @@ export interface VercelConfig {
 }
 
 interface VercelDeployment {
-  uid: string;
+  id: string;
+  uid?: string;
   name: string;
   url: string;
   state: string;
@@ -49,12 +50,9 @@ export class DeployLiveClient implements DeployBackend {
   }
 
   private async fetch<T>(path: string): Promise<T> {
-    const params = new URLSearchParams();
-    if (this.config.teamId) {
-      params.set('teamId', this.config.teamId);
-    }
-    const qs = params.toString();
-    const url = `${this.baseUrl}${path}${qs ? `?${qs}` : ''}`;
+    const separator = path.includes('?') ? '&' : '?';
+    const teamParam = this.config.teamId ? `${separator}teamId=${encodeURIComponent(this.config.teamId)}` : '';
+    const url = `${this.baseUrl}${path}${teamParam}`;
 
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${this.config.token}` },
@@ -63,6 +61,28 @@ export class DeployLiveClient implements DeployBackend {
 
     if (!response.ok) {
       throw new Error(`Vercel API error: ${response.status} ${response.statusText} for ${path}`);
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  private async post<T>(path: string, body?: unknown): Promise<T> {
+    const separator = path.includes('?') ? '&' : '?';
+    const teamParam = this.config.teamId ? `${separator}teamId=${encodeURIComponent(this.config.teamId)}` : '';
+    const url = `${this.baseUrl}${path}${teamParam}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Vercel API error: ${response.status} ${response.statusText} for POST ${path}`);
     }
 
     return response.json() as Promise<T>;
@@ -78,7 +98,7 @@ export class DeployLiveClient implements DeployBackend {
     };
 
     return {
-      sha: d.meta?.githubCommitSha ?? d.uid,
+      sha: d.meta?.githubCommitSha ?? d.uid ?? d.id,
       timestamp: new Date(d.created).toISOString(),
       status: stateMap[d.readyState ?? d.state] ?? 'running',
       author: d.meta?.githubCommitAuthorLogin ?? 'unknown',
@@ -125,11 +145,18 @@ export class DeployLiveClient implements DeployBackend {
     const urls = this.config.healthEndpoints ?? [];
     if (urls.length === 0) return [];
 
+    // Support Vercel deployment protection bypass
+    const bypassSecret = process.env['VERCEL_PROTECTION_BYPASS'];
+    const bypassHeaders: Record<string, string> = bypassSecret
+      ? { 'x-vercel-protection-bypass': bypassSecret, 'x-vercel-set-bypass-cookie': 'samesitenone' }
+      : {};
+
     const results = await Promise.allSettled(
       urls.map(async (url): Promise<EndpointHealth> => {
         const start = Date.now();
         try {
           const res = await fetch(url, {
+            headers: bypassHeaders,
             signal: AbortSignal.timeout(this.timeoutMs),
           });
           const latencyMs = Date.now() - start;
@@ -180,10 +207,9 @@ export class DeployLiveClient implements DeployBackend {
         if (!target) {
           throw new Error('No rollback target available');
         }
-        // Vercel rollback: create a new deployment from the target commit
-        // This is a promote-to-production action via the Vercel API
-        const data = await this.fetch<{ uid: string }>(
-          `/v13/deployments/${target.sha}/promote`,
+        // Vercel instant rollback: POST /v9/projects/:projectId/rollback/:deploymentId
+        const data = await this.post<{ uid: string }>(
+          `/v9/projects/${this.config.projectId}/rollback/${target.sha}`,
         );
         return { rolledBack: true, deploymentId: data.uid, target };
       }
