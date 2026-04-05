@@ -13,18 +13,20 @@
 
 import { assembleContext } from '../../framework/context.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
-import { loadConfig } from '../../config/loader.js';
+import { loadConfigWithDetection } from '../../config/loader.js';
 import { detectServices } from '../detect.js';
-import { discoverStack } from '../autodiscovery.js';
+import { discoverStack, printOnboardingMessage } from '../autodiscovery.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
   printBanner, printScanSummary, printNextAction,
   printInfo, printDetection, printError, getOutputMode,
+  printPlainEnglishSummary,
 } from '../output.js';
 import {
-  buildIncidentSummary, printIncidentSummary, formatIncidentSummaryText,
+  buildIncidentSummary, formatIncidentSummaryText,
 } from '../incident-summary.js';
+import { generatePlainEnglishSummary } from '../ai-summary.js';
 import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
 import type { ScanFinding, ScanResult, RecentChange } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
@@ -77,10 +79,13 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   // Phase 1: Discovery
   printInfo('Scanning for services...');
-  const [stackProfile, configResult] = await Promise.all([
+  const [stackProfile, configDetection] = await Promise.all([
     discoverStack(),
-    loadConfigSafe(opts.configPath),
+    loadConfigWithDetectionSafe(opts.configPath),
   ]);
+
+  const configResult = configDetection.config;
+  const configSource = configDetection.source;
 
   // Merge detected services with config targets
   const detectedServices = stackProfile.services.filter((s) => s.detected);
@@ -98,6 +103,43 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   } else {
     config = buildConfigFromDetection([]);
     config = { ...config, targets: mergeLocalTargets(config.targets) };
+  }
+
+  // Merge derived targets from connection string env vars
+  if (stackProfile.derivedTargets.length > 0) {
+    const existingKinds = new Set(config.targets.map((t) => t.kind));
+    const newTargets = stackProfile.derivedTargets.filter((t) => !existingKinds.has(t.kind));
+    if (newTargets.length > 0) {
+      config = { ...config, targets: [...config.targets, ...newTargets] };
+    }
+  }
+
+  // Auto-configure Vercel when platform detected and project.json + token available
+  if (
+    stackProfile.platform.platform === 'vercel' &&
+    stackProfile.vercelProject &&
+    process.env['VERCEL_TOKEN']
+  ) {
+    process.env['VERCEL_PROJECT_ID'] = stackProfile.vercelProject.projectId;
+    const hasAppTarget = config.targets.some((t) => t.kind === 'application');
+    if (!hasAppTarget) {
+      config = {
+        ...config,
+        targets: [
+          ...config.targets,
+          {
+            name: `vercel-${stackProfile.vercelProject.projectId}`,
+            kind: 'application',
+            primary: { host: 'api.vercel.com', port: 443 },
+          },
+        ],
+      };
+    }
+  }
+
+  // First-run onboarding message
+  if (configSource !== 'file') {
+    printOnboardingMessage(stackProfile, configSource);
   }
 
   // Apply category filter if provided
@@ -273,6 +315,10 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   const incidentSummary = buildIncidentSummary(result);
   result.summary = formatIncidentSummaryText(incidentSummary);
 
+  // Generate plain-English AI summary (non-blocking — falls back gracefully)
+  const plainEnglish = await generatePlainEnglishSummary(incidentSummary, result.recentChanges);
+  result.aiSummary = plainEnglish.text;
+
   printScanSummary(result);
 
   // Print next steps from the incident summary (single source of truth)
@@ -280,9 +326,9 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     printNextAction(step);
   }
 
-  // Print the incident summary artifact in human mode
+  // Print plain-English summary in human mode (replaces structured incident summary)
   if (getOutputMode() === 'human') {
-    printIncidentSummary(incidentSummary);
+    printPlainEnglishSummary(plainEnglish);
   }
 
   // Hint about agents that require explicit configuration
@@ -325,14 +371,13 @@ function computeHealthScore(findings: ScanFinding[]): number {
 }
 
 /**
- * Load config without throwing — returns null if no config found.
+ * Load config with detection info, without throwing.
  */
-function loadConfigSafe(configPath?: string) {
+function loadConfigWithDetectionSafe(configPath?: string) {
   try {
-    const result = loadConfig({ configPath });
-    return result.config;
+    return loadConfigWithDetection({ configPath });
   } catch {
-    return null;
+    return { config: null, source: 'none' as const };
   }
 }
 

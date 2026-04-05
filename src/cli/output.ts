@@ -15,6 +15,7 @@ import type { PlanExplanation } from '../framework/ai-explainer.js';
 import type { DetectedService } from './detect.js';
 import type { NetworkProfile } from '../framework/network-profile.js';
 import type { EscalationLevel } from '../framework/escalation.js';
+import type { PlainEnglishSummary } from './ai-summary.js';
 
 /**
  * Three output modes:
@@ -406,6 +407,8 @@ export interface ScanResult {
   durationMs: number;
   /** Copy-pasteable incident summary (present in --json output). */
   summary?: string;
+  /** Plain-English AI-generated or fallback summary. */
+  aiSummary?: string;
 }
 
 export function printScanSummary(result: ScanResult): void {
@@ -506,6 +509,18 @@ function healthStatusIcon(status: HealthStatus): string {
     case 'unhealthy': return chalk.red('UNHEALTHY');
     case 'unknown': return chalk.dim('UNKNOWN');
   }
+}
+
+// ── Plain-English summary ──
+
+export function printPlainEnglishSummary(summary: PlainEnglishSummary): void {
+  if (outputOptions.mode !== 'human') return;
+
+  const sourceLabel = summary.source === 'ai' ? chalk.dim(' (AI-generated)') : chalk.dim(' (auto-generated)');
+  console.log('');
+  console.log(chalk.bold('  Summary') + sourceLabel);
+  console.log(`    ${summary.text}`);
+  console.log('');
 }
 
 // ── Escalation badges ──

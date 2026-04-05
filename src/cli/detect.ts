@@ -35,7 +35,7 @@ const PROBE_TIMEOUT_MS = 2000;
  * Probe a single host:port via TCP connect.
  * Returns true if the connection succeeds within the timeout.
  */
-function probePort(host: string, port: number, timeoutMs: number = PROBE_TIMEOUT_MS): Promise<boolean> {
+export function probePort(host: string, port: number, timeoutMs: number = PROBE_TIMEOUT_MS): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = createConnection({ host, port });
 

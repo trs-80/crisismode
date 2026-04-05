@@ -424,6 +424,7 @@ describe('printStackProfile', () => {
       envHints: [],
       platform: { platform: null, detected: false, signals: [] },
       aiProviders: [],
+      derivedTargets: [],
       confidence: 0,
       ...overrides,
     };

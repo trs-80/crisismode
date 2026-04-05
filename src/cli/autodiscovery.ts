@@ -11,13 +11,24 @@
  */
 
 import { readFile, access } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
 import { detectServices } from './detect.js';
 import type { DetectedService } from './detect.js';
 import { INFRA_PKG_NAMES } from '../config/service-registry.js';
+import type { TargetConfig } from '../config/schema.js';
 
 // ── Types ──
+
+export interface ParsedConnection {
+  kind: string;
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  database?: string;
+}
 
 export interface StackProfile {
   /** Services detected via port probing */
@@ -30,6 +41,10 @@ export interface StackProfile {
   platform: PlatformInfo;
   /** AI provider configuration */
   aiProviders: AiProviderInfo[];
+  /** Targets derived from connection string env vars */
+  derivedTargets: TargetConfig[];
+  /** Vercel project config from .vercel/project.json */
+  vercelProject?: { projectId: string; orgId: string };
   /** Overall confidence in the profile */
   confidence: number;
 }
@@ -146,6 +161,7 @@ const PLATFORM_ENV: Array<{ envVar: string; platform: string }> = [
 ];
 
 const PLATFORM_FILES: Array<{ file: string; platform: string }> = [
+  { file: '.vercel/project.json', platform: 'vercel' },
   { file: 'vercel.json', platform: 'vercel' },
   { file: 'fly.toml', platform: 'fly' },
   { file: 'render.yaml', platform: 'render' },
@@ -158,6 +174,104 @@ const PLATFORM_FILES: Array<{ file: string; platform: string }> = [
   { file: 'sam.yaml', platform: 'aws-sam' },
   { file: 'template.yaml', platform: 'aws-sam' },
 ];
+
+// ── Connection string parsing ──
+
+const PROTOCOL_MAP: Record<string, { kind: string; defaultPort: number }> = {
+  'postgres:': { kind: 'postgresql', defaultPort: 5432 },
+  'postgresql:': { kind: 'postgresql', defaultPort: 5432 },
+  'redis:': { kind: 'redis', defaultPort: 6379 },
+  'rediss:': { kind: 'redis', defaultPort: 6379 },
+  'mongodb:': { kind: 'mongodb', defaultPort: 27017 },
+  'mongodb+srv:': { kind: 'mongodb', defaultPort: 27017 },
+  'mysql:': { kind: 'mysql', defaultPort: 3306 },
+  'amqp:': { kind: 'rabbitmq', defaultPort: 5672 },
+  'amqps:': { kind: 'rabbitmq', defaultPort: 5672 },
+};
+
+/**
+ * Parse a connection string URL into structured connection info.
+ * Returns null for malformed or unrecognised URLs.
+ */
+export function parseConnectionString(url: string): ParsedConnection | null {
+  try {
+    const parsed = new URL(url);
+    const mapping = PROTOCOL_MAP[parsed.protocol];
+    if (!mapping) return null;
+
+    const host = parsed.hostname;
+    if (!host) return null;
+
+    const port = parsed.port ? Number(parsed.port) : mapping.defaultPort;
+    const username = parsed.username ? decodeURIComponent(parsed.username) : undefined;
+    const password = parsed.password ? decodeURIComponent(parsed.password) : undefined;
+    const database = parsed.pathname.replace(/^\//, '') || undefined;
+
+    return { kind: mapping.kind, host, port, username, password, database };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build TargetConfig entries from environment variable hints that contain
+ * parseable connection strings. Deduplicates by kind+host+port.
+ *
+ * SECURITY: Never logs connection string values or credentials.
+ */
+export function buildTargetsFromEnvHints(hints: EnvHint[]): TargetConfig[] {
+  const targets: TargetConfig[] = [];
+  const seen = new Set<string>();
+
+  for (const hint of hints) {
+    if (!hint.present || !hint.inferredService) continue;
+
+    const value = process.env[hint.name];
+    if (!value) continue;
+
+    const parsed = parseConnectionString(value);
+    if (!parsed) continue;
+
+    const dedupeKey = `${parsed.kind}:${parsed.host}:${parsed.port}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const target: TargetConfig = {
+      name: `env-${hint.name.toLowerCase().replace(/_/g, '-')}`,
+      kind: parsed.kind,
+      primary: { host: parsed.host, port: parsed.port, database: parsed.database },
+    };
+
+    if (parsed.username || parsed.password) {
+      target.credentials = {
+        type: 'value' as const,
+        username: parsed.username,
+        password: parsed.password,
+      };
+    }
+
+    targets.push(target);
+  }
+
+  return targets;
+}
+
+/**
+ * Read .vercel/project.json and extract projectId + orgId.
+ * Returns null if the file is missing or malformed.
+ */
+export function readVercelProjectConfig(cwd: string): { projectId: string; orgId: string } | null {
+  try {
+    const raw = readFileSync(join(cwd, '.vercel', 'project.json'), 'utf-8');
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    const projectId = data.projectId;
+    const orgId = data.orgId;
+    if (typeof projectId !== 'string' || typeof orgId !== 'string') return null;
+    return { projectId, orgId };
+  } catch {
+    return null;
+  }
+}
 
 // ── Discovery ──
 
@@ -178,6 +292,8 @@ export async function discoverStack(): Promise<StackProfile> {
 
   const envHints = scanEnvHints();
   const aiProviders = detectAiProviders(appStack);
+  const derivedTargets = buildTargetsFromEnvHints(envHints);
+  const vercelProject = readVercelProjectConfig(cwd);
 
   const confidence = computeConfidence(services, appStack, envHints, platform);
 
@@ -187,6 +303,8 @@ export async function discoverStack(): Promise<StackProfile> {
     envHints,
     platform,
     aiProviders,
+    derivedTargets,
+    ...(vercelProject ? { vercelProject } : {}),
     confidence,
   };
 }
@@ -429,6 +547,47 @@ export function printStackProfile(profile: StackProfile): void {
     }
   }
 
+  console.log('');
+}
+
+/**
+ * Print a first-run onboarding message when no config file exists
+ * and services were detected. Only prints in human output mode.
+ */
+export function printOnboardingMessage(profile: StackProfile, configSource: string): void {
+  // Only show when there's something meaningful to report
+  const detected = profile.services.filter((s) => s.detected);
+  if (detected.length === 0 && profile.derivedTargets.length === 0) return;
+
+  // Only in TTY / human mode
+  if (!process.stdout.isTTY) return;
+
+  console.log('');
+  console.log(chalk.bold('  Welcome to CrisisMode!'));
+  console.log('');
+  console.log(chalk.bold('  Detected:'));
+
+  for (const target of profile.derivedTargets) {
+    const envName = target.name.replace(/^env-/, '').replace(/-/g, '_').toUpperCase();
+    const host = target.primary ? `${target.primary.host}:${target.primary.port}` : 'unknown';
+    console.log(chalk.green(`    + ${target.kind}`) + chalk.dim(` at ${host} (from ${envName})`));
+  }
+
+  for (const s of detected) {
+    // Skip services already covered by derived targets
+    const coveredByEnv = profile.derivedTargets.some((t) => t.kind === s.kind);
+    if (!coveredByEnv) {
+      console.log(chalk.green(`    + ${s.kind}`) + chalk.dim(` at ${s.host}:${s.port}`));
+    }
+  }
+
+  if (profile.platform.detected) {
+    const vercelInfo = profile.vercelProject ? ` (project: ${profile.vercelProject.projectId})` : '';
+    console.log(chalk.green(`    + Platform: ${profile.platform.platform}`) + chalk.dim(vercelInfo));
+  }
+
+  console.log('');
+  console.log(chalk.dim('  Running health checks now. Save config: crisismode init'));
   console.log('');
 }
 
