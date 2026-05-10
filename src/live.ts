@@ -54,8 +54,23 @@ function sleep(ms: number): Promise<void> {
 /**
  * Prompt the user for confirmation before executing mutations.
  * Returns true if the user confirms, false otherwise.
+ *
+ * Non-interactive behavior: the prompt requires an interactive TTY. When
+ * stdin is not a TTY (CI, harness, piped input), we fail closed unless
+ * CRISISMODE_AUTO_CONFIRM=1 is set as an explicit opt-in.
  */
 async function confirmExecution(targetName: string, targetKind: string): Promise<boolean> {
+  if (process.env.CRISISMODE_AUTO_CONFIRM === '1') {
+    console.log(`  EXECUTE MODE auto-confirmed via CRISISMODE_AUTO_CONFIRM=1 (target: ${targetName} [${targetKind}])`);
+    return true;
+  }
+
+  if (!process.stdin.isTTY) {
+    console.error('  --execute requires an interactive terminal for confirmation.');
+    console.error('  Set CRISISMODE_AUTO_CONFIRM=1 to bypass the prompt in non-interactive contexts.');
+    return false;
+  }
+
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
     console.log('');
