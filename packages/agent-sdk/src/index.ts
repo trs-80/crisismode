@@ -14,6 +14,8 @@ export * from './types/health.js';
 export * from './types/catalog-entry.js';
 export * from './types/forensic-record.js';
 export * from './types/network.js';
+export * from './types/evidence-bundle.js';
+export * from './types/action-template.js';
 
 // Agent interface
 export * from './agent/interface.js';

@@ -96,14 +96,14 @@ describe('routeBySymptoms', () => {
     expect(redisScenario!.agentKind).toBe('redis');
   });
 
-  it('routes queue backlog signals to redis agent', () => {
+  it('routes queue backlog signals to the message-queue agent', () => {
     const signals: SymptomSignal[] = [
       { type: 'queue_depth', source: 'workers', detail: 'Queue backlog growing, 5000 stuck jobs', severity: 'warning' },
     ];
     const result = routeBySymptoms(signals);
     const queueScenario = result.scenarios.find((s) => s.scenario === 'queue-backlog');
     expect(queueScenario).toBeDefined();
-    expect(queueScenario!.agentKind).toBe('redis');
+    expect(queueScenario!.agentKind).toBe('message-queue');
   });
 
   it('routes kafka consumer lag signals to kafka agent', () => {

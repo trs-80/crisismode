@@ -108,13 +108,17 @@ const ROUTING_RULES: RoutingRule[] = [
   },
   {
     scenario: 'queue-backlog',
-    agentKind: 'redis',
+    // Generic queue backlog routes to the dedicated queue-backlog agent
+    // (registered as `message-queue` in src/agent/queue-backlog/registration.ts).
+    // Redis-as-queue backends (Bull, Sidekiq) still match the redis-memory
+    // rule on memory keywords when Redis itself is the problem.
+    agentKind: 'message-queue',
     signalTypes: ['queue_depth', 'latency', 'timeout'],
     keywords: ['queue', 'backlog', 'worker', 'stuck', 'bull', 'job', 'delayed'],
     stackDeps: pkgsForService('redis'),
     stackServices: ['redis'],
     baseWeight: 0.5,
-    reasoning: 'Growing queue depth or stuck workers with queue dependencies in stack',
+    reasoning: 'Growing queue depth or stuck workers — routed to the queue-backlog agent',
   },
   {
     scenario: 'kafka-consumer-lag',
@@ -168,6 +172,58 @@ const ROUTING_RULES: RoutingRule[] = [
     keywords: ['deploy', 'release', 'rollback', 'regression', 'version', 'new version'],
     baseWeight: 0.4,
     reasoning: 'High error rate correlated with a recent deployment change',
+  },
+  {
+    scenario: 'queue-worker-backlog',
+    agentKind: 'message-queue',
+    signalTypes: ['queue_depth', 'latency', 'error_rate', 'resource_exhaustion'],
+    // Keywords chosen to discriminate from kafka: workers, generic queue runtimes,
+    // dead-letter terminology, common non-kafka brokers.
+    keywords: [
+      'workers',
+      'worker',
+      'sidekiq',
+      'celery',
+      'rq',
+      'bullmq',
+      'sqs',
+      'rabbitmq',
+      'dlq',
+      'dead letter',
+      'dead-letter',
+      'job stuck',
+      'jobs stuck',
+      'pending jobs',
+      'saturation',
+      'scale out',
+      'scale-out',
+      'worker pool',
+    ],
+    baseWeight: 0.5,
+    reasoning: 'Queue saturation, stuck workers, or backlog signals in a generic queue runtime',
+  },
+  {
+    scenario: 'db-migration-stuck',
+    agentKind: 'managed-database',
+    signalTypes: ['error_rate', 'latency', 'timeout', 'connection', 'config_mismatch'],
+    // Keywords for schema/migration tooling that don't overlap with the
+    // generic postgresql replication/pool rules.
+    keywords: [
+      'migration',
+      'schema',
+      'alembic',
+      'flyway',
+      'liquibase',
+      'goose',
+      'ddl',
+      'pg_locks',
+      'long_query',
+      'lock_wait',
+      'blocking_query',
+      'schema_lock',
+    ],
+    baseWeight: 0.5,
+    reasoning: 'Schema migration tooling or DDL lock signals',
   },
   {
     scenario: 'config-drift',

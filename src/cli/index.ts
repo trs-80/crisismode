@@ -47,6 +47,9 @@ const HELP = `
     crisismode playbook dry-run <path>     Preview compiled recovery plan
     crisismode agent list                  List all registered agents
     crisismode agent info <name>           Show details for a specific agent
+    crisismode bundle ingest <path|->      Ingest an SRE evidence bundle (v1)
+    crisismode bundle respond <path|->     Emit AdapterResponse v1 (use "-" for stdin)
+    crisismode bundle execute <path|->     Translate bundle to RecoveryPlan (dry-run)
 
   Options:
     --agent <name>      Scaffold a new check plugin (init only)
@@ -85,6 +88,7 @@ async function main(): Promise<void> {
         local: { type: 'boolean', default: false },
         force: { type: 'boolean', default: false },
         interval: { type: 'string' },
+        output: { type: 'string' },
         json: { type: 'boolean', default: false },
         'no-color': { type: 'boolean', default: false },
         verbose: { type: 'boolean', default: false },
@@ -260,6 +264,23 @@ async function main(): Promise<void> {
         subcommand: sub,
         args: positionals.slice(1),
         json: values.json as boolean,
+      });
+      break;
+    }
+
+    case 'bundle': {
+      const sub = positionals[0] as 'ingest' | 'respond' | 'execute' | undefined;
+      if (!sub || !['ingest', 'respond', 'execute'].includes(sub)) {
+        console.error(
+          'Usage: crisismode bundle ingest|respond|execute <path> [--output <file>]',
+        );
+        process.exit(1);
+      }
+      const { runBundle } = await import('./commands/bundle.js');
+      await runBundle({
+        subcommand: sub,
+        args: positionals.slice(1),
+        output: values.output as string | undefined,
       });
       break;
     }
