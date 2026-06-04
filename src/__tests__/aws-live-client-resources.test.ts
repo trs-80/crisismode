@@ -4,7 +4,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Shared counters the hoisted SDK mocks write to.
-const h = vi.hoisted(() => ({ dynamoClients: 0, dynamoDestroys: 0, s3Sends: 0 }));
+const h = vi.hoisted(() => ({
+  dynamoClients: 0,
+  dynamoDestroys: 0,
+  s3Clients: 0,
+  s3Destroys: 0,
+  s3Sends: 0,
+}));
 
 vi.mock('@aws-sdk/client-dynamodb', () => {
   class DynamoDBClient {
@@ -33,11 +39,16 @@ vi.mock('@aws-sdk/client-dynamodb', () => {
 
 vi.mock('@aws-sdk/client-s3', () => {
   class S3Client {
+    constructor() {
+      h.s3Clients++;
+    }
     async send() {
       h.s3Sends++;
       return {};
     }
-    destroy() {}
+    destroy() {
+      h.s3Destroys++;
+    }
   }
   const cmd = (name: string) =>
     class {
@@ -56,6 +67,8 @@ vi.mock('@aws-sdk/client-s3', () => {
 beforeEach(() => {
   h.dynamoClients = 0;
   h.dynamoDestroys = 0;
+  h.s3Clients = 0;
+  h.s3Destroys = 0;
   h.s3Sends = 0;
 });
 
@@ -82,6 +95,29 @@ describe('DynamoDbRecoveryLiveClient — client reuse', () => {
     // close() is idempotent and safe to call with no live client.
     await client.close();
     expect(h.dynamoDestroys).toBe(1);
+  });
+});
+
+describe('S3RecoveryLiveClient — client reuse', () => {
+  it('reuses a single S3 client across calls and destroys it on close()', async () => {
+    const { S3RecoveryLiveClient } = await import('../agent/aws-s3/live-client.js');
+    const client = new S3RecoveryLiveClient({ region: 'us-east-1', bucket: 'b' });
+
+    await client.getBucketConfig();
+    await client.executeCommand({
+      type: 'structured_command',
+      operation: 'put_bucket_versioning',
+      parameters: {},
+    });
+
+    expect(h.s3Clients).toBe(1);
+    expect(h.s3Destroys).toBe(0);
+
+    await client.close();
+    expect(h.s3Destroys).toBe(1);
+
+    await client.close();
+    expect(h.s3Destroys).toBe(1);
   });
 });
 

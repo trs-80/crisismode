@@ -11,7 +11,10 @@ export class RdsRecoverySimulator implements RdsRecoveryBackend {
   private state: SimulatorState = 'degraded';
 
   transition(to: string): void {
-    this.state = to as SimulatorState;
+    if (to !== 'degraded' && to !== 'recovering' && to !== 'recovered') {
+      throw new Error(`Invalid RDS simulator state: ${to}`);
+    }
+    this.state = to;
   }
 
   async getInstanceBackupConfig(): Promise<InstanceBackupConfig> {

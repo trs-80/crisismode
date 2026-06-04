@@ -81,15 +81,29 @@ describe('action-template-registry — elevated+ requires state captures', () =>
 
 // ── aws-s3 simulator: validated transition ──
 
-describe('S3RecoverySimulator.transition — validation', () => {
-  it('throws on an unknown target state instead of corrupting internal state', () => {
+describe('AWS simulators — validated transition', () => {
+  it('S3 throws on an unknown target state instead of corrupting internal state', () => {
     const sim = new S3RecoverySimulator();
     expect(() => sim.transition('bogus')).toThrow(/Invalid S3 simulator state/);
+    expect(() => sim.transition('recovering')).not.toThrow();
+    expect(() => sim.transition('recovered')).not.toThrow();
+    expect(() => sim.transition('degraded')).not.toThrow();
   });
 
-  it('accepts the known states', () => {
-    const sim = new S3RecoverySimulator();
+  it('RDS throws on an unknown target state', () => {
+    const sim = new RdsRecoverySimulator();
+    expect(() => sim.transition('bogus')).toThrow(/Invalid RDS simulator state/);
     expect(() => sim.transition('recovering')).not.toThrow();
+    expect(() => sim.transition('recovered')).not.toThrow();
+    expect(() => sim.transition('degraded')).not.toThrow();
+  });
+
+  it('DynamoDB throws on an unknown target state (incl. the unsupported "recovering")', () => {
+    const sim = new DynamoDbRecoverySimulator();
+    expect(() => sim.transition('bogus')).toThrow(/Invalid DynamoDB simulator state/);
+    // DynamoDB only models degraded/recovered — guarding here also prevents a
+    // transition into a state getTableBackupConfig() can't resolve.
+    expect(() => sim.transition('recovering')).toThrow(/Invalid DynamoDB simulator state/);
     expect(() => sim.transition('recovered')).not.toThrow();
     expect(() => sim.transition('degraded')).not.toThrow();
   });
