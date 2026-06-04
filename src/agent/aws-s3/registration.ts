@@ -15,16 +15,32 @@ export const awsS3RecoveryRegistration: AgentRegistration = {
     const isLive = awsConfig && awsConfig.region !== 'simulator';
 
     if (isLive) {
+      if (!awsConfig.bucket) {
+        // A live target with no bucket is a misconfiguration. Fail loud rather
+        // than silently simulating a recovery the operator believes ran against
+        // the real bucket.
+        throw new Error(
+          `aws-s3 target "${target.name}" is set for live recovery (region "${awsConfig.region}") ` +
+            `but aws.bucket is missing. Set aws.bucket, or use region "simulator" for the in-memory backend.`,
+        );
+      }
       try {
         const { S3RecoveryLiveClient } = await import('./live-client.js');
         const backend = new S3RecoveryLiveClient({
           region: awsConfig.region,
-          bucket: awsConfig.bucket!,
+          bucket: awsConfig.bucket,
         });
         const agent = new AwsS3RecoveryAgent(backend);
         return { agent, backend, target };
-      } catch {
-        // Connection failed — fall back to simulator
+      } catch (err) {
+        // Only the dynamic import()/construction is guarded here; the live
+        // client defers all S3 I/O to query time, so real connection/auth
+        // failures surface later, not in this catch. Never swallow silently.
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `aws-s3 live client initialization failed for target "${target.name}" (${message}). ` +
+            `Falling back to the simulator — recovery actions will NOT run against the real bucket.`,
+        );
       }
     }
 

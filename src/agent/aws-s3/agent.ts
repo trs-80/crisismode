@@ -76,6 +76,7 @@ export class AwsS3RecoveryAgent implements RecoveryAgent {
 
     const versioningOff = config.versioningStatus === 'Disabled' || config.versioningStatus === 'Suspended';
     const noLifecycle = config.lifecycleRules.length === 0;
+    const isHealthy = !versioningOff && !noLifecycle;
 
     const scenario = versioningOff && noLifecycle
       ? 'backup_misconfigured'
@@ -85,12 +86,12 @@ export class AwsS3RecoveryAgent implements RecoveryAgent {
           ? 'versioning_suspended'
           : noLifecycle
             ? 'missing_lifecycle'
-            : 'backup_misconfigured';
+            : 'healthy';
 
     const confidence = versioningOff ? 0.95 : 0.85;
 
     return {
-      status: 'identified',
+      status: isHealthy ? 'inconclusive' : 'identified',
       scenario,
       confidence,
       findings: [

@@ -984,7 +984,27 @@ export class PgReplicationAgent implements RecoveryAgent {
           parameters: { service: 'postgresql' },
         },
         preConditions: [],
-        statePreservation: { before: [], after: [] },
+        statePreservation: {
+          before: [
+            {
+              name: 'postgresql_process_state',
+              captureType: 'command_output',
+              statement: 'systemctl status postgresql',
+              captureCost: 'negligible',
+              capturePolicy: 'required',
+              retention: 'P30D',
+            },
+            {
+              name: 'active_connections_snapshot',
+              captureType: 'command_output',
+              statement: 'ss -tnp | grep :5432',
+              captureCost: 'negligible',
+              capturePolicy: 'best_effort',
+              retention: 'P30D',
+            },
+          ],
+          after: [],
+        },
         successCriteria: {
           description: 'PostgreSQL is accepting connections',
           check: {
