@@ -164,7 +164,11 @@ export class RedisLiveClient implements RedisBackend {
       if (parts.length < 8) continue;
       const flags = parts[2].split(',');
       const isMaster = flags.includes('master');
-      const linkState = parts[7] as 'connected' | 'disconnected';
+      // Validate rather than blind-cast: an unexpected CLUSTER NODES format must
+      // not surface as a value outside the declared union. Treat anything other
+      // than 'connected' as disconnected (conservative for a recovery agent).
+      const linkState: 'connected' | 'disconnected' =
+        parts[7] === 'connected' ? 'connected' : 'disconnected';
       const slots = parts.slice(8).join(' ');
       nodes.push({
         id: parts[0],

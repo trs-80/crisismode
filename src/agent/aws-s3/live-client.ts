@@ -118,7 +118,15 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
           expiration?: { days: number };
         }> | undefined;
 
-        const s3Rules = (rules ?? []).map((rule) => ({
+        if (!rules || rules.length === 0) {
+          // S3 rejects PutBucketLifecycleConfiguration with an empty Rules set
+          // (clearing requires DeleteBucketLifecycle). A recovery plan should
+          // always supply at least one rule — fail with a clear message rather
+          // than an opaque MalformedXML error from the SDK.
+          throw new Error('put_bucket_lifecycle requires at least one lifecycle rule');
+        }
+
+        const s3Rules = rules.map((rule) => ({
           ID: rule.id,
           Status: 'Enabled' as const,
           Filter: { Prefix: rule.prefix },

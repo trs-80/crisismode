@@ -140,15 +140,22 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const instance = String(
-      (context.trigger.payload as Record<string, unknown>).instance_id || 'unknown-instance',
-    );
-
     // Derive the current retention from the diagnosis so the plan never *lowers*
     // an already-adequate retention window (e.g. a stale_snapshot instance that
     // already retains 14 days). Target is max(current, 7); the modify step is
     // only emitted when that represents a genuine increase.
     const backupConfigFinding = diagnosis.findings.find((f) => f.source === 'rds_backup_config');
+
+    // Prefer the instance id the trigger carried, falling back to the one the
+    // diagnosis actually inspected so the plan never targets 'unknown-instance'
+    // when diagnosis succeeded against a real instance.
+    const diagnosedInstance = backupConfigFinding?.data?.instanceId;
+    const instance = String(
+      (context.trigger.payload as Record<string, unknown>).instance_id ||
+        diagnosedInstance ||
+        'unknown-instance',
+    );
+
     const currentRetention =
       typeof backupConfigFinding?.data?.backupRetentionPeriod === 'number'
         ? (backupConfigFinding.data.backupRetentionPeriod as number)

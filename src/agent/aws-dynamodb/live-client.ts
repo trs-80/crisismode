@@ -31,9 +31,12 @@ export interface DynamoDbLiveConfig {
   table: string;
 }
 
+type DynamoDbClientInstance = InstanceType<DynamoDbSdkModule['DynamoDBClient']>;
+
 export class DynamoDbRecoveryLiveClient implements DynamoDbRecoveryBackend {
   private config: DynamoDbLiveConfig;
   private sdkModule: DynamoDbSdkModule | null = null;
+  private client: DynamoDbClientInstance | null = null;
 
   constructor(config: DynamoDbLiveConfig) {
     this.config = config;
@@ -50,9 +53,22 @@ export class DynamoDbRecoveryLiveClient implements DynamoDbRecoveryBackend {
     return this.sdkModule;
   }
 
+  /**
+   * Lazily construct and reuse a single DynamoDBClient. Each client owns an HTTP
+   * connection pool, so creating one per call would leak sockets across repeated
+   * operations. Disposed in close().
+   */
+  private async getClient(): Promise<DynamoDbClientInstance> {
+    if (!this.client) {
+      const sdk = await this.getSdk();
+      this.client = new sdk.DynamoDBClient({ region: this.config.region });
+    }
+    return this.client;
+  }
+
   async getTableBackupConfig(): Promise<TableBackupConfig> {
     const sdk = await this.getSdk();
-    const client = new sdk.DynamoDBClient({ region: this.config.region });
+    const client = await this.getClient();
 
     const resp = await client.send(
       new sdk.DescribeContinuousBackupsCommand({ TableName: this.config.table }),
@@ -82,7 +98,7 @@ export class DynamoDbRecoveryLiveClient implements DynamoDbRecoveryBackend {
       }
       case 'update_continuous_backups': {
         const sdk = await this.getSdk();
-        const client = new sdk.DynamoDBClient({ region: this.config.region });
+        const client = await this.getClient();
         const resp = await client.send(
           new sdk.UpdateContinuousBackupsCommand({
             TableName: this.config.table,
@@ -130,7 +146,10 @@ export class DynamoDbRecoveryLiveClient implements DynamoDbRecoveryBackend {
     ];
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.client?.destroy();
+    this.client = null;
+  }
 
   private compare(actual: unknown, operator: string, expected: unknown): boolean {
     const a = Number(actual);

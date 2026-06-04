@@ -89,7 +89,38 @@ export class AwsDynamoDbRecoveryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const table = String(context.trigger.payload.table || 'unknown-table');
+    // Prefer the table id the trigger carried, falling back to the one the
+    // diagnosis actually inspected so the plan never targets 'unknown-table'
+    // when diagnosis succeeded against a real table.
+    const diagnosedTable = diagnosis.findings.find(
+      (f) => f.source === 'dynamodb_continuous_backups',
+    )?.data?.tableName;
+    const table = String(context.trigger.payload.table || diagnosedTable || 'unknown-table');
+
+    // PITR already enabled — nothing to recover. Return a no-op plan rather than
+    // building the full "enable PITR" workflow against a healthy table.
+    if (diagnosis.scenario === 'healthy') {
+      return {
+        ...createPlanEnvelope({
+          planIdSuffix: 'aws-dynamo',
+          agentName: 'aws-dynamodb-recovery',
+          agentVersion: '1.0.0',
+          scenario: 'healthy',
+          estimatedDuration: 'PT0S',
+          summary: `No action required — point-in-time recovery is enabled on DynamoDB table ${table}.`,
+        }),
+        impact: {
+          affectedSystems: [
+            { identifier: table, technology: 'aws-dynamodb', role: 'table', impactType: 'none' },
+          ],
+          affectedServices: [],
+          estimatedUserImpact: 'None — table backup configuration is healthy.',
+          dataLossRisk: 'none',
+        },
+        steps: [],
+        rollbackStrategy: { type: 'none', description: 'No actions taken; nothing to roll back.' },
+      };
+    }
 
     const steps: RecoveryStep[] = [
       // Step 1: Capture current PITR config
