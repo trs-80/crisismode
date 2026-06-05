@@ -11,7 +11,10 @@ export class DynamoDbRecoverySimulator implements DynamoDbRecoveryBackend {
   private state: SimulatorState = 'degraded';
 
   transition(to: string): void {
-    this.state = to as SimulatorState;
+    if (to !== 'degraded' && to !== 'recovered') {
+      throw new Error(`Invalid DynamoDB simulator state: ${to}`);
+    }
+    this.state = to;
   }
 
   async getTableBackupConfig(): Promise<TableBackupConfig> {

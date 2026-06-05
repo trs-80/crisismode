@@ -11,7 +11,10 @@ export class S3RecoverySimulator implements S3RecoveryBackend {
   private state: SimulatorState = 'degraded';
 
   transition(to: string): void {
-    this.state = to as SimulatorState;
+    if (to !== 'degraded' && to !== 'recovering' && to !== 'recovered') {
+      throw new Error(`Invalid S3 simulator state: ${to}`);
+    }
+    this.state = to;
   }
 
   async getBucketConfig(): Promise<BucketConfig> {

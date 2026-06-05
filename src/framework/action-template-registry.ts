@@ -50,6 +50,15 @@ class ActionTemplateRegistry {
           `Template ${template.action_id} is system_action but missing blast_radius`,
         );
       }
+      // Every elevated+ system_action must carry before-captures, independent
+      // of action_class. The validator enforces this on the expanded plan, so a
+      // template that is elevated+ but (e.g.) action_class 1 would otherwise
+      // produce a step that fails validation later. Guard at registration time.
+      if (template.risk_level !== 'routine' && !template.state_captures_before?.length) {
+        throw new Error(
+          `Template ${template.action_id}: ${template.risk_level} risk requires state_captures_before`,
+        );
+      }
       // Class 2+ mutating templates carry the full safety scaffold so the
       // existing validator (state preservation, rollback) accepts the
       // expanded plan without further patching.

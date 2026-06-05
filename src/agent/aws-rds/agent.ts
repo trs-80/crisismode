@@ -140,9 +140,98 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
+    // Derive the current retention from the diagnosis so the plan never *lowers*
+    // an already-adequate retention window (e.g. a stale_snapshot instance that
+    // already retains 14 days). Target is max(current, 7); the modify step is
+    // only emitted when that represents a genuine increase.
+    const backupConfigFinding = diagnosis.findings.find((f) => f.source === 'rds_backup_config');
+
+    // Prefer the instance id the trigger carried, falling back to the one the
+    // diagnosis actually inspected so the plan never targets 'unknown-instance'
+    // when diagnosis succeeded against a real instance.
+    const diagnosedInstance = backupConfigFinding?.data?.instanceId;
     const instance = String(
-      (context.trigger.payload as Record<string, unknown>).instance_id || 'unknown-instance',
+      (context.trigger.payload as Record<string, unknown>).instance_id ||
+        diagnosedInstance ||
+        'unknown-instance',
     );
+
+    const currentRetention =
+      typeof backupConfigFinding?.data?.backupRetentionPeriod === 'number'
+        ? (backupConfigFinding.data.backupRetentionPeriod as number)
+        : 0;
+    const targetRetention = Math.max(currentRetention, 7);
+    const needsRetentionIncrease = targetRetention > currentRetention;
+    const backupsDisabled = currentRetention === 0;
+
+    // Step 5 (conditional): modify retention only when it would increase it.
+    const modifyRetentionStep: RecoveryStep = {
+      stepId: 'step-005',
+      type: 'system_action',
+      name: `Enable automated backups with ${targetRetention}-day retention`,
+      description: `Set BackupRetentionPeriod to ${targetRetention} days on instance ${instance} to enable automated daily backups.`,
+      executionContext: 'rds_write',
+      target: instance,
+      riskLevel: 'elevated',
+      requiredCapabilities: ['rds.instance.modify'],
+      command: {
+        type: 'structured_command',
+        operation: 'modify_db_instance',
+        parameters: { instanceId: instance, backupRetentionPeriod: targetRetention },
+      },
+      preConditions: [
+        {
+          description: 'RDS instance is in available state',
+          check: {
+            type: 'structured_command',
+            statement: 'instance_status',
+            expect: { operator: 'eq', value: 'available' },
+          },
+        },
+      ],
+      statePreservation: {
+        before: [
+          {
+            name: 'backup_retention_before',
+            captureType: 'command_output',
+            statement: 'DescribeDBInstances BackupRetentionPeriod',
+            captureCost: 'negligible',
+            capturePolicy: 'required',
+            retention: 'P30D',
+          },
+        ],
+        after: [
+          {
+            name: 'backup_retention_after',
+            captureType: 'command_output',
+            statement: 'DescribeDBInstances BackupRetentionPeriod',
+            captureCost: 'negligible',
+            capturePolicy: 'best_effort',
+            retention: 'P30D',
+          },
+        ],
+      },
+      successCriteria: {
+        description: `Backup retention period is at least ${targetRetention} days`,
+        check: {
+          type: 'structured_command',
+          statement: 'backup_retention_period',
+          expect: { operator: 'gte', value: targetRetention },
+        },
+      },
+      rollback: {
+        type: 'manual',
+        description: 'Revert BackupRetentionPeriod to previous value via ModifyDBInstance.',
+      },
+      blastRadius: {
+        directComponents: [instance],
+        indirectComponents: ['automated-backups'],
+        maxImpact: 'backup_retention_changed',
+        cascadeRisk: 'none',
+      },
+      timeout: 'PT2M',
+      retryPolicy: { maxRetries: 1, retryable: true },
+    };
 
     const steps: RecoveryStep[] = [
       // Step 1: Capture current RDS backup config
@@ -171,8 +260,12 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
         name: 'Notify on-call of RDS backup misconfiguration',
         recipients: [{ role: 'on_call_engineer', urgency: 'high' }],
         message: {
-          summary: `CRITICAL — RDS backup retention is 0 days on instance ${instance}`,
-          detail: `RDS backup retention is 0 days on instance ${instance}. The instance has NO automated backup protection. Scenario: ${diagnosis.scenario}. ${diagnosis.findings[0]?.observation}`,
+          summary: backupsDisabled
+            ? `CRITICAL — RDS backup retention is 0 days on instance ${instance}`
+            : `RDS backup issue on instance ${instance} — ${diagnosis.scenario}`,
+          detail: `${backupsDisabled
+            ? `RDS backup retention is 0 days on instance ${instance}. The instance has NO automated backup protection.`
+            : `RDS instance ${instance} has backup retention of ${currentRetention} day(s).`} Scenario: ${diagnosis.scenario}. ${backupConfigFinding?.observation ?? ''}`,
           contextReferences: ['current_rds_backup_config'],
           actionRequired: true,
         },
@@ -206,15 +299,21 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
         stepId: 'step-004',
         type: 'human_approval',
         name: 'Approve RDS instance modification',
-        description: `Approve modifying backup retention on instance ${instance} from 0 to 7 days and creating an immediate snapshot.`,
+        description: needsRetentionIncrease
+          ? `Approve modifying backup retention on instance ${instance} from ${currentRetention} to ${targetRetention} days and creating an immediate snapshot.`
+          : `Approve creating an immediate snapshot on instance ${instance} (retention is already ${currentRetention} days).`,
         approvers: [{ role: 'on_call_engineer', required: true }],
         requiredApprovals: 1,
         presentation: {
           summary: `Modify RDS instance ${instance} backup configuration`,
-          detail: `This will set BackupRetentionPeriod to 7 days and create an immediate manual snapshot on instance ${instance}.`,
+          detail: needsRetentionIncrease
+            ? `This will set BackupRetentionPeriod to ${targetRetention} days and create an immediate manual snapshot on instance ${instance}.`
+            : `This will create an immediate manual snapshot on instance ${instance}. Retention is already ${currentRetention} days and will not be changed.`,
           contextReferences: ['current_rds_backup_config'],
           proposedActions: [
-            'Set BackupRetentionPeriod from 0 to 7 days',
+            ...(needsRetentionIncrease
+              ? [`Set BackupRetentionPeriod from ${currentRetention} to ${targetRetention} days`]
+              : []),
             'Create an immediate manual DB snapshot',
           ],
           riskSummary: 'Enabling backups may cause a brief I/O suspension during the first automated backup window.',
@@ -230,74 +329,9 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
           message: `Approval timed out for RDS backup recovery on instance ${instance}. Escalating to database admin.`,
         },
       },
-      // Step 5: Modify instance to enable backups
-      {
-        stepId: 'step-005',
-        type: 'system_action',
-        name: 'Enable automated backups with 7-day retention',
-        description: `Set BackupRetentionPeriod to 7 days on instance ${instance} to enable automated daily backups.`,
-        executionContext: 'rds_write',
-        target: instance,
-        riskLevel: 'elevated',
-        requiredCapabilities: ['rds.instance.modify'],
-        command: {
-          type: 'structured_command',
-          operation: 'modify_db_instance',
-          parameters: { instanceId: instance, backupRetentionPeriod: 7 },
-        },
-        preConditions: [
-          {
-            description: 'RDS instance is in available state',
-            check: {
-              type: 'structured_command',
-              statement: 'instance_status',
-              expect: { operator: 'eq', value: 'available' },
-            },
-          },
-        ],
-        statePreservation: {
-          before: [
-            {
-              name: 'backup_retention_before',
-              captureType: 'command_output',
-              statement: 'DescribeDBInstances BackupRetentionPeriod',
-              captureCost: 'negligible',
-              capturePolicy: 'required',
-              retention: 'P30D',
-            },
-          ],
-          after: [
-            {
-              name: 'backup_retention_after',
-              captureType: 'command_output',
-              statement: 'DescribeDBInstances BackupRetentionPeriod',
-              captureCost: 'negligible',
-              capturePolicy: 'best_effort',
-              retention: 'P30D',
-            },
-          ],
-        },
-        successCriteria: {
-          description: 'Backup retention period is set to 7 days',
-          check: {
-            type: 'structured_command',
-            statement: 'backup_retention_period',
-            expect: { operator: 'gte', value: 7 },
-          },
-        },
-        rollback: {
-          type: 'manual',
-          description: 'Revert BackupRetentionPeriod to previous value via ModifyDBInstance.',
-        },
-        blastRadius: {
-          directComponents: [instance],
-          indirectComponents: ['automated-backups'],
-          maxImpact: 'backup_retention_changed',
-          cascadeRisk: 'none',
-        },
-        timeout: 'PT2M',
-        retryPolicy: { maxRetries: 1, retryable: true },
-      },
+      // Step 5: Modify instance to enable/raise backup retention (only when it
+      // would increase the window — never lower an already-adequate retention).
+      ...(needsRetentionIncrease ? [modifyRetentionStep] : []),
       // Step 6: Create an immediate manual snapshot
       {
         stepId: 'step-006',
@@ -364,7 +398,9 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
         ],
         message: {
           summary: `RDS backup recovery completed on instance ${instance}`,
-          detail: `Automated backups enabled with 7-day retention. Manual snapshot created. Monitor backup window and snapshot creation over the next 24 hours.`,
+          detail: `${needsRetentionIncrease
+            ? `Automated backups enabled with ${targetRetention}-day retention. `
+            : `Backup retention left at ${currentRetention} days. `}Manual snapshot created. Monitor backup window and snapshot creation over the next 24 hours.`,
           contextReferences: ['post_recovery_backup_config'],
           actionRequired: false,
         },
@@ -379,7 +415,9 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
         agentVersion: '1.0.0',
         scenario: diagnosis.scenario ?? 'backup_disabled',
         estimatedDuration: 'PT10M',
-        summary: `Recover RDS instance ${instance} from backup misconfiguration: enable automated backups, set 7-day retention, create immediate snapshot.`,
+        summary: needsRetentionIncrease
+          ? `Recover RDS instance ${instance} from backup misconfiguration: enable automated backups, set ${targetRetention}-day retention, create immediate snapshot.`
+          : `Recover RDS instance ${instance}: create an immediate snapshot (retention already ${currentRetention} days).`,
       }),
       impact: {
         affectedSystems: [

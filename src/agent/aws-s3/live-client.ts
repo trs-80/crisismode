@@ -24,6 +24,7 @@ export interface S3ConnectionConfig {
 export class S3RecoveryLiveClient implements S3RecoveryBackend {
   private config: S3ConnectionConfig;
   private s3Module: S3Module | null = null;
+  private client: InstanceType<S3Module['S3Client']> | null = null;
 
   constructor(config: S3ConnectionConfig) {
     this.config = config;
@@ -38,17 +39,25 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
     return this.s3Module;
   }
 
-  private async createClient(): Promise<InstanceType<S3Module['S3Client']>> {
-    const s3 = await this.getS3Module();
-    return new s3.S3Client({
-      region: this.config.region,
-      ...(this.config.profile ? { profile: this.config.profile } : {}),
-    });
+  /**
+   * Lazily construct and reuse a single S3Client. Each client owns an HTTP
+   * connection pool, so creating one per call would leak sockets across
+   * getBucketConfig/executeCommand/evaluateCheck. Disposed in close().
+   */
+  private async getClient(): Promise<InstanceType<S3Module['S3Client']>> {
+    if (!this.client) {
+      const s3 = await this.getS3Module();
+      this.client = new s3.S3Client({
+        region: this.config.region,
+        ...(this.config.profile ? { profile: this.config.profile } : {}),
+      });
+    }
+    return this.client;
   }
 
   async getBucketConfig(): Promise<BucketConfig> {
     const s3 = await this.getS3Module();
-    const client = await this.createClient();
+    const client = await this.getClient();
 
     // Get versioning status
     const versioningResp = await client.send(
@@ -95,7 +104,7 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
     }
 
     const s3 = await this.getS3Module();
-    const client = await this.createClient();
+    const client = await this.getClient();
 
     switch (command.operation) {
       case 'get_bucket_config': {
@@ -118,7 +127,15 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
           expiration?: { days: number };
         }> | undefined;
 
-        const s3Rules = (rules ?? []).map((rule) => ({
+        if (!rules || rules.length === 0) {
+          // S3 rejects PutBucketLifecycleConfiguration with an empty Rules set
+          // (clearing requires DeleteBucketLifecycle). A recovery plan should
+          // always supply at least one rule — fail with a clear message rather
+          // than an opaque MalformedXML error from the SDK.
+          throw new Error('put_bucket_lifecycle requires at least one lifecycle rule');
+        }
+
+        const s3Rules = rules.map((rule) => ({
           ID: rule.id,
           Status: 'Enabled' as const,
           Filter: { Prefix: rule.prefix },
@@ -157,7 +174,7 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
 
     if (stmt.includes('bucket_exists')) {
       const s3 = await this.getS3Module();
-      const client = await this.createClient();
+      const client = await this.getClient();
       try {
         await client.send(new s3.HeadBucketCommand({ Bucket: this.config.bucket }));
         return this.compare('true', check.expect.operator, check.expect.value);
@@ -186,7 +203,10 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
     ];
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    this.client?.destroy();
+    this.client = null;
+  }
 
   private compare(actual: unknown, operator: string, expected: unknown): boolean {
     const a = Number(actual);
