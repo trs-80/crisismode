@@ -280,6 +280,8 @@ crisismode registry list              # List available check plugins
 crisismode registry search <query>    # Search check plugins
 crisismode registry install <name>    # Install a check plugin
 
+crisismode mcp                        # Start MCP server on stdio (read-only diagnosis tools)
+
 crisismode completions bash|zsh|fish  # Generate shell completions
 ```
 
@@ -318,6 +320,37 @@ All three accept a file path or `-` for stdin, making them easy to wire into pip
 ```bash
 cat incident-bundle.json | crisismode bundle respond -
 ```
+
+## MCP Server
+
+`crisismode mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio, so AI agents (Claude Code, Claude Desktop, or any MCP client) can diagnose your infrastructure directly:
+
+```bash
+# Claude Code
+claude mcp add crisismode -- crisismode mcp
+```
+
+Or in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "crisismode": { "command": "crisismode", "args": ["mcp"] }
+  }
+}
+```
+
+Every MCP tool is read-only — the MCP surface never mutates infrastructure:
+
+| Tool | What it does |
+|---|---|
+| `crisismode_scan` | Zero-config health scan with a 0–100 score and per-service findings |
+| `crisismode_diagnose` | Health assessment + diagnosis for one target (AI-powered with `ANTHROPIC_API_KEY`, rule-based otherwise) |
+| `crisismode_status` | Quick UP/DOWN probe of configured or detected services |
+| `crisismode_list_agents` | The built-in recovery agent roster |
+| `crisismode_bundle_ingest` | Read-only diagnosis of an SRE evidence bundle (v1) |
+| `crisismode_bundle_respond` | Ranked hypotheses with evidence citations and policy-gated proposed actions |
+| `crisismode_bundle_plan` | Translate a bundle into a dry-run RecoveryPlan (returned, never executed) |
 
 ## Check Plugin Ecosystem
 

@@ -17,7 +17,7 @@ _crisismode_completions() {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-  local commands="scan diagnose recover status init demo webhook ask watch completions registry"
+  local commands="scan diagnose recover status init demo webhook ask watch mcp completions registry"
   local global_flags="--config --target --json --no-color --verbose -h --help -v --version"
 
   if [[ \${COMP_CWORD} -eq 1 ]]; then
@@ -106,6 +106,7 @@ _crisismode() {
         'webhook:Start webhook receiver for AlertManager'
         'ask:Natural language AI diagnosis'
         'watch:Continuous shadow observation'
+        'mcp:Start MCP server on stdio (read-only diagnosis tools)'
         'completions:Print shell completion script'
         'registry:Browse and install check plugins'
       )
@@ -216,6 +217,7 @@ complete -c crisismode -n '__fish_use_subcommand' -a demo        -d 'Run simulat
 complete -c crisismode -n '__fish_use_subcommand' -a webhook     -d 'Start webhook receiver for AlertManager'
 complete -c crisismode -n '__fish_use_subcommand' -a ask         -d 'Natural language AI diagnosis'
 complete -c crisismode -n '__fish_use_subcommand' -a watch       -d 'Continuous shadow observation'
+complete -c crisismode -n '__fish_use_subcommand' -a mcp         -d 'Start MCP server on stdio (read-only diagnosis tools)'
 complete -c crisismode -n '__fish_use_subcommand' -a completions -d 'Print shell completion script'
 complete -c crisismode -n '__fish_use_subcommand' -a registry    -d 'Browse and install check plugins'
 
