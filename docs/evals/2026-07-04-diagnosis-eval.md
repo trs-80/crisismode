@@ -1,5 +1,10 @@
 # Diagnosis eval — 2026-07-04 baseline
 
+> **Update, same day:** after the fixes below the score is **9/14** — see
+> "Iteration log" at the end. All remaining failures are phrasing artifacts of
+> the substring judge; family and causal-direction selection is now correct on
+> all 14 cases.
+
 First run of the repeatable diagnosis eval (`pnpm run eval:diagnosis`), which
 drives the sre-incident-agent-skills 14-family compatibility benchmark against
 the **real** `crisismode bundle respond -` CLI (not the fixture shim the
@@ -66,3 +71,32 @@ pnpm run eval:diagnosis -- --no-ai # abstention baseline
 Requires the sre-incident-agent-skills checkout as a sibling directory (or
 `SRE_SKILLS_REPO=...`) with its Python package importable. Reports land in
 `eval/reports/` (gitignored); commit a summary here when the score moves.
+
+## Iteration log (2026-07-04, later the same day)
+
+| Run | Score | Change |
+|---|---|---|
+| 1 | 0/14 | Retired model (`claude-sonnet-4-20250514`) — AI silently dead since 06-15 |
+| 2 | 7/14 | Model migrated to `claude-sonnet-5` |
+| 3 | 4/14 | Abstention evidence-refs fix (+1) and two verbose reasoning rules — the rules over-applied, pushing diagnoses one level deeper than the canonical categories |
+| 4 | 3/14 | Rules scoped but still a separate block — primed the model to *compose* near-canonical sentences ("backpressure buildup", "checkout cache availability degradation") instead of copying them |
+| 5 | **9/14** | Rules folded tersely into the canonical-sentence-selection step with an explicit character-for-character copy instruction |
+
+Final state at 9/14:
+
+- **Fixed for real:** abstention now cites examined evidence (code fix in
+  `buildAbstainedResponse`); Flink causal direction correct; deploy-vs-drift
+  family selection correct (deploy-rollback now passes verbatim).
+- **All 5 remaining failures are substring-phrasing artifacts** — family and
+  causal direction are correct on every case (e.g. "recurring checkpoint
+  failures are causing stream processing backpressure" fails only on the word
+  "recurring"; "openai rate limit exhaustion" fails vs the generic "ai
+  provider degradation").
+- **Variance:** without sampling control (current models reject
+  `temperature`), identical runs vary ±1–2 on this judge. Treat small deltas
+  as noise.
+- **Lesson for future prompt work:** on a verbatim-substring judge, any prompt
+  text that encourages composing hypothesis sentences degrades copy
+  discipline globally. Selection guidance must live inside the copy
+  instruction, not beside it. Further score-chasing beyond this point is
+  benchmark gaming; the semantically honest ceiling is reached.

@@ -83,6 +83,21 @@ describe('respondToEvidenceBundle — no AI', () => {
     vi.restoreAllMocks();
   });
 
+  it('cites the examined evidence items when abstaining', async () => {
+    const { response } = await respondToEvidenceBundle(BUNDLE, commonOptions());
+    expect(response.state).toBe('abstained');
+    // An abstention must still say what evidence it examined — both on the
+    // stub hypothesis and at the top level.
+    expect(response.hypotheses_ranked[0].evidence_refs).toEqual(['db.pool.metrics']);
+    expect(response.evidence_refs).toEqual([
+      {
+        evidence_id: 'db.pool.metrics',
+        relevance: 'context',
+        claim: 'examined but insufficient or conflicting for a root-cause determination',
+      },
+    ]);
+  });
+
   it('returns a structured abstained response when no API key is set', async () => {
     const { response } = await respondToEvidenceBundle(BUNDLE, commonOptions());
     expect(response.schema_version).toBe('incident-generator.agent-adapter-response/v1');
