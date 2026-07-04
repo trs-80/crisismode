@@ -21,7 +21,9 @@ It diagnoses issues using AI, builds validated recovery plans with blast-radius 
 
 ## From Alert to Recovery
 
-Live mode diagnosing real PostgreSQL replication lag:
+Live mode diagnosing real PostgreSQL replication lag (local podman test
+environment; the excerpt shows a single elevated-risk step executing — see
+[Validation status](#validation-status) for what is and isn't verified today):
 
 ```
   Connecting to PostgreSQL...
@@ -68,9 +70,38 @@ Live mode diagnosing real PostgreSQL replication lag:
      ● SUCCESS (6ms)
 ```
 
+## Install
+
+Download a prebuilt binary from [GitHub Releases](https://github.com/trs-80/crisismode/releases/latest) — no Node.js required. macOS binaries are codesigned and notarized; every artifact ships with a SHA256 checksum.
+
+```bash
+# Linux (x64)
+curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-linux-x64 -o crisismode
+
+# macOS (Apple Silicon)
+curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-darwin-arm64 -o crisismode
+
+chmod +x crisismode
+./crisismode scan
+```
+
+Also available: `crisismode-linux-arm64` and `crisismode-darwin-x64`. To verify a download, fetch the matching `.sha256` file and run `shasum -a 256 -c`.
+
+Enable tab completion for your shell:
+
+```bash
+crisismode completions bash|zsh|fish
+```
+
 ## Quick Start
 
-**Demo mode** (no infrastructure required):
+**Zero-config scan** — CrisisMode autodiscovers databases, caches, and brokers on your machine and checks what it finds:
+
+```bash
+crisismode
+```
+
+**Demo mode** (no infrastructure required, building from source):
 
 ```bash
 pnpm install && pnpm dev
@@ -94,28 +125,57 @@ See [QUICKSTART.md](QUICKSTART.md) for a full walkthrough.
 
 ## What CrisisMode Recovers
 
+Status legend:
+
+- **Live (execute-capable)** — queries real infrastructure and can run recovery mutations in `--execute` mode
+- **Live (diagnosis only)** — queries real infrastructure; recovery output is advisory (no mutating actions)
+- **Simulator** — full agent logic against an in-memory simulator; live client not yet wired into the CLI
+
 ### Modern Application Incidents
 
 | Scenario | Agent | Status |
 |---|---|---|
-| Bad deploy rollback | Deploy Rollback | Simulator ready |
-| AI provider degradation / failover | AI Provider | Simulator ready |
-| Database migration failures | DB Migration | Simulator ready |
-| Queue and worker backlog | Queue Backlog | Simulator ready |
-| Config and environment drift | Config Drift | Simulator ready |
+| Bad deploy rollback | Deploy Rollback | Live (execute-capable) -- Vercel, requires `VERCEL_TOKEN` |
+| AI provider degradation / failover | AI Provider | Simulator (live probing client exists, not yet wired) |
+| Database migration failures | DB Migration | Simulator (live client exists, not yet wired) |
+| Queue and worker backlog | Queue Backlog | Simulator |
+| Config and environment drift | Config Drift | Simulator (live client exists, not yet wired) |
 
 ### Stateful Infrastructure Recovery
 
 | System | Scenarios | Status |
 |---|---|---|
-| PostgreSQL | Replication lag, slot overflow, replica divergence | Live -- tested against real PG |
-| Redis | Memory pressure, client exhaustion, slow queries | Simulator ready |
-| etcd | Leader election loop, member thrashing, snapshot corruption | Simulator ready |
-| Kafka | Under-replicated partitions, consumer lag cascade | Simulator ready |
-| Kubernetes | Node not-ready cascade, pod crashloop, stuck reconciliation | Simulator ready |
-| Ceph | OSD down cascade, degraded PGs, pool near-full | Simulator ready |
-| Flink | Checkpoint failure cascade, TaskManager loss, backpressure | Simulator ready |
-| AWS Backups | S3 backup verification, DynamoDB PITR, RDS snapshot staleness | Live -- tested against real AWS |
+| PostgreSQL | Replication lag, slot overflow, replica divergence | Live (execute-capable) -- see validation status below |
+| Redis | Memory pressure, client exhaustion, slow queries, cluster health | Live (execute-capable) |
+| etcd | Leader election loop, member thrashing, snapshot corruption | Simulator |
+| Kafka | Under-replicated partitions, consumer lag cascade | Simulator |
+| Kubernetes | Node not-ready cascade, pod crashloop, stuck reconciliation | Live (execute-capable) |
+| Ceph | OSD down cascade, degraded PGs, pool near-full | Simulator |
+| Flink | Checkpoint failure cascade, TaskManager loss, backpressure | Simulator |
+| AWS | S3, DynamoDB, and RDS recovery; backup verification, PITR, snapshot staleness | Live (execute-capable) -- validated in dry-run against real AWS |
+
+### Host & Platform Health
+
+| Check | Scenarios | Status |
+|---|---|---|
+| DNS | Resolution failures, resolver health | Live (diagnosis + local cache flush) |
+| TLS | Certificate expiry and chain health | Live (diagnosis only) |
+| Disk | Local disk exhaustion | Live (diagnosis only) |
+| Backup | Backup verification and DR readiness | Live (diagnosis only) |
+
+### Validation status
+
+The [crisismode-torture](https://github.com/trs-80/crisismode-torture) harness
+runs CrisisMode against real degraded infrastructure (PostgreSQL replication,
+Redis, 3-node etcd, 3-broker Kafka, Redis Cluster partitions, cascading
+failures, and real AWS RDS/S3/DynamoDB). What it currently proves:
+
+- **Validated:** failure detection (typically 3–5s), AI diagnosis, and dry-run
+  recovery planning against real infrastructure, including real AWS and Vercel.
+- **Not yet validated:** end-to-end `--execute` recovery. No torture scenario
+  has completed a mutating recovery with post-recovery health verification.
+  Execute mode is functional for individual actions (as shown above) but should
+  be treated as experimental until the harness verifies full recoveries.
 
 ## Building Agents
 
@@ -153,11 +213,7 @@ See [Playbook Authoring Guide](docs/playbook-authoring.md) for details.
 
 ### TypeScript Agents
 
-For complex recovery logic, build agents with the SDK:
-
-```sh
-npm install @crisismode/agent-sdk
-```
+For complex recovery logic, build agents with the SDK. The types-only SDK lives at [`packages/agent-sdk`](packages/agent-sdk) and is consumed from a repo checkout via the pnpm workspace (`@crisismode/agent-sdk`).
 
 Implement the `RecoveryAgent` interface with `assessHealth()`, `diagnose()`, `plan()`, and `replan()` methods.
 
@@ -189,22 +245,42 @@ See [Architecture Overview](docs/architecture.md) for details.
 - Pre-mutation state capture (checkpoint before any change)
 - Human approval gates for elevated-risk operations
 - Dry-run mode by default (reads real systems, logs mutations without executing)
+- `--execute` fails closed when confirmation can't be collected (non-interactive stdin)
 - Five-level progressive escalation (observe → diagnose → suggest → repair-safe → repair-destructive)
 - Immutable forensic record for every execution
 
 ## CLI Reference
 
 ```bash
-crisismode             # Zero-config health scan (default)
-crisismode scan        # Health scan with scored summary and next-action hints
-crisismode diagnose    # Health check + AI-powered diagnosis (read-only)
-crisismode recover     # Full recovery flow with execution planning
-crisismode status      # Quick health probe
-crisismode ask         # Natural language AI diagnosis
-crisismode demo        # Simulator demo mode
-crisismode init        # Generate crisismode.yaml configuration
-crisismode webhook     # Start webhook receiver for AlertManager
-crisismode watch       # Continuous shadow observation
+crisismode                            # Zero-config health scan (default)
+crisismode scan                       # Health scan with scored summary and next-action hints
+crisismode diagnose                   # Health check + AI-powered diagnosis (read-only)
+crisismode recover                    # Full recovery flow with plain-English AI summaries
+crisismode status                     # Quick health probe
+crisismode ask "<question>"           # Natural language AI diagnosis
+crisismode ask                        # Interactive diagnostic REPL
+crisismode demo                       # Simulator demo mode
+crisismode init                       # Generate crisismode.yaml configuration
+crisismode init --agent <name>        # Scaffold a check plugin
+crisismode webhook                    # Start webhook receiver for AlertManager
+crisismode watch                      # Continuous shadow observation
+
+crisismode bundle ingest <path|->     # Ingest an SRE evidence bundle (v1) for AI diagnosis
+crisismode bundle respond <path|->    # Emit AdapterResponse v1 ("-" reads from stdin)
+crisismode bundle execute <path|->    # Translate a bundle to a RecoveryPlan (dry-run)
+
+crisismode playbook list              # List discovered playbooks
+crisismode playbook validate <path>   # Validate a playbook file
+crisismode playbook dry-run <path>    # Preview compiled recovery plan
+
+crisismode agent list                 # List all registered agents
+crisismode agent info <name>          # Show agent details
+
+crisismode registry list              # List available check plugins
+crisismode registry search <query>    # Search check plugins
+crisismode registry install <name>    # Install a check plugin
+
+crisismode completions bash|zsh|fish  # Generate shell completions
 ```
 
 Output modes: `--json` for machine-readable output, plain text auto-detected when piped, colored TTY output by default.
@@ -227,6 +303,20 @@ crisismode recover --target my-db --json | jq 'select(.type == "diagnosis")'
 
 # Extract just the plan steps
 crisismode recover --target my-db --json | jq 'select(.type == "plan") | .plan.steps'
+```
+
+## Evidence Bundles
+
+CrisisMode speaks the SRE evidence-bundle v1 format, so external incident tooling can hand it a bundle of evidence (logs, metrics, operator notes) and get back a ranked diagnosis with policy-checked recovery actions:
+
+- `bundle ingest` — read-only AI diagnosis of the evidence
+- `bundle respond` — full AdapterResponse v1: ranked hypotheses with evidence citations, proposed actions gated by action-class policy, and explicit abstention when evidence is insufficient
+- `bundle execute` — translate a bundle into a validated RecoveryPlan (dry-run)
+
+All three accept a file path or `-` for stdin, making them easy to wire into pipelines:
+
+```bash
+cat incident-bundle.json | crisismode bundle respond -
 ```
 
 ## Check Plugin Ecosystem

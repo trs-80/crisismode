@@ -876,7 +876,7 @@
           <div class="terminal-dot red"></div>
           <div class="terminal-dot amber"></div>
           <div class="terminal-dot green"></div>
-          <span class="terminal-title">crisismode — pnpm dev</span>
+          <span class="terminal-title">crisismode — demo mode (simulator, no infrastructure required)</span>
         </div>
         <div class="terminal-body" id="terminal-body"></div>
       </div>
@@ -894,9 +894,9 @@
 
       <div class="ready-stats reveal">
         <div class="ready-stat">
-          <div class="ready-stat-value">12</div>
+          <div class="ready-stat-value">19</div>
           <div class="ready-stat-label">Recovery Agents</div>
-          <div class="ready-stat-detail">PostgreSQL, Redis, etcd, Kafka, Kubernetes, Ceph, Flink, and 5 cross-cutting concern agents</div>
+          <div class="ready-stat-detail">Execute-capable live clients for PostgreSQL, Redis, Kubernetes, AWS, and Vercel; the rest run diagnosis-only or simulator-backed</div>
         </div>
         <div class="ready-stat">
           <div class="ready-stat-value">5</div>
@@ -944,7 +944,7 @@
         <blockquote>
           "<span class="highlight">Agents propose</span>, the framework disposes. Agents produce recovery plans describing what they intend to do. The framework validates, orchestrates, and enforces those plans."
         </blockquote>
-        <cite>— Recovery Agent Contract Specification v0.2.1</cite>
+        <cite>— Recovery Agent Contract Specification v0.3.0-draft</cite>
       </div>
 
       <!-- FEATURES -->
@@ -973,12 +973,12 @@
         <div class="feature-card">
           <div class="feature-icon">04 — Speed</div>
           <h3>Approval Speed, Not Bypass</h3>
-          <p>Pre-authorized action catalogs make approval fast for known scenarios. The system never provides mechanisms to skip approval under pressure.</p>
+          <p>Pre-authorized action catalogs (spec-stage, hub roadmap) will make approval fast for known scenarios. The system never provides mechanisms to skip approval under pressure.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">05 — Trust</div>
           <h3>Graduated Trust</h3>
-          <p>Agents earn autonomy over time through demonstrated reliability in specific scenarios and environments. Trust is scoped per agent, scenario, and environment.</p>
+          <p>Designed so agents earn autonomy over time through demonstrated reliability in specific scenarios and environments (spec-stage, hub roadmap). Trust is scoped per agent, scenario, and environment.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">06 — Resilience</div>
@@ -995,7 +995,7 @@
       <div class="section-label reveal">Execution Flow</div>
       <h2 class="section-title reveal">13 steps from alert to recovery</h2>
       <p class="section-description reveal">
-        Every recovery follows a structured sequence. The framework orchestrates each phase — agents never interact directly with target systems.
+        Every recovery follows a structured sequence. The framework orchestrates each phase — agents never interact directly with target systems. This is the full lifecycle defined by the contract specification; catalog matching and trust-level gating are spec-stage and not yet shipped in the open-source CLI.
       </p>
 
       <div class="flow-steps reveal">
@@ -1214,7 +1214,7 @@
 
   <!-- FOOTER -->
   <footer>
-    <p>CrisisMode &mdash; Recovery Agent Contract Specification v0.2.1</p>
+    <p>CrisisMode &mdash; Recovery Agent Contract Specification v0.3.0-draft</p>
   </footer>
 
   <script>
