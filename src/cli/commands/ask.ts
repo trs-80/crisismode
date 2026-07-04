@@ -18,6 +18,7 @@ import { sanitizeInput } from '../../framework/ai-diagnosis.js';
 import { getNetworkProfile } from '../../framework/network-profile.js';
 import { printBanner, printInfo, printWarning } from '../output.js';
 import { missingEnvVar } from '../errors.js';
+import { defaultAiModel } from '../../framework/ai-model.js';
 
 // ── Types ──
 
@@ -31,7 +32,7 @@ interface ReplContext {
   systemContext: string[];
 }
 
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_MODEL = defaultAiModel();
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_HISTORY_TURNS = 20;
 

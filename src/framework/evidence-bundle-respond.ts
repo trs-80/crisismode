@@ -227,7 +227,8 @@ Hypothesis SUMMARY format (enforced):
     "stream processing backpressure", "checkpoint failures", "stream failures"
     "request error rate spike", "request failures"
     "blocking checkout database operations", "database operations"
-- Rank-1 summaries should match EXACTLY one of these canonical sentences (verbatim, lowercased except proper nouns). If the evidence fits one of these patterns, copy the sentence verbatim:
+- Choosing WHICH canonical sentence: the subject is the failing subsystem's category. A component failure (checkpoint failures, crash loop) outranks its downstream pressure symptom (backpressure, lag, watermark stall) as subject unless evidence shows the pressure came first. A change that arrived through a release/canary/rollout is "recent checkout deploy regression", NOT "configuration drift" (drift = out-of-band config divergence with no correlated release). Direct subsystem evidence (pool exhaustion, memory pressure, replication lag) keeps that subsystem as subject even when a release also correlates.
+- Rank-1 summaries should match EXACTLY one of these canonical sentences (verbatim, lowercased except proper nouns). Copy the sentence character-for-character — do not add qualifiers (no "checkout", "buildup"), do not change singular/plural. If the evidence fits one of these patterns, copy the sentence verbatim:
     "database connection pool exhaustion is causing checkout failures"
     "postgresql replication lag is causing read path staleness"
     "redis memory pressure is causing cache availability degradation"
@@ -714,13 +715,18 @@ function buildAbstainedResponse(
   // The deterministic judge expects every response to carry at least one
   // hypothesis summary; for abstention cases, the canonical summary is
   // "root cause remains unknown until conflicting service evidence is resolved".
+  //
+  // An abstention still cites the evidence it examined: the conclusion
+  // "unknown" is grounded in exactly those items, and consumers (and the
+  // benchmark's evidence-discipline check) need to see what was considered.
+  const examinedRefs = (req.evidence_items ?? []).map((item) => item.evidence_id);
   const stubHypothesis = {
     hypothesis_id: 'abstention-stub',
     rank: 1,
     summary: 'root cause remains unknown until conflicting service evidence is resolved',
     confidence: 'unknown' as const,
     hypothesis_type: 'unknown' as const,
-    evidence_refs: [],
+    evidence_refs: examinedRefs,
     missing_evidence: [],
     competing_hypotheses: [],
   };
@@ -733,7 +739,11 @@ function buildAbstainedResponse(
     state: 'abstained',
     primary_hypothesis_id: stubHypothesis.hypothesis_id,
     hypotheses_ranked: [stubHypothesis],
-    evidence_refs: [],
+    evidence_refs: (req.evidence_items ?? []).map((item) => ({
+      evidence_id: item.evidence_id,
+      relevance: 'context' as const,
+      claim: 'examined but insufficient or conflicting for a root-cause determination',
+    })),
     recommended_next_steps: [],
     proposed_actions: [],
     abstention: {

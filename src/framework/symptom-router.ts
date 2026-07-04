@@ -18,6 +18,7 @@
 import { sanitizeInput } from './ai-diagnosis.js';
 import type { StackProfile } from '../cli/autodiscovery.js';
 import { PKG_TO_SERVICE, pkgsForService } from '../config/service-registry.js';
+import { defaultAiModel } from './ai-model.js';
 
 // ── Types ──
 
@@ -520,7 +521,7 @@ async function callRoutingAi(
 
     const response = await client.messages.create(
       {
-        model: 'claude-sonnet-4-20250514',
+        model: defaultAiModel(),
         max_tokens: 512,
         messages: [{ role: 'user', content: userMessage }],
         system: ROUTING_SYSTEM_PROMPT,

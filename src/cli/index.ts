@@ -50,6 +50,7 @@ const HELP = `
     crisismode bundle ingest <path|->      Ingest an SRE evidence bundle (v1)
     crisismode bundle respond <path|->     Emit AdapterResponse v1 (use "-" for stdin)
     crisismode bundle execute <path|->     Translate bundle to RecoveryPlan (dry-run)
+    crisismode mcp                         Start MCP server on stdio (read-only diagnosis tools)
 
   Options:
     --agent <name>      Scaffold a new check plugin (init only)
@@ -282,6 +283,12 @@ async function main(): Promise<void> {
         args: positionals.slice(1),
         output: values.output as string | undefined,
       });
+      break;
+    }
+
+    case 'mcp': {
+      const { startMcpServer } = await import('../mcp/server.js');
+      await startMcpServer();
       break;
     }
 

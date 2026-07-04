@@ -145,7 +145,7 @@ describe('AI summary — AI path with mocked SDK', () => {
 
     expect(mockCreate).toHaveBeenCalledOnce();
     const [callArgs] = mockCreate.mock.calls[0];
-    expect(callArgs.model).toBe('claude-sonnet-4-20250514');
+    expect(callArgs.model).toBe('claude-sonnet-5');
     expect(callArgs.max_tokens).toBe(512);
     expect(callArgs.system).toContain('friendly infrastructure assistant');
   });

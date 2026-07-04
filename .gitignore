@@ -47,3 +47,4 @@ test/local/.data/
 
 # Internal product specs
 specs/product/
+eval/reports/

@@ -17,8 +17,9 @@ import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import { sanitizeInput } from './ai-diagnosis.js';
 import { getNetworkProfile } from './network-profile.js';
+import { defaultAiModel } from './ai-model.js';
 
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_MODEL = defaultAiModel();
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface PlanExplanation {

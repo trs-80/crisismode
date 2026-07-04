@@ -19,8 +19,9 @@ import { getNetworkProfile } from './network-profile.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { SentryEnrichment } from '../integrations/sentry.js';
+import { defaultAiModel } from './ai-model.js';
 
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
+const DEFAULT_MODEL = defaultAiModel();
 const DEFAULT_TIMEOUT_MS = 15_000;
 
 export interface UniversalDiagnosisRequest {

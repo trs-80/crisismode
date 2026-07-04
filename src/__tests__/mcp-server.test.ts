@@ -44,23 +44,103 @@ vi.mock('../framework/operator-summary.js', () => ({
   })),
 }));
 
+vi.mock('../framework/network-profile.js', () => ({
+  getNetworkProfile: vi.fn(() => null),
+  isInternetAvailable: vi.fn(() => true),
+}));
+
 // ── Imports ──
 
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import {
-  handleJsonRpcRequest,
-  buildInitializeResult,
-  TOOL_DEFINITIONS,
+  createMcpServer,
+  handleScan,
+  handleDiagnose,
+  handleStatus,
   handleListAgents,
 } from '../mcp/server.js';
-import type { JsonRpcRequest } from '../mcp/server.js';
+import { builtinAgents } from '../config/builtin-agents.js';
 import { loadConfig } from '../config/loader.js';
 import { detectServices } from '../cli/detect.js';
 import { AgentRegistry } from '../config/agent-registry.js';
+import type { AdapterRequest } from '../types/evidence-bundle.js';
 
 // ── Helpers ──
 
-function makeRequest(method: string, params?: Record<string, unknown>, id: number | string = 1): JsonRpcRequest {
-  return { jsonrpc: '2.0', id, method, params };
+const EXPECTED_TOOLS = [
+  'crisismode_bundle_ingest',
+  'crisismode_bundle_plan',
+  'crisismode_bundle_respond',
+  'crisismode_diagnose',
+  'crisismode_list_agents',
+  'crisismode_scan',
+  'crisismode_status',
+];
+
+const BUNDLE: AdapterRequest = {
+  schema_version: 'incident-generator.agent-adapter-request/v1',
+  request_id: 'req-mcp-test',
+  benchmark_set_id: 'bench-1',
+  case_id: 'case-1',
+  created_at: '2026-05-06T00:00:00Z',
+  incident_session_id: 'session-1',
+  collection_mode: 'fixture',
+  input_mode: 'redacted_evidence_bundle',
+  skill_domains: ['database'],
+  visibility: {
+    internal_evidence_roles_visible: false,
+    expected_hypotheses_visible: false,
+    forbidden_hypotheses_visible: false,
+    redaction_required: true,
+  },
+  evidence_items: [
+    {
+      evidence_id: 'db.pool.metrics',
+      adapter_id: 'database.pool_status',
+      title: 'DB pool saturation',
+      source_kind: 'metric',
+      content_type: 'metric_series',
+      content: { format: 'metric_series', body: 'active=95 max=100' },
+      time_window: null,
+      source_ref: null,
+      redacted: true,
+      untrusted: false,
+    },
+  ],
+  action_policy: {
+    proposed_actions_allowed: true,
+    max_action_class: 1,
+    allowed_action_classes: [0, 1],
+    allowed_action_ids: ['inspect_database_pool'],
+    requires_human_approval_for_mutation: true,
+  },
+  output_contract: {
+    response_schema: 'incident-generator.agent-adapter-response/v1',
+    required_sections: [
+      'hypotheses_ranked',
+      'evidence_refs',
+      'recommended_next_steps',
+      'proposed_actions',
+      'abstention',
+      'uncertainty',
+      'unsafe_actions_avoided',
+    ],
+  },
+};
+
+async function connectedClient() {
+  const server = createMcpServer();
+  const client = new Client({ name: 'test-client', version: '0.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  return {
+    client,
+    async close() {
+      await client.close();
+      await server.close();
+    },
+  };
 }
 
 function makeMinimalManifest() {
@@ -132,92 +212,152 @@ function setupConfig() {
 
 // ── Tests ──
 
-describe('MCP Server', () => {
+describe('MCP server (official SDK)', () => {
+  const originalEnv = process.env.ANTHROPIC_API_KEY;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.ANTHROPIC_API_KEY;
   });
 
-  describe('buildInitializeResult', () => {
-    it('returns server info with name and version', () => {
-      const info = buildInitializeResult();
-      expect(info.name).toBe('crisismode');
-      expect(info.version).toBe('0.2.0');
-      expect(info.capabilities.tools).toBeDefined();
-    });
+  afterEach(() => {
+    if (originalEnv) process.env.ANTHROPIC_API_KEY = originalEnv;
+    else delete process.env.ANTHROPIC_API_KEY;
   });
 
-  describe('TOOL_DEFINITIONS', () => {
-    it('defines 4 tools', () => {
-      expect(TOOL_DEFINITIONS).toHaveLength(4);
-    });
-
-    it('all tools have required fields', () => {
-      for (const tool of TOOL_DEFINITIONS) {
-        expect(tool.name).toBeDefined();
-        expect(tool.name.startsWith('crisismode_')).toBe(true);
-        expect(tool.description).toBeDefined();
-        expect(tool.inputSchema.type).toBe('object');
+  describe('protocol surface', () => {
+    it('completes a real MCP handshake and lists all diagnosis tools', async () => {
+      const { client, close } = await connectedClient();
+      try {
+        const { tools } = await client.listTools();
+        expect(tools.map((t) => t.name).sort()).toEqual(EXPECTED_TOOLS);
+      } finally {
+        await close();
       }
     });
 
-    it('includes scan, diagnose, status, and list_agents', () => {
-      const names = TOOL_DEFINITIONS.map((t) => t.name);
-      expect(names).toContain('crisismode_scan');
-      expect(names).toContain('crisismode_diagnose');
-      expect(names).toContain('crisismode_status');
-      expect(names).toContain('crisismode_list_agents');
+    it('annotates every tool as read-only — the MCP surface must never mutate infrastructure', async () => {
+      const { client, close } = await connectedClient();
+      try {
+        const { tools } = await client.listTools();
+        for (const tool of tools) {
+          expect(tool.annotations?.readOnlyHint, `${tool.name} must be read-only`).toBe(true);
+        }
+      } finally {
+        await close();
+      }
+    });
+
+    it('reports tool failures as isError results, not protocol errors', async () => {
+      const { client, close } = await connectedClient();
+      try {
+        const result = await client.callTool({
+          name: 'crisismode_bundle_respond',
+          arguments: { bundle: 'not json {' },
+        });
+        expect(result.isError).toBe(true);
+      } finally {
+        await close();
+      }
     });
   });
 
-  describe('handleJsonRpcRequest', () => {
-    it('handles initialize', async () => {
-      const response = await handleJsonRpcRequest(makeRequest('initialize'));
-      expect(response.result).toBeDefined();
-      const result = response.result as { name: string };
-      expect(result.name).toBe('crisismode');
+  describe('crisismode_bundle_respond', () => {
+    it('returns a structured abstained AdapterResponse when no API key is set', async () => {
+      const { client, close } = await connectedClient();
+      try {
+        const result = await client.callTool({
+          name: 'crisismode_bundle_respond',
+          arguments: { bundle: JSON.stringify(BUNDLE) },
+        });
+        expect(result.isError).toBeFalsy();
+        const response = result.structuredContent as Record<string, unknown> & {
+          abstention: { abstained: boolean };
+        };
+        expect(response.schema_version).toBe('incident-generator.agent-adapter-response/v1');
+        expect(response.state).toBe('abstained');
+        expect(response.request_id).toBe('req-mcp-test');
+        expect(response.abstention.abstained).toBe(true);
+      } finally {
+        await close();
+      }
     });
 
-    it('handles tools/list', async () => {
-      const response = await handleJsonRpcRequest(makeRequest('tools/list'));
-      expect(response.result).toBeDefined();
-      const result = response.result as { tools: unknown[] };
-      expect(result.tools).toHaveLength(4);
-    });
-
-    it('returns error for unknown method', async () => {
-      const response = await handleJsonRpcRequest(makeRequest('unknown/method'));
-      expect(response.error).toBeDefined();
-      expect(response.error!.code).toBe(-32601);
-      expect(response.error!.message).toContain('Method not found');
-    });
-
-    it('returns error for unknown tool', async () => {
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'unknown_tool', arguments: {} }),
-      );
-      expect(response.error).toBeDefined();
-      expect(response.error!.code).toBe(-32601);
-      expect(response.error!.message).toContain('Unknown tool');
-    });
-
-    it('handles notifications/initialized', async () => {
-      const response = await handleJsonRpcRequest(makeRequest('notifications/initialized'));
-      expect(response.result).toBeDefined();
-    });
-
-    it('preserves request id in response', async () => {
-      const response = await handleJsonRpcRequest(makeRequest('initialize', {}, 42));
-      expect(response.id).toBe(42);
-      expect(response.jsonrpc).toBe('2.0');
-    });
-
-    it('handles string ids', async () => {
-      const response = await handleJsonRpcRequest(makeRequest('initialize', {}, 'req-abc'));
-      expect(response.id).toBe('req-abc');
+    it('accepts the bundle as a JSON object, not only a string', async () => {
+      const { client, close } = await connectedClient();
+      try {
+        const result = await client.callTool({
+          name: 'crisismode_bundle_respond',
+          arguments: { bundle: BUNDLE as unknown as Record<string, unknown> },
+        });
+        expect(result.isError).toBeFalsy();
+        const response = result.structuredContent as Record<string, unknown>;
+        expect(response.request_id).toBe('req-mcp-test');
+      } finally {
+        await close();
+      }
     });
   });
 
-  describe('tools/call — crisismode_scan', () => {
+  describe('crisismode_bundle_ingest', () => {
+    it('returns a diagnosis result for a valid bundle', async () => {
+      const { client, close } = await connectedClient();
+      try {
+        const result = await client.callTool({
+          name: 'crisismode_bundle_ingest',
+          arguments: { bundle: JSON.stringify(BUNDLE) },
+        });
+        expect(result.isError).toBeFalsy();
+        expect(result.structuredContent).toBeTruthy();
+      } finally {
+        await close();
+      }
+    });
+  });
+
+  describe('crisismode_bundle_plan', () => {
+    it('returns a dry-run recovery plan translation', async () => {
+      const { client, close } = await connectedClient();
+      try {
+        const result = await client.callTool({
+          name: 'crisismode_bundle_plan',
+          arguments: { bundle: JSON.stringify(BUNDLE) },
+        });
+        expect(result.isError).toBeFalsy();
+        const payload = result.structuredContent as Record<string, unknown>;
+        expect(payload).toHaveProperty('plan');
+        expect(payload).toHaveProperty('response_state');
+      } finally {
+        await close();
+      }
+    });
+  });
+
+  describe('crisismode_list_agents', () => {
+    it('derives the roster from the real builtin registry, not a hardcoded list', async () => {
+      const result = await handleListAgents();
+      const data = result as { agents: Array<{ kind: string; name: string; description: string }>; count: number };
+      expect(data.count).toBe(builtinAgents.length);
+      const kinds = data.agents.map((a) => a.kind);
+      for (const registration of builtinAgents) {
+        expect(kinds).toContain(registration.kind);
+      }
+    });
+
+    it('is callable through the protocol', async () => {
+      const { client, close } = await connectedClient();
+      try {
+        const result = await client.callTool({ name: 'crisismode_list_agents', arguments: {} });
+        expect(result.isError).toBeFalsy();
+        const data = result.structuredContent as { count: number };
+        expect(data.count).toBe(builtinAgents.length);
+      } finally {
+        await close();
+      }
+    });
+  });
+
+  describe('handleScan', () => {
     it('runs scan with config', async () => {
       setupConfig();
       const agent = makeMockAgent();
@@ -227,14 +367,7 @@ describe('MCP Server', () => {
       const registry = new AgentRegistry({} as never);
       vi.mocked(registry.createForTarget).mockResolvedValue({ agent, backend, target } as never);
 
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_scan', arguments: {} }),
-      );
-
-      expect(response.result).toBeDefined();
-      const result = response.result as { content: Array<{ type: string; text: string }> };
-      expect(result.content[0].type).toBe('text');
-      const data = JSON.parse(result.content[0].text);
+      const data = await handleScan({}) as { score: number; findings: unknown[]; scannedAt: string };
       expect(data.score).toBeDefined();
       expect(data.findings).toBeDefined();
       expect(data.scannedAt).toBeDefined();
@@ -244,7 +377,7 @@ describe('MCP Server', () => {
       vi.mocked(loadConfig).mockImplementation(() => { throw new Error('not found'); });
       vi.mocked(detectServices).mockResolvedValue([
         { kind: 'postgresql', host: '127.0.0.1', port: 5432, detected: true },
-      ]);
+      ] as never);
 
       const agent = makeMockAgent();
       const backend = makeMockBackend();
@@ -253,25 +386,15 @@ describe('MCP Server', () => {
       const registry = new AgentRegistry({} as never);
       vi.mocked(registry.createForTarget).mockResolvedValue({ agent, backend, target } as never);
 
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_scan', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
+      const data = await handleScan({}) as { findings: unknown[] };
       expect(data.findings).toBeDefined();
     });
 
     it('returns empty scan when no services detected', async () => {
       vi.mocked(loadConfig).mockImplementation(() => { throw new Error('not found'); });
-      vi.mocked(detectServices).mockResolvedValue([]);
+      vi.mocked(detectServices).mockResolvedValue([] as never);
 
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_scan', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
+      const data = await handleScan({}) as { score: number; message: string };
       expect(data.score).toBe(100);
       expect(data.message).toContain('No services detected');
     });
@@ -286,137 +409,11 @@ describe('MCP Server', () => {
       const registry = new AgentRegistry({} as never);
       vi.mocked(registry.createForTarget).mockResolvedValue({ agent, backend, target } as never);
 
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_scan', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
+      const data = await handleScan({}) as { findings: Array<{ status: string; summary: string }> };
       expect(data.findings[0].status).toBe('unknown');
       expect(data.findings[0].summary).toContain('connection refused');
     });
-  });
 
-  describe('tools/call — crisismode_diagnose', () => {
-    it('runs diagnosis for first target', async () => {
-      setupConfig();
-      const agent = makeMockAgent();
-      const backend = makeMockBackend();
-      const target = makeMockTarget();
-
-      const registry = new AgentRegistry({} as never);
-      vi.mocked(registry.createFirst).mockResolvedValue({ agent, backend, target } as never);
-
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_diagnose', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
-      expect(data.target).toBe('test-pg');
-      expect(data.health.status).toBe('healthy');
-      expect(data.diagnosis.status).toBe('identified');
-      expect(data.operatorSummary.actionRequired).toBeDefined();
-      expect(backend.close).toHaveBeenCalled();
-    });
-
-    it('diagnoses specific target', async () => {
-      setupConfig();
-      const agent = makeMockAgent();
-      const backend = makeMockBackend();
-      const target = makeMockTarget();
-
-      const registry = new AgentRegistry({} as never);
-      vi.mocked(registry.createForTarget).mockResolvedValue({ agent, backend, target } as never);
-
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', {
-          name: 'crisismode_diagnose',
-          arguments: { target: 'test-pg' },
-        }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
-      expect(data.target).toBe('test-pg');
-      expect(vi.mocked(registry.createForTarget)).toHaveBeenCalledWith('test-pg');
-    });
-
-    it('closes backend even on error', async () => {
-      setupConfig();
-      const agent = makeMockAgent();
-      agent.assessHealth.mockRejectedValue(new Error('fail'));
-      const backend = makeMockBackend();
-      const target = makeMockTarget();
-
-      const registry = new AgentRegistry({} as never);
-      vi.mocked(registry.createFirst).mockResolvedValue({ agent, backend, target } as never);
-
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_diagnose', arguments: {} }),
-      );
-
-      // Should return error content
-      const result = response.result as { content: Array<{ text: string }>; isError?: boolean };
-      expect(result.isError).toBe(true);
-      expect(backend.close).toHaveBeenCalled();
-    });
-  });
-
-  describe('tools/call — crisismode_status', () => {
-    it('returns status from config targets', async () => {
-      setupConfig();
-
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_status', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
-      expect(data.services).toHaveLength(1);
-      expect(data.services[0].kind).toBe('postgresql');
-      expect(data.checkedAt).toBeDefined();
-    });
-
-    it('falls back to detection when no config', async () => {
-      vi.mocked(loadConfig).mockImplementation(() => { throw new Error('not found'); });
-      vi.mocked(detectServices).mockResolvedValue([
-        { kind: 'redis', host: '127.0.0.1', port: 6379, detected: true },
-      ]);
-
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_status', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
-      expect(data.services[0].kind).toBe('redis');
-    });
-  });
-
-  describe('tools/call — crisismode_list_agents', () => {
-    it('returns all built-in agents', async () => {
-      const result = await handleListAgents();
-      const agents = result as { agents: Array<{ kind: string; name: string }>; count: number };
-      expect(agents.count).toBe(12);
-      expect(agents.agents.map((a) => a.kind)).toContain('postgresql');
-      expect(agents.agents.map((a) => a.kind)).toContain('redis');
-      expect(agents.agents.map((a) => a.kind)).toContain('kafka');
-      expect(agents.agents.map((a) => a.kind)).toContain('kubernetes');
-    });
-
-    it('works via JSON-RPC', async () => {
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_list_agents', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
-      expect(data.agents).toHaveLength(12);
-    });
-  });
-
-  describe('tools/call — crisismode_scan with category filter', () => {
     it('filters by category', async () => {
       const config = {
         apiVersion: 'crisismode/v1' as const,
@@ -427,7 +424,7 @@ describe('MCP Server', () => {
           { ...makeMockTarget(), name: 'test-redis', kind: 'redis', primary: { host: '127.0.0.1', port: 6379 } },
         ],
       };
-      vi.mocked(loadConfig).mockReturnValue({ config, source: 'file', filePath: 'crisismode.yaml' });
+      vi.mocked(loadConfig).mockReturnValue({ config, source: 'file', filePath: 'crisismode.yaml' } as never);
 
       const agent = makeMockAgent();
       const backend = makeMockBackend();
@@ -436,22 +433,11 @@ describe('MCP Server', () => {
         agent, backend, target: makeMockTarget(),
       } as never);
 
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', {
-          name: 'crisismode_scan',
-          arguments: { category: 'postgresql' },
-        }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
-      // Only postgresql target scanned, redis filtered out
+      const data = await handleScan({ category: 'postgresql' }) as { findings: Array<{ kind: string }> };
       expect(data.findings).toHaveLength(1);
       expect(data.findings[0].kind).toBe('postgresql');
     });
-  });
 
-  describe('tools/call — crisismode_scan score calculation', () => {
     it('computes score based on healthy/total ratio', async () => {
       const config = {
         apiVersion: 'crisismode/v1' as const,
@@ -462,7 +448,7 @@ describe('MCP Server', () => {
           { ...makeMockTarget(), name: 'test-pg2', kind: 'postgresql' },
         ],
       };
-      vi.mocked(loadConfig).mockReturnValue({ config, source: 'file', filePath: 'crisismode.yaml' });
+      vi.mocked(loadConfig).mockReturnValue({ config, source: 'file', filePath: 'crisismode.yaml' } as never);
 
       let callNum = 0;
       const agent = makeMockAgent();
@@ -483,63 +469,101 @@ describe('MCP Server', () => {
         agent, backend, target: makeMockTarget(),
       } as never);
 
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_scan', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
-      // 1 healthy out of 2 = 50%
+      const data = await handleScan({}) as { score: number };
       expect(data.score).toBe(50);
     });
   });
 
-  describe('tools/call — crisismode_status', () => {
-    it('returns services from detection with detected flag', async () => {
-      vi.mocked(loadConfig).mockImplementation(() => { throw new Error('not found'); });
-      vi.mocked(detectServices).mockResolvedValue([
-        { kind: 'postgresql', host: '127.0.0.1', port: 5432, detected: true },
-        { kind: 'redis', host: '127.0.0.1', port: 6379, detected: false },
-      ]);
-
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_status', arguments: {} }),
-      );
-
-      const result = response.result as { content: Array<{ text: string }> };
-      const data = JSON.parse(result.content[0].text);
-      expect(data.services).toHaveLength(2);
-      expect(data.services[0].detected).toBe(true);
-      expect(data.services[1].detected).toBe(false);
-    });
-  });
-
-  describe('tools/call — crisismode_diagnose error handling', () => {
-    it('wraps handler errors in isError content', async () => {
+  describe('handleDiagnose', () => {
+    it('runs diagnosis for first target', async () => {
       setupConfig();
       const agent = makeMockAgent();
-      agent.assessHealth.mockResolvedValue({
-        status: 'unhealthy' as const,
-        confidence: 0.9,
-        summary: 'Database down',
-        observedAt: new Date().toISOString(),
-        signals: [],
-        recommendedActions: [],
-      });
-      agent.diagnose.mockRejectedValue(new Error('diagnosis engine crashed'));
       const backend = makeMockBackend();
       const target = makeMockTarget();
 
       const registry = new AgentRegistry({} as never);
       vi.mocked(registry.createFirst).mockResolvedValue({ agent, backend, target } as never);
 
-      const response = await handleJsonRpcRequest(
-        makeRequest('tools/call', { name: 'crisismode_diagnose', arguments: {} }),
-      );
+      const data = await handleDiagnose({}) as {
+        target: string;
+        health: { status: string };
+        diagnosis: { status: string };
+        operatorSummary: { actionRequired: string };
+      };
+      expect(data.target).toBe('test-pg');
+      expect(data.health.status).toBe('healthy');
+      expect(data.diagnosis.status).toBe('identified');
+      expect(data.operatorSummary.actionRequired).toBeDefined();
+      expect(backend.close).toHaveBeenCalled();
+    });
 
-      const result = response.result as { content: Array<{ text: string }>; isError?: boolean };
-      expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('diagnosis engine crashed');
+    it('diagnoses specific target', async () => {
+      setupConfig();
+      const agent = makeMockAgent();
+      const backend = makeMockBackend();
+      const target = makeMockTarget();
+
+      const registry = new AgentRegistry({} as never);
+      vi.mocked(registry.createForTarget).mockResolvedValue({ agent, backend, target } as never);
+
+      const data = await handleDiagnose({ target: 'test-pg' }) as { target: string };
+      expect(data.target).toBe('test-pg');
+      expect(vi.mocked(registry.createForTarget)).toHaveBeenCalledWith('test-pg');
+    });
+
+    it('closes backend even on error, surfacing isError through the protocol', async () => {
+      setupConfig();
+      const agent = makeMockAgent();
+      agent.assessHealth.mockRejectedValue(new Error('diagnosis engine crashed'));
+      const backend = makeMockBackend();
+      const target = makeMockTarget();
+
+      const registry = new AgentRegistry({} as never);
+      vi.mocked(registry.createFirst).mockResolvedValue({ agent, backend, target } as never);
+
+      const { client, close } = await connectedClient();
+      try {
+        const result = await client.callTool({ name: 'crisismode_diagnose', arguments: {} });
+        expect(result.isError).toBe(true);
+        const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '';
+        expect(text).toContain('diagnosis engine crashed');
+        expect(backend.close).toHaveBeenCalled();
+      } finally {
+        await close();
+      }
+    });
+  });
+
+  describe('handleStatus', () => {
+    it('returns status from config targets', async () => {
+      setupConfig();
+      const data = await handleStatus({}) as { services: Array<{ kind: string }>; checkedAt: string };
+      expect(data.services).toHaveLength(1);
+      expect(data.services[0].kind).toBe('postgresql');
+      expect(data.checkedAt).toBeDefined();
+    });
+
+    it('falls back to detection when no config', async () => {
+      vi.mocked(loadConfig).mockImplementation(() => { throw new Error('not found'); });
+      vi.mocked(detectServices).mockResolvedValue([
+        { kind: 'redis', host: '127.0.0.1', port: 6379, detected: true },
+      ] as never);
+
+      const data = await handleStatus({}) as { services: Array<{ kind: string; detected?: boolean }> };
+      expect(data.services[0].kind).toBe('redis');
+    });
+
+    it('preserves detected flags from detection', async () => {
+      vi.mocked(loadConfig).mockImplementation(() => { throw new Error('not found'); });
+      vi.mocked(detectServices).mockResolvedValue([
+        { kind: 'postgresql', host: '127.0.0.1', port: 5432, detected: true },
+        { kind: 'redis', host: '127.0.0.1', port: 6379, detected: false },
+      ] as never);
+
+      const data = await handleStatus({}) as { services: Array<{ detected: boolean }> };
+      expect(data.services).toHaveLength(2);
+      expect(data.services[0].detected).toBe(true);
+      expect(data.services[1].detected).toBe(false);
     });
   });
 });
