@@ -20,6 +20,7 @@ import type { RoutingResult, ScoredScenario, SymptomSignal } from './symptom-rou
 import type { RecurringPattern, HealthSnapshot } from './watch-state.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
+import { defaultAiModel } from './ai-model.js';
 
 // ── Types ──
 
@@ -359,7 +360,7 @@ async function callSynthesisAi(
 
     const response = await client.messages.create(
       {
-        model: 'claude-sonnet-4-20250514',
+        model: defaultAiModel(),
         max_tokens: 1024,
         messages: [{ role: 'user', content: userMessage }],
         system: SYNTHESIS_SYSTEM_PROMPT,

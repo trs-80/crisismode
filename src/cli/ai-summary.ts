@@ -18,8 +18,9 @@ import { sanitizeInput } from '../framework/ai-diagnosis.js';
 import { getNetworkProfile } from '../framework/network-profile.js';
 import type { IncidentSummary } from './incident-summary.js';
 import type { RecentChange } from './output.js';
+import { defaultAiModel } from '../framework/ai-model.js';
 
-const MODEL = 'claude-sonnet-4-20250514';
+const MODEL = defaultAiModel();
 const TIMEOUT_MS = 8_000;
 const MAX_TOKENS = 512;
 

@@ -44,7 +44,8 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "pnpm --filter @crisismode/agent-sdk run build && tsc --noEmit",
-    "prepare": "husky"
+    "prepare": "husky",
+    "eval:diagnosis": "tsx eval/run-diagnosis-eval.ts"
   },
   "packageManager": "pnpm@10.30.3",
   "engines": {
