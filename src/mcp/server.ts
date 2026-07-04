@@ -4,106 +4,35 @@
 /**
  * CrisisMode MCP (Model Context Protocol) Server
  *
- * Exposes CrisisMode capabilities as MCP tools, allowing AI assistants
- * and other MCP clients to invoke health scans, diagnostics, and
- * watch status queries.
+ * Exposes CrisisMode's read-only diagnosis capabilities as MCP tools so AI
+ * agents (Claude Code, Claude Desktop, any MCP client) can scan, diagnose,
+ * and analyze incident evidence on the operator's own infrastructure.
  *
- * Protocol: JSON-RPC 2.0 over stdio (stdin/stdout).
- * Spec: https://modelcontextprotocol.io
+ * Built on the official @modelcontextprotocol/sdk (stdio transport).
  *
- * Tools exposed:
- * - crisismode_scan — run a zero-config health scan
- * - crisismode_diagnose — diagnose a specific target
- * - crisismode_status — quick health status probe
- * - crisismode_watch_status — get current watch-mode health card
- * - crisismode_list_agents — list available recovery agents
+ * Tools exposed (all read-only — this surface never mutates infrastructure):
+ * - crisismode_scan           — zero-config health scan with scored findings
+ * - crisismode_diagnose       — health assessment + diagnosis for one target
+ * - crisismode_status         — quick UP/DOWN probe of configured/detected services
+ * - crisismode_list_agents    — the built-in recovery agent roster
+ * - crisismode_bundle_ingest  — read-only diagnosis of an SRE evidence bundle (v1)
+ * - crisismode_bundle_respond — full AdapterResponse v1 for an evidence bundle
+ * - crisismode_bundle_plan    — translate a bundle to a dry-run RecoveryPlan
  */
 
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
 import { loadConfig } from '../config/loader.js';
 import { AgentRegistry } from '../config/agent-registry.js';
+import { builtinAgents } from '../config/builtin-agents.js';
 import { detectServices } from '../cli/detect.js';
 import { assembleContext } from '../framework/context.js';
 import { buildOperatorSummary } from '../framework/operator-summary.js';
+import { ingestEvidenceBundle } from '../framework/evidence-bundle-ingest.js';
+import { respondToEvidenceBundle } from '../framework/evidence-bundle-respond.js';
+import { adapterResponseToPlan } from '../framework/bundle-to-plan.js';
 import type { AgentContext } from '../types/agent-context.js';
-
-// ── MCP Protocol Types ──
-
-export interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id: number | string;
-  method: string;
-  params?: Record<string, unknown>;
-}
-
-export interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: number | string | null;
-  result?: unknown;
-  error?: { code: number; message: string; data?: unknown };
-}
-
-export interface McpToolDefinition {
-  name: string;
-  description: string;
-  inputSchema: {
-    type: 'object';
-    properties: Record<string, { type: string; description: string; enum?: string[] }>;
-    required?: string[];
-  };
-}
-
-export interface McpServerInfo {
-  name: string;
-  version: string;
-  capabilities: {
-    tools: Record<string, never>;
-  };
-}
-
-// ── Tool Definitions ──
-
-export const TOOL_DEFINITIONS: McpToolDefinition[] = [
-  {
-    name: 'crisismode_scan',
-    description: 'Run a zero-config CrisisMode health scan. Returns a scored health summary with findings for all detected services.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        configPath: { type: 'string', description: 'Path to crisismode.yaml config file (optional — auto-detects if omitted)' },
-        category: { type: 'string', description: 'Comma-separated agent categories to scan (e.g., "postgresql,redis")' },
-      },
-    },
-  },
-  {
-    name: 'crisismode_diagnose',
-    description: 'Run health assessment and AI-powered diagnosis for a specific target. Returns diagnosis findings, root cause analysis, and recovery recommendations.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        target: { type: 'string', description: 'Target name from config (optional — uses first target if omitted)' },
-        configPath: { type: 'string', description: 'Path to crisismode.yaml config file' },
-      },
-    },
-  },
-  {
-    name: 'crisismode_status',
-    description: 'Quick health status probe for all detected services. Returns UP/DOWN status for each service.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        configPath: { type: 'string', description: 'Path to crisismode.yaml config file' },
-      },
-    },
-  },
-  {
-    name: 'crisismode_list_agents',
-    description: 'List all available CrisisMode recovery agents and their capabilities.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
-  },
-];
 
 // ── Tool Handlers ──
 
@@ -137,7 +66,7 @@ export async function handleScan(params: Record<string, unknown>): Promise<unkno
 
   const registry = new AgentRegistry(config);
   const categories = category?.split(',').map((c) => c.trim()) ?? [];
-  const findings: unknown[] = [];
+  const findings: Array<{ status: string }> = [];
 
   for (const target of config.targets) {
     if (categories.length > 0 && !categories.includes(target.kind)) continue;
@@ -164,7 +93,7 @@ export async function handleScan(params: Record<string, unknown>): Promise<unkno
         confidence: health.confidence,
         summary: health.summary,
         signals: health.signals,
-      });
+      } as never);
 
       await backend.close();
     } catch (err) {
@@ -175,18 +104,17 @@ export async function handleScan(params: Record<string, unknown>): Promise<unkno
         confidence: 0,
         summary: `Health check failed: ${err instanceof Error ? err.message : String(err)}`,
         signals: [],
-      });
+      } as never);
     }
   }
 
-  const healthyCount = findings.filter((f: any) => f.status === 'healthy').length;
+  const healthyCount = findings.filter((f) => f.status === 'healthy').length;
   const score = findings.length > 0 ? Math.round((healthyCount / findings.length) * 100) : 100;
 
   return {
     score,
     findings,
     scannedAt: new Date().toISOString(),
-    durationMs: 0,
   };
 }
 
@@ -272,145 +200,184 @@ export async function handleStatus(params: Record<string, unknown>): Promise<unk
 }
 
 export async function handleListAgents(): Promise<unknown> {
-  const builtinAgents = [
-    { kind: 'postgresql', name: 'pg-replication', description: 'PostgreSQL replication recovery' },
-    { kind: 'redis', name: 'redis-memory', description: 'Redis memory pressure recovery' },
-    { kind: 'etcd', name: 'etcd-consensus', description: 'etcd consensus recovery' },
-    { kind: 'kafka', name: 'kafka-broker', description: 'Kafka broker recovery' },
-    { kind: 'kubernetes', name: 'k8s-cluster', description: 'Kubernetes cluster recovery' },
-    { kind: 'ceph', name: 'ceph-storage', description: 'Ceph storage recovery' },
-    { kind: 'flink', name: 'flink-stream', description: 'Flink stream processing recovery' },
-    { kind: 'deploy-rollback', name: 'deploy-rollback', description: 'Deployment rollback orchestration' },
-    { kind: 'ai-provider', name: 'ai-provider', description: 'AI service failover and fallback' },
-    { kind: 'db-migration', name: 'db-migration', description: 'Database migration safety' },
-    { kind: 'queue-backlog', name: 'queue-backlog', description: 'Queue backlog recovery' },
-    { kind: 'config-drift', name: 'config-drift', description: 'Configuration drift detection' },
-  ];
-
-  return { agents: builtinAgents, count: builtinAgents.length };
+  const agents = builtinAgents.map((registration) => ({
+    kind: registration.kind,
+    name: registration.name,
+    description: registration.manifest.metadata.description,
+  }));
+  return { agents, count: agents.length };
 }
 
-// ── MCP Server Core ──
+/** Accept an evidence bundle as either a JSON string or an already-parsed object. */
+function parseBundle(bundle: string | Record<string, unknown>): unknown {
+  if (typeof bundle !== 'string') return bundle;
+  try {
+    return JSON.parse(bundle);
+  } catch (err) {
+    throw new Error(`bundle is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
-const TOOL_HANDLERS: Record<string, (params: Record<string, unknown>) => Promise<unknown>> = {
-  crisismode_scan: handleScan,
-  crisismode_diagnose: handleDiagnose,
-  crisismode_status: handleStatus,
-  crisismode_list_agents: handleListAgents,
-};
+export async function handleBundleIngest(params: { bundle: string | Record<string, unknown> }): Promise<unknown> {
+  const bundle = parseBundle(params.bundle);
+  return ingestEvidenceBundle(bundle as never);
+}
 
-export function buildInitializeResult(): McpServerInfo {
+export async function handleBundleRespond(params: { bundle: string | Record<string, unknown> }): Promise<unknown> {
+  const bundle = parseBundle(params.bundle);
+  const { response } = await respondToEvidenceBundle(bundle as never);
+  return response;
+}
+
+export async function handleBundlePlan(params: { bundle: string | Record<string, unknown> }): Promise<unknown> {
+  const bundle = parseBundle(params.bundle);
+  const respondResult = await respondToEvidenceBundle(bundle as never);
+  const planResult = adapterResponseToPlan(bundle as never, respondResult.response);
   return {
-    name: 'crisismode',
-    version: '0.2.0',
-    capabilities: {
-      tools: {},
-    },
+    plan: planResult.plan,
+    rejected: planResult.rejected,
+    warnings: planResult.warnings,
+    response_state: respondResult.response.state,
   };
 }
 
-export async function handleJsonRpcRequest(request: JsonRpcRequest): Promise<JsonRpcResponse> {
-  const { id, method, params } = request;
+// ── Server Assembly ──
 
-  switch (method) {
-    case 'initialize':
-      return { jsonrpc: '2.0', id, result: buildInitializeResult() };
+const bundleInput = {
+  bundle: z
+    .union([z.string(), z.record(z.string(), z.unknown())])
+    .describe('SRE evidence bundle v1 (incident-generator.agent-adapter-request/v1), as a JSON string or object'),
+};
 
-    case 'tools/list':
-      return { jsonrpc: '2.0', id, result: { tools: TOOL_DEFINITIONS } };
+/** Wrap handler output as an MCP tool result: human-readable text + machine-readable structure. */
+function toResult(data: unknown) {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+    structuredContent: data as Record<string, unknown>,
+  };
+}
 
-    case 'tools/call': {
-      const toolName = (params?.name ?? '') as string;
-      const toolArgs = (params?.arguments ?? {}) as Record<string, unknown>;
+function serverVersion(): string {
+  return process.env.__CRISISMODE_VERSION ?? '0.5.0';
+}
 
-      const handler = TOOL_HANDLERS[toolName];
-      if (!handler) {
-        return {
-          jsonrpc: '2.0',
-          id,
-          error: { code: -32601, message: `Unknown tool: ${toolName}` },
-        };
-      }
+/**
+ * Build the CrisisMode MCP server with all read-only diagnosis tools registered.
+ * Transport-agnostic — callers connect it to stdio (production) or an
+ * in-memory pair (tests).
+ */
+export function createMcpServer(): McpServer {
+  const server = new McpServer({ name: 'crisismode', version: serverVersion() });
 
-      try {
-        const result = await handler(toolArgs);
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-          },
-        };
-      } catch (err) {
-        return {
-          jsonrpc: '2.0',
-          id,
-          result: {
-            content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
-            isError: true,
-          },
-        };
-      }
-    }
+  server.registerTool(
+    'crisismode_scan',
+    {
+      title: 'Health scan',
+      description:
+        'Run a zero-config CrisisMode health scan. Detects local services (PostgreSQL, Redis, Kafka, etcd, Kubernetes, AWS, ...) or uses crisismode.yaml, checks health, and returns a 0-100 score with per-service findings. Read-only.',
+      inputSchema: {
+        configPath: z.string().optional().describe('Path to crisismode.yaml (auto-detects if omitted)'),
+        category: z.string().optional().describe('Comma-separated service kinds to scan, e.g. "postgresql,redis"'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => toResult(await handleScan(args)),
+  );
 
-    case 'notifications/initialized':
-      // Client acknowledgment — no response needed for notifications
-      return { jsonrpc: '2.0', id, result: {} };
+  server.registerTool(
+    'crisismode_diagnose',
+    {
+      title: 'Diagnose a target',
+      description:
+        'Health assessment plus diagnosis for one target: root-cause findings, confidence, and recommended next steps. Uses AI diagnosis when ANTHROPIC_API_KEY is set, rule-based heuristics otherwise. Read-only — never mutates the target.',
+      inputSchema: {
+        target: z.string().optional().describe('Target name from config (first target if omitted)'),
+        configPath: z.string().optional().describe('Path to crisismode.yaml'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => toResult(await handleDiagnose(args)),
+  );
 
-    default:
-      return {
-        jsonrpc: '2.0',
-        id,
-        error: { code: -32601, message: `Method not found: ${method}` },
-      };
-  }
+  server.registerTool(
+    'crisismode_status',
+    {
+      title: 'Quick status probe',
+      description: 'Quick UP/DOWN status of configured or auto-detected services. Read-only.',
+      inputSchema: {
+        configPath: z.string().optional().describe('Path to crisismode.yaml'),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => toResult(await handleStatus(args)),
+  );
+
+  server.registerTool(
+    'crisismode_list_agents',
+    {
+      title: 'List recovery agents',
+      description: 'List the built-in CrisisMode recovery agents and what each one diagnoses.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => toResult(await handleListAgents()),
+  );
+
+  server.registerTool(
+    'crisismode_bundle_ingest',
+    {
+      title: 'Ingest evidence bundle',
+      description:
+        'Read-only diagnosis of an SRE evidence bundle (v1): validates the bundle and returns a DiagnosisResult from the routed recovery agent.',
+      inputSchema: bundleInput,
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => toResult(await handleBundleIngest(args)),
+  );
+
+  server.registerTool(
+    'crisismode_bundle_respond',
+    {
+      title: 'Respond to evidence bundle',
+      description:
+        'Full AdapterResponse v1 for an SRE evidence bundle: ranked hypotheses with evidence citations, policy-gated proposed actions, and explicit abstention when evidence is insufficient. Abstains rather than guessing when AI is unavailable.',
+      inputSchema: bundleInput,
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => toResult(await handleBundleRespond(args)),
+  );
+
+  server.registerTool(
+    'crisismode_bundle_plan',
+    {
+      title: 'Bundle to dry-run plan',
+      description:
+        'Translate an SRE evidence bundle into a validated CrisisMode RecoveryPlan (dry-run only — the plan is returned, never executed). Includes policy-rejected actions and warnings.',
+      inputSchema: bundleInput,
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => toResult(await handleBundlePlan(args)),
+  );
+
+  return server;
 }
 
 /**
  * Start the MCP server on stdio.
- * Reads JSON-RPC messages from stdin (newline-delimited) and writes responses to stdout.
+ *
+ * stdout carries the MCP protocol exclusively, so any stray console.log from
+ * framework code is rerouted to stderr before the transport connects.
  */
 export async function startMcpServer(): Promise<void> {
-  process.stderr.write('CrisisMode MCP server starting on stdio...\n');
+  /* eslint-disable no-console */
+  console.log = (...args: unknown[]) => console.error(...args);
+  console.info = (...args: unknown[]) => console.error(...args);
+  console.warn = (...args: unknown[]) => console.error(...args);
+  console.debug = (...args: unknown[]) => console.error(...args);
+  /* eslint-enable no-console */
 
-  let buffer = '';
-
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', async (chunk: string) => {
-    buffer += chunk;
-
-    // Process complete lines
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      try {
-        const request = JSON.parse(trimmed) as JsonRpcRequest;
-        const response = await handleJsonRpcRequest(request);
-
-        // Don't send response for notifications (no id)
-        if (request.id !== undefined) {
-          process.stdout.write(JSON.stringify(response) + '\n');
-        }
-      } catch (err) {
-        const errorResponse: JsonRpcResponse = {
-          jsonrpc: '2.0',
-          id: null,
-          error: {
-            code: -32700,
-            message: `Parse error: ${err instanceof Error ? err.message : String(err)}`,
-          },
-        };
-        process.stdout.write(JSON.stringify(errorResponse) + '\n');
-      }
-    }
-  });
-
-  process.stdin.on('end', () => {
-    process.stderr.write('CrisisMode MCP server shutting down.\n');
-    process.exit(0);
-  });
+  const server = createMcpServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  process.stderr.write('crisismode MCP server ready on stdio\n');
 }

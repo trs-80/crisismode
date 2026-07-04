@@ -18,15 +18,15 @@
 
 import type { DiagnosisResult, DiagnosisFinding } from '../types/diagnosis-result.js';
 import { isInternetAvailable, getNetworkProfile } from './network-profile.js';
+import { defaultAiModel } from './ai-model.js';
 
-const DEFAULT_MODEL = 'claude-sonnet-4-20250514';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_FIELD_LENGTH = 10_000;
 
 export interface AiDiagnosisConfig {
   /** Anthropic API key. If omitted, reads from ANTHROPIC_API_KEY env var. */
   apiKey?: string;
-  /** Model to use. Defaults to claude-sonnet-4-20250514. */
+  /** Model to use. Defaults to defaultAiModel() (CRISISMODE_AI_MODEL override). */
   model?: string;
   /** Timeout in milliseconds. Defaults to 10000. */
   timeoutMs?: number;
@@ -124,7 +124,7 @@ export async function aiCallText(
     return null;
   }
 
-  const model = config.model ?? DEFAULT_MODEL;
+  const model = config.model ?? defaultAiModel();
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxTokens = config.maxTokens ?? 1024;
 
@@ -142,11 +142,10 @@ export async function aiCallText(
       {
         model,
         max_tokens: maxTokens,
-        // Temperature 0: deterministic output across runs. The bundle
-        // judge does substring matching against canonical hypothesis
-        // phrasing; non-zero temperature meaningfully reduced pass
-        // rates due to phrasing drift across runs.
-        temperature: 0,
+        // No sampling parameters: current Claude models reject non-default
+        // temperature/top_p. Determinism-sensitive consumers (the bundle
+        // judge matches canonical hypothesis phrasing) rely on prompt
+        // wording instead.
         messages: [{ role: 'user', content: sanitizedUser }],
         system: sanitizedSystem,
       },

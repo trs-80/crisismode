@@ -44,43 +44,46 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "pnpm --filter @crisismode/agent-sdk run build && tsc --noEmit",
-    "prepare": "husky"
+    "prepare": "husky",
+    "eval:diagnosis": "tsx eval/run-diagnosis-eval.ts"
   },
   "packageManager": "pnpm@10.30.3",
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.78.0",
+    "@anthropic-ai/sdk": "^0.110.0",
     "@crisismode/agent-sdk": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
-    "@langchain/core": "^1.1.32",
-    "@langchain/langgraph": "^1.2.2",
+    "@langchain/core": "^1.2.1",
+    "@langchain/langgraph": "^1.4.7",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chalk": "^5.3.0",
-    "ioredis": "^5.10.0",
-    "pg": "^8.16.3",
-    "semver": "^7.7.4",
-    "yaml": "^2.8.2"
+    "ioredis": "^5.11.1",
+    "pg": "^8.22.0",
+    "semver": "^7.8.5",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.700.0",
-    "@aws-sdk/client-rds": "^3.700.0",
-    "@aws-sdk/client-s3": "^3.700.0",
-    "@aws-sdk/client-sts": "^3.700.0"
+    "@aws-sdk/client-dynamodb": "^3.1079.0",
+    "@aws-sdk/client-rds": "^3.1079.0",
+    "@aws-sdk/client-s3": "^3.1079.0",
+    "@aws-sdk/client-sts": "^3.1079.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/pg": "^8.18.0",
+    "@types/node": "^22.20.0",
+    "@types/pg": "^8.20.0",
     "@types/semver": "^7.7.1",
-    "@vitest/coverage-v8": "^4.1.0",
-    "esbuild": "^0.25.0",
-    "fast-check": "^4.6.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "esbuild": "^0.28.1",
+    "fast-check": "^4.8.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.4.0",
+    "lint-staged": "^17.0.8",
     "postject": "^1.0.0-alpha.6",
-    "tsx": "^4.7.0",
+    "tsx": "^4.23.0",
     "typescript": "^5.4.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.9"
   },
   "lint-staged": {
     "*.{ts,tsx}": "tsc --noEmit"
