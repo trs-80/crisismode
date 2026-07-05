@@ -22,8 +22,8 @@ import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 export interface QueueLiveConfig {
   /** Redis connection URL (e.g. redis://localhost:6379) */
   redisUrl: string;
-  /** BullMQ queue names to monitor */
-  queueNames: string[];
+  /** BullMQ queue names to monitor. Empty/absent = discover from ${prefix}:*:meta keys. */
+  queueNames?: string[];
   /** BullMQ key prefix (default: 'bull') */
   keyPrefix?: string;
   /** Connection timeout in milliseconds (default: 5000) */
@@ -41,6 +41,7 @@ type RedisClient = {
   zrange(key: string, start: number, stop: number): Promise<string[]>;
   ping(): Promise<string>;
   quit(): Promise<string>;
+  scan(cursor: string, ...args: Array<string | number>): Promise<[string, string[]]>;
 };
 
 export class QueueLiveClient implements QueueBackend {
@@ -76,15 +77,54 @@ export class QueueLiveClient implements QueueBackend {
     }
   }
 
+  private resolvedQueueNames: string[] | null = null;
+
+  /** Establish the connection eagerly so registration can fail honestly. */
+  async connect(): Promise<void> {
+    await this.getRedis();
+  }
+
+  /**
+   * Resolve the queue names to monitor: explicit config wins; otherwise
+   * discover BullMQ queues by scanning `${prefix}:*:meta` keys.
+   */
+  async discoverQueueNames(): Promise<string[]> {
+    if (this.resolvedQueueNames) return this.resolvedQueueNames;
+
+    if (this.config.queueNames && this.config.queueNames.length > 0) {
+      this.resolvedQueueNames = this.config.queueNames;
+      return this.resolvedQueueNames;
+    }
+
+    const redis = await this.getRedis();
+    const names = new Set<string>();
+    let cursor = '0';
+    do {
+      const [next, keys] = await redis.scan(cursor, 'MATCH', `${this.prefix}:*:meta`, 'COUNT', 100);
+      for (const key of keys) {
+        const parts = key.split(':');
+        // `${prefix}:<queue name (may contain colons)>:meta`
+        if (parts.length >= 3 && parts[parts.length - 1] === 'meta') {
+          names.add(parts.slice(1, -1).join(':'));
+        }
+      }
+      cursor = next;
+    } while (cursor !== '0');
+
+    this.resolvedQueueNames = Array.from(names).sort();
+    return this.resolvedQueueNames;
+  }
+
   private key(queue: string, type: string): string {
     return `${this.prefix}:${queue}:${type}`;
   }
 
   async getQueueStats(): Promise<QueueStats[]> {
     const redis = await this.getRedis();
+    const queueNames = await this.discoverQueueNames();
     const stats: QueueStats[] = [];
 
-    for (const name of this.config.queueNames) {
+    for (const name of queueNames) {
       const [waiting, active, delayed, failed, paused] = await Promise.all([
         redis.llen(this.key(name, 'wait')),
         redis.llen(this.key(name, 'active')),
@@ -128,9 +168,10 @@ export class QueueLiveClient implements QueueBackend {
 
   async getWorkerStatus(): Promise<WorkerStatus[]> {
     const redis = await this.getRedis();
+    const queueNames = await this.discoverQueueNames();
     const workers: WorkerStatus[] = [];
 
-    for (const name of this.config.queueNames) {
+    for (const name of queueNames) {
       // BullMQ stores worker info in the meta hash
       const workerKeys = await redis.smembers(this.key(name, 'events'));
 
@@ -171,11 +212,12 @@ export class QueueLiveClient implements QueueBackend {
 
   async getDeadLetterStats(): Promise<DeadLetterStats> {
     const redis = await this.getRedis();
+    const queueNames = await this.discoverQueueNames();
     let totalDepth = 0;
     let oldestAge = 0;
     const recentErrors: string[] = [];
 
-    for (const name of this.config.queueNames) {
+    for (const name of queueNames) {
       const failedCount = await redis.zcard(this.key(name, 'failed'));
       totalDepth += failedCount;
 
@@ -214,10 +256,11 @@ export class QueueLiveClient implements QueueBackend {
   }
 
   async getProcessingRate(): Promise<ProcessingRateInfo> {
+    const queueNames = await this.discoverQueueNames();
     const stats = await this.getQueueStats();
     const totalDepth = stats.reduce((sum, q) => sum + q.depth, 0);
     const totalProcessingRate = stats.reduce((sum, q) => sum + q.processingRate, 0);
-    const totalIncoming = stats.reduce((sum, q) => sum + q.processingRate + (q.depth > this.lastTotalDepth / this.config.queueNames.length ? 1 : 0), 0);
+    const totalIncoming = stats.reduce((sum, q) => sum + q.processingRate + (q.depth > this.lastTotalDepth / Math.max(1, queueNames.length) ? 1 : 0), 0);
 
     const backlogGrowthRate = totalIncoming - totalProcessingRate;
     const estimatedClearTime = totalProcessingRate > 0 && backlogGrowthRate < 0
