@@ -48,6 +48,34 @@ describe('QueueLiveClient queue discovery', () => {
     const client = clientWith([]);
     expect(await client.getQueueStats()).toEqual([]);
   });
+
+  it('re-discovers after an empty result', async () => {
+    const client = new QueueLiveClient({ redisUrl: 'redis://unused:6379', queueNames: [] });
+    let call = 0;
+    const redis = fakeRedis([]);
+    (redis as unknown as { scan: (...args: unknown[]) => Promise<[string, string[]]> }).scan = async (
+      ..._args: unknown[]
+    ) => {
+      call += 1;
+      return call === 1 ? ['0', []] : ['0', ['bull:emails:meta']];
+    };
+    (client as unknown as { redis: unknown }).redis = redis;
+
+    expect(await client.discoverQueueNames()).toEqual([]);
+    expect(await client.discoverQueueNames()).toEqual(['emails']);
+  });
+
+  it('connect failures never expose credentials', async () => {
+    const client = new QueueLiveClient({ redisUrl: 'redis://user:supersecret@localhost:59998', queueNames: [] });
+    await client.connect().then(
+      () => {
+        throw new Error('should have failed');
+      },
+      (err) => {
+        expect(String(err)).not.toContain('supersecret');
+      },
+    );
+  }, 10_000);
 });
 
 describe('QueueBacklogAgent with zero queues', () => {

@@ -73,8 +73,13 @@ export class QueueLiveClient implements QueueBackend {
       await (this.redis as unknown as { connect(): Promise<void> }).connect();
       return this.redis;
     } catch (err) {
-      throw new Error(`Failed to connect to Redis at ${this.config.redisUrl}: ${err}`);
+      throw new Error(`Failed to connect to Redis at ${this.safeRedisUrl()}: ${err}`);
     }
+  }
+
+  /** Redis URL with any userinfo credentials removed — safe for error messages. */
+  private safeRedisUrl(): string {
+    return this.config.redisUrl.replace(/\/\/[^@/]*@/, '//');
   }
 
   private resolvedQueueNames: string[] | null = null;
@@ -89,7 +94,7 @@ export class QueueLiveClient implements QueueBackend {
    * discover BullMQ queues by scanning `${prefix}:*:meta` keys.
    */
   async discoverQueueNames(): Promise<string[]> {
-    if (this.resolvedQueueNames) return this.resolvedQueueNames;
+    if (this.resolvedQueueNames && this.resolvedQueueNames.length > 0) return this.resolvedQueueNames;
 
     if (this.config.queueNames && this.config.queueNames.length > 0) {
       this.resolvedQueueNames = this.config.queueNames;
@@ -111,8 +116,11 @@ export class QueueLiveClient implements QueueBackend {
       cursor = next;
     } while (cursor !== '0');
 
-    this.resolvedQueueNames = Array.from(names).sort();
-    return this.resolvedQueueNames;
+    const discovered = Array.from(names).sort();
+    if (discovered.length > 0) {
+      this.resolvedQueueNames = discovered;
+    }
+    return discovered;
   }
 
   private key(queue: string, type: string): string {
