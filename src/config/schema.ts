@@ -51,6 +51,33 @@ export interface AwsTargetConfig {
   profile?: string;      // optional AWS profile override
 }
 
+// ── Kind-specific target options ──
+
+export interface QueueTargetOptions {
+  /** BullMQ queue names. Empty/absent = discover at connect time. */
+  queueNames?: string[];
+  /** BullMQ key prefix (default 'bull'). */
+  keyPrefix?: string;
+  /** Connect with TLS (set by derivation when the source URL scheme is rediss:). */
+  tls?: boolean;
+}
+
+export interface ConfigDriftExpectation {
+  /** Environment variable name or config file path */
+  path: string;
+  /** Expected value (null = should not be set) */
+  expected: string | null;
+  source: 'env' | 'file';
+  masked?: boolean;
+}
+
+export interface ConfigDriftTargetOptions {
+  /** Path to the env template file (default: auto-detect .env.example / .env.template). */
+  envExamplePath?: string;
+  /** Full value expectations declared in crisismode.yaml. */
+  expectations?: ConfigDriftExpectation[];
+}
+
 // ── Target config ──
 
 export interface TargetConfig {
@@ -65,6 +92,10 @@ export interface TargetConfig {
   credentials?: CredentialRef;
   /** AWS-specific config for aws-s3, aws-dynamodb, aws-rds target kinds. */
   aws?: AwsTargetConfig;
+  /** BullMQ options for message-queue targets. */
+  queue?: QueueTargetOptions;
+  /** Drift-check options for application-config targets. */
+  configDrift?: ConfigDriftTargetOptions;
 }
 
 // ── Site config ──
@@ -114,4 +145,8 @@ export interface ResolvedTarget {
   credentials: ResolvedCredentials;
   /** AWS-specific config — passed through from TargetConfig. */
   aws?: AwsTargetConfig;
+  /** BullMQ options for message-queue targets. */
+  queue?: QueueTargetOptions;
+  /** Drift-check options for application-config targets. */
+  configDrift?: ConfigDriftTargetOptions;
 }

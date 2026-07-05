@@ -22,6 +22,8 @@ export function resolveTarget(target: TargetConfig): ResolvedTarget {
     replicas: target.replicas ?? [],
     credentials: resolveCredentials(target.credentials),
     aws: target.aws,
+    queue: target.queue,
+    configDrift: target.configDrift,
   };
 }
 
