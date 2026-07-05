@@ -75,6 +75,11 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
     this.longQueryThresholdSec = config.longQueryThresholdSec ?? 60;
   }
 
+  /** Verify connectivity up front so scan reports an honest connect failure. */
+  async ping(): Promise<void> {
+    await this.pool.query('SELECT 1');
+  }
+
   async getMigrationStatus(): Promise<MigrationStatus> {
     // Try Prisma first
     const prisma = await this.tryPrismaMigration();
