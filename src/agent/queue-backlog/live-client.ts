@@ -41,6 +41,7 @@ type RedisClient = {
   zrange(key: string, start: number, stop: number): Promise<string[]>;
   ping(): Promise<string>;
   quit(): Promise<string>;
+  disconnect(): void;
   scan(cursor: string, ...args: Array<string | number>): Promise<[string, string[]]>;
 };
 
@@ -73,6 +74,14 @@ export class QueueLiveClient implements QueueBackend {
       await (this.redis as unknown as { connect(): Promise<void> }).connect();
       return this.redis;
     } catch (err) {
+      if (this.redis) {
+        try {
+          this.redis.disconnect();
+        } catch {
+          // swallow cleanup errors — we're already failing
+        }
+        this.redis = null;
+      }
       throw new Error(`Failed to connect to Redis at ${this.safeRedisUrl()}: ${err}`);
     }
   }

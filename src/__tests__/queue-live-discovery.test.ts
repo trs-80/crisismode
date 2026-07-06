@@ -76,6 +76,12 @@ describe('QueueLiveClient queue discovery', () => {
       },
     );
   }, 10_000);
+
+  it('disposes the failed redis client after a rejected connect (no lingering handle)', async () => {
+    const client = new QueueLiveClient({ redisUrl: 'redis://localhost:59998', queueNames: [] });
+    await expect(client.connect()).rejects.toThrow();
+    expect((client as unknown as { redis: unknown }).redis).toBeNull();
+  }, 10_000);
 });
 
 describe('QueueBacklogAgent with zero queues', () => {

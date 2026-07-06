@@ -77,7 +77,12 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
 
   /** Verify connectivity up front so scan reports an honest connect failure. */
   async ping(): Promise<void> {
-    await this.pool.query('SELECT 1');
+    try {
+      await this.pool.query('SELECT 1');
+    } catch (err) {
+      await this.pool.end().catch(() => {});
+      throw err;
+    }
   }
 
   async getMigrationStatus(): Promise<MigrationStatus> {
