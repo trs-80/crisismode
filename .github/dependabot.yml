@@ -7,6 +7,11 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 10
+    ignore:
+      # @types/node tracks the oldest supported runtime major (Node 20/22 in CI),
+      # not the newest available — majors here are noise until the runtime moves.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       minor-and-patch:
         update-types:
