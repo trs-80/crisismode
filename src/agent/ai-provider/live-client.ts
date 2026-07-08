@@ -31,6 +31,8 @@ export interface ProviderEndpointConfig {
   authHeader?: string;
   /** Auth prefix (default: 'Bearer') */
   authPrefix?: string;
+  /** Additional headers required by this provider (e.g. anthropic-version). */
+  extraHeaders?: Record<string, string>;
   /** Priority in fallback chain (lower = higher priority) */
   priority: number;
   /** Whether this provider is enabled in the fallback chain */
@@ -78,10 +80,13 @@ export class AiProviderLiveClient implements AiProviderBackend {
     const headerName = provider.authHeader ?? 'Authorization';
     const prefix = provider.authPrefix ?? 'Bearer';
 
+    const headers: Record<string, string> = { ...provider.extraHeaders };
+    headers[headerName] = prefix ? `${prefix} ${provider.apiKey}` : provider.apiKey;
+
     const start = Date.now();
     try {
       const response = await fetch(url, {
-        headers: { [headerName]: `${prefix} ${provider.apiKey}` },
+        headers,
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       const latencyMs = Date.now() - start;

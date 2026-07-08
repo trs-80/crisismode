@@ -25,6 +25,25 @@ export class QueueBacklogAgent implements RecoveryAgent {
   async assessHealth(_context: AgentContext): Promise<HealthAssessment> {
     const observedAt = new Date().toISOString();
     const queues = await this.backend.getQueueStats();
+
+    if (queues.length === 0) {
+      return {
+        status: 'unknown',
+        confidence: 0.9,
+        summary: 'No BullMQ queues found at this target — nothing to monitor.',
+        observedAt,
+        signals: [{
+          source: 'queue_discovery',
+          status: 'unknown',
+          detail: 'No BullMQ queue metadata keys (bull:*:meta) were found on this Redis instance.',
+          observedAt,
+        }],
+        recommendedActions: [
+          'Verify this Redis instance hosts BullMQ queues, or set queue.queueNames in crisismode.yaml.',
+        ],
+      };
+    }
+
     const workers = await this.backend.getWorkerStatus();
     const dlq = await this.backend.getDeadLetterStats();
     const rates = await this.backend.getProcessingRate();

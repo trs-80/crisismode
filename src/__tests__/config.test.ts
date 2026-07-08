@@ -31,7 +31,7 @@ const validConfig: SiteConfig = {
     {
       name: 'test-redis',
       kind: 'redis',
-      primary: { host: 'redis.local', port: 6379 },
+      primary: { host: 'simulator', port: 6379 },
       credentials: { type: 'value', password: 'redis-secret' },
     },
   ],

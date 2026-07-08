@@ -25,6 +25,7 @@ export const INFRA_DEPS: InfraDep[] = [
   { pkg: 'pg', service: 'postgresql' },
   { pkg: 'postgres', service: 'postgresql' },
   { pkg: '@prisma/client', service: 'postgresql' },
+  { pkg: 'prisma', service: 'postgresql' },
   { pkg: 'drizzle-orm', service: 'postgresql' },
   { pkg: 'knex', service: 'postgresql' },
   { pkg: 'typeorm', service: 'postgresql' },

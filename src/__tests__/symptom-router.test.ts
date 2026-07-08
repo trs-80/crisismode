@@ -26,6 +26,7 @@ function makeStackProfile(overrides: Partial<StackProfile> = {}): StackProfile {
     platform: { platform: null, detected: false, signals: [] },
     aiProviders: [],
     derivedTargets: [],
+    derivedNotes: {},
     confidence: 0,
     ...overrides,
   };

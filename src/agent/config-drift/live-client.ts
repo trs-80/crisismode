@@ -33,6 +33,8 @@ export interface ConfigExpectation {
   source: 'env' | 'file' | 'secret' | 'remote';
   /** Whether to mask the value in output */
   masked?: boolean;
+  /** Presence-only check: verify the key is set; never read or compare its value. */
+  presence?: boolean;
 }
 
 export interface SecretExpectation {
@@ -65,6 +67,18 @@ export class ConfigDriftLiveClient implements ConfigDriftBackend {
 
     for (const exp of this.config.expectations) {
       if (exp.source !== 'env') continue;
+
+      if (exp.presence) {
+        const isSet = process.env[exp.path] !== undefined && process.env[exp.path] !== '';
+        results.push({
+          name: exp.path,
+          expected: '(set)',
+          actual: isSet ? '(set)' : null,
+          source: 'env',
+          masked: true,
+        });
+        continue;
+      }
 
       const actual = process.env[exp.path] ?? null;
       const masked = exp.masked ?? (exp.path.includes('SECRET') || exp.path.includes('PASSWORD') || exp.path.includes('KEY') || exp.path.includes('TOKEN'));

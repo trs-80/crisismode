@@ -35,7 +35,16 @@ export class RedisLiveClient implements RedisBackend {
   }
 
   async connect(): Promise<void> {
-    await this.client.connect();
+    try {
+      await this.client.connect();
+    } catch (err) {
+      try {
+        this.client.disconnect();
+      } catch {
+        // swallow cleanup errors — we're already failing
+      }
+      throw err;
+    }
   }
 
   async getInfo(): Promise<RedisInfo> {

@@ -18,6 +18,8 @@ import { detectServices } from './detect.js';
 import type { DetectedService } from './detect.js';
 import { INFRA_PKG_NAMES } from '../config/service-registry.js';
 import type { TargetConfig } from '../config/schema.js';
+import { AI_ENV_VARS } from '../agent/ai-provider/provider-table.js';
+import { findEnvExample } from '../agent/config-drift/env-example.js';
 
 // ── Types ──
 
@@ -43,6 +45,8 @@ export interface StackProfile {
   aiProviders: AiProviderInfo[];
   /** Targets derived from connection string env vars */
   derivedTargets: TargetConfig[];
+  /** Human-readable source note per derived target name (for onboarding output). */
+  derivedNotes: Record<string, string>;
   /** Vercel project config from .vercel/project.json */
   vercelProject?: { projectId: string; orgId: string };
   /** Overall confidence in the profile */
@@ -128,17 +132,6 @@ const ENV_HINTS: Array<{ name: string; kind: string; inferredService?: string }>
   { name: 'AWS_DEFAULT_REGION', kind: 'aws_region' },
   { name: 'AWS_PROFILE', kind: 'aws_profile' },
   { name: 'AWS_ACCESS_KEY_ID', kind: 'aws_credentials' },
-];
-
-/** AI provider env vars */
-const AI_ENV_VARS: Array<{ envVar: string; provider: string }> = [
-  { envVar: 'OPENAI_API_KEY', provider: 'openai' },
-  { envVar: 'ANTHROPIC_API_KEY', provider: 'anthropic' },
-  { envVar: 'COHERE_API_KEY', provider: 'cohere' },
-  { envVar: 'GOOGLE_AI_API_KEY', provider: 'google' },
-  { envVar: 'MISTRAL_API_KEY', provider: 'mistral' },
-  { envVar: 'REPLICATE_API_TOKEN', provider: 'replicate' },
-  { envVar: 'HUGGINGFACE_API_KEY', provider: 'huggingface' },
 ];
 
 /** Platform detection from env vars and config files */
@@ -257,6 +250,89 @@ export function buildTargetsFromEnvHints(hints: EnvHint[]): TargetConfig[] {
 }
 
 /**
+ * Derive targets for agents that need both a connection signal AND a matching
+ * app dependency/file (gated derivation — keeps scans quiet on unrelated repos).
+ *
+ * SECURITY: notes contain env var NAMES and package names only, never values.
+ */
+export async function deriveGatedTargets(
+  appStack: AppStackInfo,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ targets: TargetConfig[]; notes: Record<string, string> }> {
+  const targets: TargetConfig[] = [];
+  const notes: Record<string, string> = {};
+  const deps = new Set(appStack.dependencies);
+
+  // managed-database: parseable PG URL + a migration tool
+  const pgEnvName = ['DATABASE_URL', 'POSTGRES_URL', 'PG_CONNECTION_STRING'].find((n) => env[n]);
+  const migrationDep = ['prisma', '@prisma/client', 'drizzle-orm'].find((d) => deps.has(d));
+  if (pgEnvName && migrationDep) {
+    const parsed = parseConnectionString(env[pgEnvName]!);
+    if (parsed && parsed.kind === 'postgresql') {
+      const target: TargetConfig = {
+        name: 'derived-managed-database',
+        kind: 'managed-database',
+        primary: { host: parsed.host, port: parsed.port, database: parsed.database },
+      };
+      if (parsed.username || parsed.password) {
+        target.credentials = { type: 'value' as const, username: parsed.username, password: parsed.password };
+      }
+      targets.push(target);
+      notes[target.name] = `from ${pgEnvName} + ${migrationDep}`;
+    }
+  }
+
+  // message-queue: parseable redis URL + bullmq/bull
+  const redisEnvName = ['REDIS_URL', 'REDIS_TLS_URL'].find((n) => env[n]);
+  const queueDep = ['bullmq', 'bull'].find((d) => deps.has(d));
+  if (redisEnvName && queueDep) {
+    const raw = env[redisEnvName]!;
+    const parsed = parseConnectionString(raw);
+    if (parsed && parsed.kind === 'redis') {
+      const target: TargetConfig = {
+        name: 'derived-message-queue',
+        kind: 'message-queue',
+        primary: { host: parsed.host, port: parsed.port },
+        queue: { tls: raw.startsWith('rediss:') },
+      };
+      if (parsed.username || parsed.password) {
+        target.credentials = { type: 'value' as const, username: parsed.username, password: parsed.password };
+      }
+      targets.push(target);
+      notes[target.name] = `from ${redisEnvName} + ${queueDep}`;
+    }
+  }
+
+  // ai-provider: an API key present OR an AI SDK dependency
+  const aiKeyName = AI_ENV_VARS.find((v) => env[v.envVar] !== undefined)?.envVar;
+  const aiDep = appStack.dependencies.find((d) => d in AI_PROVIDER_DEPS);
+  if (aiKeyName || aiDep) {
+    const target: TargetConfig = {
+      name: 'derived-ai-provider',
+      kind: 'ai-provider',
+      primary: { host: 'auto', port: 0 },
+    };
+    targets.push(target);
+    notes[target.name] = aiKeyName ? `from ${aiKeyName}` : `from ${aiDep} dependency`;
+  }
+
+  // application-config: an env template file exists
+  const envExample = await findEnvExample(cwd);
+  if (envExample) {
+    const target: TargetConfig = {
+      name: 'derived-application-config',
+      kind: 'application-config',
+      primary: { host: 'auto', port: 0 },
+    };
+    targets.push(target);
+    notes[target.name] = `from ${envExample.split('/').pop()}`;
+  }
+
+  return { targets, notes };
+}
+
+/**
  * Read .vercel/project.json and extract projectId + orgId.
  * Returns null if the file is missing or malformed.
  */
@@ -292,7 +368,8 @@ export async function discoverStack(): Promise<StackProfile> {
 
   const envHints = scanEnvHints();
   const aiProviders = detectAiProviders(appStack);
-  const derivedTargets = buildTargetsFromEnvHints(envHints);
+  const gated = await deriveGatedTargets(appStack, cwd);
+  const derivedTargets = [...buildTargetsFromEnvHints(envHints), ...gated.targets];
   const vercelProject = readVercelProjectConfig(cwd);
 
   const confidence = computeConfidence(services, appStack, envHints, platform);
@@ -304,6 +381,7 @@ export async function discoverStack(): Promise<StackProfile> {
     platform,
     aiProviders,
     derivedTargets,
+    derivedNotes: gated.notes,
     ...(vercelProject ? { vercelProject } : {}),
     confidence,
   };
@@ -568,6 +646,11 @@ export function printOnboardingMessage(profile: StackProfile, configSource: stri
   console.log(chalk.bold('  Detected:'));
 
   for (const target of profile.derivedTargets) {
+    const note = profile.derivedNotes[target.name];
+    if (note) {
+      console.log(chalk.green(`    + ${target.kind}`) + chalk.dim(` (${note})`));
+      continue;
+    }
     const envName = target.name.replace(/^env-/, '').replace(/-/g, '_').toUpperCase();
     const host = target.primary ? `${target.primary.host}:${target.primary.port}` : 'unknown';
     console.log(chalk.green(`    + ${target.kind}`) + chalk.dim(` at ${host} (from ${envName})`));
