@@ -187,13 +187,13 @@ jobs:
           fi
 
       - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-linux
           path: release
 
       - name: Download Darwin artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binaries-darwin
           path: release
