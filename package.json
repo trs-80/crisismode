@@ -1,7 +1,7 @@
 {
   "name": "crisismode",
-  "version": "0.5.0",
-  "description": "AI-powered infrastructure recovery — detect, diagnose, and recover stateful systems",
+  "version": "0.6.0",
+  "description": "AI-powered infrastructure recovery \u2014 detect, diagnose, and recover stateful systems",
   "type": "module",
   "bin": {
     "crisismode": "./dist/cli/index.js"
