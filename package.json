@@ -55,7 +55,7 @@
     "@anthropic-ai/sdk": "^0.110.0",
     "@crisismode/agent-sdk": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
-    "@langchain/core": "^1.2.1",
+    "@langchain/core": "^1.2.2",
     "@langchain/langgraph": "^1.4.7",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "chalk": "^5.3.0",
@@ -66,18 +66,18 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1080.0",
-    "@aws-sdk/client-rds": "^3.1080.0",
-    "@aws-sdk/client-s3": "^3.1080.0",
-    "@aws-sdk/client-sts": "^3.1080.0"
+    "@aws-sdk/client-dynamodb": "^3.1083.0",
+    "@aws-sdk/client-rds": "^3.1083.0",
+    "@aws-sdk/client-s3": "^3.1083.0",
+    "@aws-sdk/client-sts": "^3.1083.0"
   },
   "devDependencies": {
-    "@types/node": "^22.20.0",
+    "@types/node": "^22.20.1",
     "@types/pg": "^8.20.0",
     "@types/semver": "^7.7.1",
     "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.28.1",
-    "fast-check": "^4.8.0",
+    "fast-check": "^4.9.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
     "postject": "^1.0.0-alpha.6",
