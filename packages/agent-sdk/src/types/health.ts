@@ -10,6 +10,10 @@ export interface HealthSignal {
   status: HealthSignalStatus;
   detail: string;
   observedAt: string;
+  /** Plain-English one-liner: what this signal measures and why it matters. */
+  explanation?: string;
+  /** Where an unfamiliar operator can learn more about this concept. */
+  learnMoreUrl?: string;
 }
 
 export interface HealthAssessment {

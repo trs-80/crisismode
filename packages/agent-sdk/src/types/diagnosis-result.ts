@@ -14,4 +14,8 @@ export interface DiagnosisFinding {
   observation: string;
   severity: 'info' | 'warning' | 'critical';
   data?: Record<string, unknown>;
+  /** Plain-English one-liner: what this signal measures and why it matters. */
+  explanation?: string;
+  /** Where an unfamiliar operator can learn more about this concept. */
+  learnMoreUrl?: string;
 }
