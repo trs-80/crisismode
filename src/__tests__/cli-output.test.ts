@@ -4,11 +4,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   configure, getOutputMode, printHealthStatus, printDiagnosis, printStatus,
-  printError, printScanSummary, escalationBadge, printNextAction,
+  printError, printScanSummary, escalationBadge, printNextAction, printSynthesis,
 } from '../cli/output.js';
 import type { ScanResult } from '../cli/output.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
+import type { SynthesisResult } from '../framework/root-cause-synthesis.js';
 
 describe('CLI output — JSON mode', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
@@ -63,6 +64,35 @@ describe('CLI output — JSON mode', () => {
     const parsed = JSON.parse(output);
     expect(parsed.type).toBe('diagnosis');
     expect(parsed.diagnosis.scenario).toBe('replication_lag');
+  });
+
+  it('printSynthesis outputs valid JSON', () => {
+    const synthesis: SynthesisResult = {
+      clusters: [
+        {
+          id: 'cluster-0',
+          rootCause: 'Database backpressure propagating through caching and messaging layers',
+          confidence: 0.7,
+          agents: ['postgresql', 'redis'],
+          reasoning: 'Rule "database-backpressure": 2 agents share signal types [latency, timeout, connection]',
+          temporalCorrelation: false,
+          investigationOrder: ['postgresql', 'redis'],
+        },
+      ],
+      uncorrelated: [],
+      narrative: 'Primary root cause (70% confidence): Database backpressure propagating through caching and messaging layers.',
+      source: 'rules',
+      synthesizedAt: new Date().toISOString(),
+    };
+
+    printSynthesis(synthesis);
+
+    expect(logSpy).toHaveBeenCalledOnce();
+    const output = logSpy.mock.calls[0][0];
+    const parsed = JSON.parse(output);
+    expect(parsed.type).toBe('synthesis');
+    expect(parsed.synthesis.clusters).toHaveLength(1);
+    expect(parsed.synthesis.clusters[0].rootCause).toContain('Database backpressure');
   });
 
   it('printStatus outputs valid JSON', () => {

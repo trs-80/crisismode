@@ -21,13 +21,16 @@ import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/che
 import {
   printBanner, printScanSummary, printNextAction,
   printInfo, printDetection, printError, getOutputMode,
-  printPlainEnglishSummary,
+  printPlainEnglishSummary, printSynthesis,
 } from '../output.js';
 import {
   buildIncidentSummary, formatIncidentSummaryText,
 } from '../incident-summary.js';
 import { generatePlainEnglishSummary } from '../ai-summary.js';
 import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
+import { synthesizeByRules } from '../../framework/root-cause-synthesis.js';
+import type { AgentEvidence } from '../../framework/root-cause-synthesis.js';
+import { healthToSignals } from '../../framework/health-to-signals.js';
 import type { ScanFinding, ScanResult, RecentChange } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { HealthAssessment } from '../../types/health.js';
@@ -165,7 +168,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   let pluginFindingCounter = 0;
 
   // Run health checks in parallel with per-agent timeout
-  const healthPromises = targets.map(async (target): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string }> => {
+  const healthPromises = targets.map(async (target): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string; health: HealthAssessment | null }> => {
     let instance: AgentInstance | undefined;
     try {
       instance = await registry.createForTarget(target.name);
@@ -201,6 +204,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
       return {
         kind: target.kind,
+        health,
         finding: {
           service: `${target.kind} (${target.name})`,
           status: health.status,
@@ -216,6 +220,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
       }
       return {
         kind: target.kind,
+        health: null,
         finding: {
           service: `${target.kind} (${target.name})`,
           status: 'unknown',
@@ -237,6 +242,19 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   // Push agent findings in target order (not completion order)
   for (const { finding, kind } of agentResults) {
     findings.push({ id: findingId(kind, findingCounter++), ...finding });
+  }
+
+  // Cross-system root-cause correlation — only meaningful with 2+ degraded targets
+  const evidence: AgentEvidence[] = agentResults
+    .filter((r) => r.health && r.health.status !== 'healthy' && r.health.status !== 'unknown')
+    .map((r) => ({
+      agentKind: r.kind,
+      targetName: r.finding.service,
+      health: r.health!,
+      signals: healthToSignals(r.health!),
+    }));
+  if (evidence.length >= 2) {
+    printSynthesis(synthesizeByRules(evidence));
   }
 
   // Phase 2b: External check plugin health checks

@@ -9,6 +9,7 @@
 import chalk from 'chalk';
 import type { HealthAssessment, HealthStatus, OperatorSummary } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
+import type { SynthesisResult } from '../framework/root-cause-synthesis.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { StepResult } from '../types/execution-state.js';
 import type { PlanExplanation } from '../framework/ai-explainer.js';
@@ -176,6 +177,29 @@ export function printDiagnosis(diagnosis: DiagnosisResult): void {
       : finding.severity === 'warning' ? chalk.yellow
       : chalk.dim;
     console.log(sevColor(`    [${finding.severity.toUpperCase()}] `) + chalk.dim(`${finding.source}: ${finding.observation}`));
+  }
+  console.log('');
+}
+
+// ── Cross-system synthesis ──
+
+export function printSynthesis(result: SynthesisResult): void {
+  if (outputOptions.mode === 'machine') {
+    jsonOut('synthesis', { synthesis: result });
+    return;
+  }
+  if (result.clusters.length === 0) return;
+
+  console.log(chalk.bold('  Cross-system correlation'));
+  console.log(chalk.dim(`  ${result.narrative}`));
+  console.log('');
+  for (const cluster of result.clusters) {
+    console.log(
+      chalk.cyan('    Likely shared root cause: ')
+      + chalk.white(cluster.rootCause)
+      + chalk.dim(` (${Math.round(cluster.confidence * 100)}% confidence)`),
+    );
+    console.log(chalk.dim(`    Investigate in this order: ${cluster.investigationOrder.join(' -> ')}`));
   }
   console.log('');
 }
