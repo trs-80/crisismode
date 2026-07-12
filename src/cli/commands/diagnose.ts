@@ -129,7 +129,10 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     // Diagnosis (read-only)
     const hasAiKey = !!process.env.ANTHROPIC_API_KEY;
     const aiAvailable = hasAiKey && networkProfile.internet.status !== 'unavailable';
-    printInfo(aiAvailable ? 'Running AI-powered diagnosis...' : 'Running rule-based diagnosis...');
+    const aiCapable = agent.supportsAiDiagnosis === true;
+    printInfo(aiAvailable && aiCapable
+      ? 'Running AI-powered diagnosis...'
+      : 'Running rule-based diagnosis...');
 
     const diagnosis = applyEnvironmentGuard(
       await agent.diagnose(context),

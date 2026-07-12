@@ -14,8 +14,9 @@
  * the cached result without blocking.
  *
  * Design rationale:
- * - DNS resolution is tested separately from TCP connect so we can
- *   distinguish "no DNS" from "firewall blocking port 443".
+ * - DNS resolution is tested separately from TCP connect. The separate
+ *   dns result feeds the environment guard (environment-guard.ts) and
+ *   mode inference; per-port firewall classification is NOT implemented.
  * - Internet probe uses a HEAD request against a well-known, highly
  *   available endpoint (Anthropic API root). We don't send credentials.
  * - All probes run in parallel with short timeouts (3s) so the total
