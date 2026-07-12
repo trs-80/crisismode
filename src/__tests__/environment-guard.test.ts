@@ -71,6 +71,36 @@ describe('applyEnvironmentGuard', () => {
     expect(out.findings[0].observation).toMatch(/DNS or configuration/i);
   });
 
+  it('reclassifies when the name-resolution error is in a later finding, not findings[0]', () => {
+    const d: DiagnosisResult = {
+      status: 'identified',
+      scenario: 'database_unreachable',
+      confidence: 0.99,
+      findings: [
+        {
+          source: 'pg_connection',
+          observation: 'PostgreSQL is unreachable: connect ECONNREFUSED 10.0.0.5:5432',
+          severity: 'critical',
+          data: { error: 'connect ECONNREFUSED 10.0.0.5:5432' },
+        },
+        {
+          source: 'dns_probe',
+          observation: 'DNS lookup failed for pg-missing.invalid',
+          severity: 'warning',
+          data: { error: 'getaddrinfo ENOTFOUND pg-missing.invalid' },
+        },
+      ],
+      diagnosticPlanNeeded: false,
+    };
+    const out = applyEnvironmentGuard(d, profile(), 'test-postgres');
+    expect(out.scenario).toBe('target_unresolvable');
+    expect(out.status).toBe('partial');
+    expect(out.confidence).toBeLessThanOrEqual(0.6);
+    expect(out.findings[0].source).toBe('environment_check');
+    expect(out.findings[0].observation).toMatch(/DNS or configuration/i);
+    expect(out.findings[0].data?.error).toBe('getaddrinfo ENOTFOUND pg-missing.invalid');
+  });
+
   it('downgrades unreachable verdicts when the observer environment is degraded', () => {
     const d = unreachableDiagnosis();
     const out = applyEnvironmentGuard(d, profile({

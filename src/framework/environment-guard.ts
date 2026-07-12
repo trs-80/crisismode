@@ -51,12 +51,16 @@ export function applyEnvironmentGuard(
 ): DiagnosisResult {
   if (!UNREACHABLE_SCENARIOS.test(diagnosis.scenario ?? '')) return diagnosis;
 
-  const errorText = String(diagnosis.findings[0]?.data?.error ?? '');
   const label = targetName ?? 'the target';
 
   // Case 1: hostname does not resolve — DNS/config problem, not proof the
-  // service is down.
-  if (NAME_RESOLUTION_ERRORS.test(errorText)) {
+  // service is down. Any finding may carry the resolution error, not just
+  // the first — agents can emit multiple findings and ordering is not
+  // contractual.
+  const errorText = diagnosis.findings
+    .map((f) => String(f.data?.error ?? ''))
+    .find((text) => NAME_RESOLUTION_ERRORS.test(text));
+  if (errorText !== undefined) {
     return {
       ...diagnosis,
       status: 'partial',
