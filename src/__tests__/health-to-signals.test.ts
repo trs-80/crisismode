@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
+import { describe, it, expect } from 'vitest';
+import { healthToSignals } from '../framework/health-to-signals.js';
+import type { HealthAssessment } from '../types/health.js';
+
+function health(signals: Array<{ source: string; status: 'critical' | 'warning'; detail: string }>): HealthAssessment {
+  return {
+    status: 'unhealthy',
+    confidence: 0.9,
+    summary: 'test',
+    observedAt: '2026-07-12T00:00:00Z',
+    signals: signals.map((s) => ({ ...s, observedAt: '2026-07-12T00:00:00Z' })),
+    recommendedActions: [],
+  };
+}
+
+describe('healthToSignals', () => {
+  it('maps unreachable/refused details to connection signals', () => {
+    const out = healthToSignals(health([
+      { source: 'pg_connection', status: 'critical', detail: 'PostgreSQL is unreachable: ECONNREFUSED' },
+    ]));
+    expect(out).toHaveLength(1);
+    expect(out[0].type).toBe('connection');
+    expect(out[0].severity).toBe('critical');
+  });
+
+  it('maps timeouts, lag, and memory details to matching types', () => {
+    const out = healthToSignals(health([
+      { source: 'probe', status: 'warning', detail: 'health check timed out' },
+      { source: 'pg_replication', status: 'critical', detail: 'replication lag 45s' },
+      { source: 'redis_memory', status: 'critical', detail: 'memory 95% used, noeviction' },
+    ]));
+    expect(out.map((s) => s.type)).toEqual(['timeout', 'latency', 'resource_exhaustion']);
+  });
+
+  it('drops healthy signals', () => {
+    const a = health([]);
+    a.signals.push({ source: 'ok', status: 'healthy', detail: 'fine', observedAt: '2026-07-12T00:00:00Z' });
+    expect(healthToSignals(a)).toHaveLength(0);
+  });
+});

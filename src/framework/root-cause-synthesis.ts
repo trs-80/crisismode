@@ -137,6 +137,16 @@ const CORRELATION_RULES: CorrelationRule[] = [
     investigationOrder: ['flink', 'kafka', 'redis'],
     confidenceBoost: 0.25,
   },
+  {
+    name: 'observer-environment',
+    agentKinds: ['dns', 'network', 'postgresql', 'redis', 'kafka', 'etcd', 'application'],
+    sharedSignalTypes: ['connection', 'timeout'],
+    sharedPatterns: [],
+    rootCauseTemplate:
+      'Local DNS/network problems on this host may explain simultaneous unreachability of {agents} — verify this machine\'s connectivity before acting on the services',
+    investigationOrder: ['dns', 'network', 'etcd', 'postgresql', 'redis', 'kafka', 'application'],
+    confidenceBoost: 0.3,
+  },
 ];
 
 // ── Rule-based correlation ──
