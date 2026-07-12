@@ -13,8 +13,8 @@ const TYPE_PATTERNS: Array<{ match: RegExp; type: SymptomSignal['type'] }> = [
   { match: /timed?[ _-]?out|timeout/i, type: 'timeout' },
   { match: /unreachable|refused|connect|ENOTFOUND|EAI_AGAIN/i, type: 'connection' },
   { match: /lag|latency|slow/i, type: 'latency' },
-  { match: /memory|disk|inode|full|exhaust|evict/i, type: 'resource_exhaustion' },
-  { match: /error rate|5\d\d|failing|failed/i, type: 'error_rate' },
+  { match: /memory|disk|inode|\bfull\b|exhaust|evict/i, type: 'resource_exhaustion' },
+  { match: /error rate|\b5\d\d\b|failing|failed/i, type: 'error_rate' },
 ];
 
 export function healthToSignals(health: HealthAssessment): SymptomSignal[] {
