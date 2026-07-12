@@ -152,6 +152,24 @@ describe('check-discovery', () => {
       expect(plugin.manifest.docs).toEqual(docs);
     });
 
+    it('drops a malformed docs field instead of passing it through', async () => {
+      const parentDir = await makeTmpDir();
+      const pluginDir = await createPlugin(parentDir, 'bad-docs-test', { docs: 'unexpected' });
+
+      const plugin = await loadPlugin(pluginDir, 'project');
+      expect(plugin.manifest.docs).toBeUndefined();
+    });
+
+    it('drops non-string fields inside docs', async () => {
+      const parentDir = await makeTmpDir();
+      const docs = { explanation: 42, learnMoreUrl: 'https://example.com/learn-more' };
+      const pluginDir = await createPlugin(parentDir, 'partial-docs-test', { docs });
+
+      const plugin = await loadPlugin(pluginDir, 'project');
+      expect(plugin.manifest.docs?.explanation).toBeUndefined();
+      expect(plugin.manifest.docs?.learnMoreUrl).toBe('https://example.com/learn-more');
+    });
+
     it('rejects a directory without manifest.json', async () => {
       const emptyDir = await makeTmpDir();
       await expect(loadPlugin(emptyDir)).rejects.toThrow('Missing manifest.json');

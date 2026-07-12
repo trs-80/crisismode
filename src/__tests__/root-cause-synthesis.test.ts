@@ -60,6 +60,27 @@ describe('Root cause synthesis (6.3)', () => {
       }
     });
 
+    it('applies the confidence boost for rules that declare no shared patterns', () => {
+      const evidence: AgentEvidence[] = [
+        makeEvidence('dns', {
+          signals: [
+            { type: 'connection', source: 'dns', detail: 'resolver unreachable', severity: 'critical' },
+          ],
+        }),
+        makeEvidence('postgresql', {
+          signals: [
+            { type: 'connection', source: 'pg', detail: 'connect ECONNREFUSED', severity: 'critical' },
+          ],
+        }),
+      ];
+
+      const result = synthesizeByRules(evidence);
+      const cluster = result.clusters.find((c) => c.reasoning.includes('observer-environment'));
+      expect(cluster).toBeDefined();
+      // 0.3 base + full signal agreement (0.3) + the rule's declared boost (0.3)
+      expect(cluster!.confidence).toBeCloseTo(0.9, 2);
+    });
+
     it('correlates database-backpressure when DB and cache share latency signals', () => {
       const evidence: AgentEvidence[] = [
         makeEvidence('postgresql', {

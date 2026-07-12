@@ -23,7 +23,7 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://www.cloudflare.com/learning/network-layer/what-is-the-network-layer/',
   },
   {
-    match: /^pg_replication|^pg_stat|replication/,
+    match: /^pg_replication|^pg_stat/,
     explanation: 'PostgreSQL replication keeps a standby copy of the database in sync with the primary. Lag means the standby is falling behind — failover during lag loses recent writes.',
     learnMoreUrl: 'https://www.postgresql.org/docs/current/warm-standby.html',
   },

@@ -234,7 +234,11 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     const temporal = hasTemporalCorrelation(matchingAgents);
 
     let confidence = 0.3 + (signalMatches / matchingAgents.length) * 0.3;
-    if (patternMatches >= 2) confidence += rule.confidenceBoost;
+    // Rules that declare no patterns can never corroborate via patternMatches —
+    // their boost applies on signal agreement alone.
+    if (patternMatches >= 2 || (rule.sharedPatterns.length === 0 && signalMatches >= 2)) {
+      confidence += rule.confidenceBoost;
+    }
     if (temporal) confidence += 0.15;
     confidence = Math.min(confidence, 1.0);
     confidence = Math.round(confidence * 100) / 100;

@@ -196,7 +196,16 @@ async function readManifest(pluginDir: string): Promise<CheckPluginManifest> {
     timeoutMs: typeof m.timeoutMs === 'number' ? m.timeoutMs : undefined,
     author: typeof m.author === 'string' ? m.author : undefined,
     license: typeof m.license === 'string' ? m.license : undefined,
-    docs: m.docs as { explanation?: string; learnMoreUrl?: string } | undefined,
+    docs: parseDocs(m.docs),
+  };
+}
+
+function parseDocs(docs: unknown): { explanation?: string; learnMoreUrl?: string } | undefined {
+  if (typeof docs !== 'object' || docs === null || Array.isArray(docs)) return undefined;
+  const d = docs as Record<string, unknown>;
+  return {
+    explanation: typeof d.explanation === 'string' ? d.explanation : undefined,
+    learnMoreUrl: typeof d.learnMoreUrl === 'string' ? d.learnMoreUrl : undefined,
   };
 }
 
