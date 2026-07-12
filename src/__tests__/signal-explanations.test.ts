@@ -19,6 +19,16 @@ describe('explainSource', () => {
     }
   });
 
+  it('gives kafka leader/partition sources the kafka explanation, not etcd', () => {
+    for (const src of ['kafka_leader_election_failed', 'partition_leader_offline']) {
+      expect(explainSource(src)?.learnMoreUrl, src).toContain('kafka.apache.org');
+    }
+  });
+
+  it('still gives etcd leader sources the etcd explanation', () => {
+    expect(explainSource('etcd_leader_lost')?.learnMoreUrl).toContain('etcd.io');
+  });
+
   it('returns undefined for unknown sources', () => {
     expect(explainSource('bogus_source_xyz')).toBeUndefined();
   });
