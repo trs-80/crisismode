@@ -1,6 +1,10 @@
 {
   "name": "check-memory-usage",
   "description": "Checks system memory usage and identifies top memory consumers",
+  "docs": {
+    "explanation": "When a host runs out of memory the kernel kills processes (OOM killer) — services die abruptly without their own error logs.",
+    "learnMoreUrl": "https://www.kernel.org/doc/gorman/html/understand/understand016.html"
+  },
   "version": "1.0.0",
   "targetKinds": ["linux", "generic"],
   "verbs": ["health", "diagnose", "plan"],

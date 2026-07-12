@@ -140,6 +140,18 @@ describe('check-discovery', () => {
       expect(plugin.executablePath).toContain('run.sh');
     });
 
+    it('roundtrips the docs field from manifest.json', async () => {
+      const parentDir = await makeTmpDir();
+      const docs = {
+        explanation: 'Explains what this check verifies.',
+        learnMoreUrl: 'https://example.com/learn-more',
+      };
+      const pluginDir = await createPlugin(parentDir, 'docs-test', { docs });
+
+      const plugin = await loadPlugin(pluginDir, 'project');
+      expect(plugin.manifest.docs).toEqual(docs);
+    });
+
     it('rejects a directory without manifest.json', async () => {
       const emptyDir = await makeTmpDir();
       await expect(loadPlugin(emptyDir)).rejects.toThrow('Missing manifest.json');
