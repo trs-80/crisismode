@@ -17,7 +17,10 @@
  *      their own machine first.
  */
 
-import type { DiagnosisResult, NetworkProfile } from '../types/index.js';
+import { getNetworkProfile, probeNetwork } from './network-profile.js';
+import type { DiagnosisResult, NetworkProfile, RecoveryAgent } from '../types/index.js';
+import type { AgentContext } from '../types/agent-context.js';
+import type { ResolvedTarget, TargetConfig } from '../config/schema.js';
 
 const NAME_RESOLUTION_ERRORS = /ENOTFOUND|EAI_AGAIN|getaddrinfo/i;
 const UNREACHABLE_SCENARIOS = /unreachable|connection_refused|connection_failure/i;
@@ -108,4 +111,39 @@ export function applyEnvironmentGuard(
     ],
     diagnosticPlanNeeded: true,
   };
+}
+
+/**
+ * Diagnose a target and apply the environment guard so an unreachable
+ * verdict isn't blamed on the service when the observer's own DNS/network
+ * is degraded or the hostname simply doesn't resolve.
+ *
+ * Shared by every guarded diagnose path (webhook, live/recover, interactive,
+ * watch) so the probe-targets/profile-resolve/guard sequence lives in one
+ * place. Parameters are passed explicitly rather than read from module-level
+ * state so this can be unit tested and reused without a running server.
+ *
+ * `agent.diagnose(context)` and network profile resolution are independent,
+ * so they run concurrently; the cached-profile short-circuit
+ * (`getNetworkProfile() ?? probeNetwork(...)`) is preserved — a cached
+ * profile skips the probe entirely rather than racing it.
+ */
+export async function diagnoseWithEnvironmentGuard(
+  agent: RecoveryAgent,
+  context: AgentContext,
+  target: Pick<ResolvedTarget, 'name'>,
+  targets: TargetConfig[],
+): Promise<DiagnosisResult> {
+  const cachedProfile = getNetworkProfile();
+  const [diagnosis, networkProfile] = await Promise.all([
+    agent.diagnose(context),
+    cachedProfile
+      ? Promise.resolve(cachedProfile)
+      : probeNetwork({
+          targets: targets
+            .filter((t) => t.primary)
+            .map((t) => ({ host: t.primary!.host, port: t.primary!.port, label: t.name })),
+        }),
+  ]);
+  return applyEnvironmentGuard(diagnosis, networkProfile, target.name);
 }

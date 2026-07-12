@@ -15,14 +15,13 @@
 
 import { createInterface } from 'node:readline';
 import { assembleContext } from './framework/context.js';
-import { applyEnvironmentGuard } from './framework/environment-guard.js';
+import { diagnoseWithEnvironmentGuard } from './framework/environment-guard.js';
 import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
 import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
 import { explainPlan } from './framework/ai-explainer.js';
-import { getNetworkProfile, probeNetwork } from './framework/network-profile.js';
 import { loadConfig, parseCliFlags } from './config/loader.js';
 import { validateCredentials } from './config/credentials.js';
 import { AgentRegistry } from './config/agent-registry.js';
@@ -306,11 +305,7 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
       display.step(4, 'Agent querying real PostgreSQL for diagnosis');
     }
 
-    const targetProbes = config.targets
-      .filter((t) => t.primary)
-      .map((t) => ({ host: t.primary!.host, port: t.primary!.port, label: t.name }));
-    const networkProfile = getNetworkProfile() ?? await probeNetwork({ targets: targetProbes });
-    const diagnosis = applyEnvironmentGuard(await agent.diagnose(context), networkProfile, target.name);
+    const diagnosis = await diagnoseWithEnvironmentGuard(agent, context, target, config.targets);
     if (isJson()) {
       printDiagnosis(diagnosis);
     } else {

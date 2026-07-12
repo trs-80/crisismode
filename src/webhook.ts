@@ -13,21 +13,24 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { assembleContext } from './framework/context.js';
-import { applyEnvironmentGuard } from './framework/environment-guard.js';
+import { diagnoseWithEnvironmentGuard } from './framework/environment-guard.js';
 import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
 import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
 import { HubClient } from './framework/hub-client.js';
-import { getNetworkProfile, probeNetwork } from './framework/network-profile.js';
 import { loadConfig, parseCliFlags } from './config/loader.js';
 import { AgentRegistry } from './config/agent-registry.js';
 import { resolveCredentials } from './config/credentials.js';
-import type { TargetConfig, ResolvedTarget } from './config/schema.js';
 import { getFiringAlerts, validateAlertPayload, type AlertManagerAlert, type AlertManagerPayload } from './webhook-utils.js';
 import type { AgentContext } from './types/agent-context.js';
-import type { DiagnosisResult, RecoveryAgent } from './types/index.js';
+
+// Re-exported for backward compatibility — existing unit tests import
+// `diagnoseWithEnvironmentGuard` from './webhook.js'. The implementation
+// now lives in framework/environment-guard.ts, shared by all guarded
+// diagnose call sites (webhook, live, interactive, watch).
+export { diagnoseWithEnvironmentGuard };
 
 export interface WebhookServerOptions {
   configPath?: string;
@@ -131,28 +134,6 @@ async function handleAlerts(payload: AlertManagerPayload): Promise<{
     steps: totalSteps,
     results,
   };
-}
-
-/**
- * Diagnose a target and apply the environment guard so an unreachable
- * verdict isn't blamed on the service when the observer's own DNS/network
- * is degraded or the hostname simply doesn't resolve.
- *
- * Exported standalone (parameters passed explicitly rather than read from
- * module-level `config`/`registry` state) so it can be unit tested without
- * booting the webhook HTTP server, which has no exported teardown.
- */
-export async function diagnoseWithEnvironmentGuard(
-  agent: RecoveryAgent,
-  context: AgentContext,
-  target: Pick<ResolvedTarget, 'name' | 'primary'>,
-  targets: TargetConfig[],
-): Promise<DiagnosisResult> {
-  const targetProbes = targets
-    .filter((t) => t.primary)
-    .map((t) => ({ host: t.primary!.host, port: t.primary!.port, label: t.name }));
-  const networkProfile = getNetworkProfile() ?? await probeNetwork({ targets: targetProbes });
-  return applyEnvironmentGuard(await agent.diagnose(context), networkProfile, target.name);
 }
 
 async function handleAlert(alert: AlertManagerAlert): Promise<{
