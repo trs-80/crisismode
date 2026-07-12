@@ -197,6 +197,13 @@ async function runPluginDiagnose(pluginIndex: number): Promise<void> {
       console.log(`       ${f.detail}`);
     }
   }
+
+  const docs = plugin.manifest.docs;
+  if (docs?.explanation || docs?.learnMoreUrl) {
+    console.log('');
+    if (docs.explanation) printInfo(`About this check: ${docs.explanation}`);
+    if (docs.learnMoreUrl) printInfo(`Learn more: ${docs.learnMoreUrl}`);
+  }
   console.log('');
 }
 

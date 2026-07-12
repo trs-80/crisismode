@@ -196,6 +196,7 @@ async function readManifest(pluginDir: string): Promise<CheckPluginManifest> {
     timeoutMs: typeof m.timeoutMs === 'number' ? m.timeoutMs : undefined,
     author: typeof m.author === 'string' ? m.author : undefined,
     license: typeof m.license === 'string' ? m.license : undefined,
+    docs: m.docs as { explanation?: string; learnMoreUrl?: string } | undefined,
   };
 }
 

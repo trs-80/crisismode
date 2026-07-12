@@ -132,6 +132,8 @@ export interface CheckPluginManifest {
   author?: string;
   /** License */
   license?: string;
+  /** Operator education: what this check verifies and where to learn more. */
+  docs?: { explanation?: string; learnMoreUrl?: string };
 }
 
 // ── Exit code mapping ──

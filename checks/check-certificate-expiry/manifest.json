@@ -1,6 +1,10 @@
 {
   "name": "check-certificate-expiry",
   "description": "Checks TLS certificate expiry and reports certificate details",
+  "docs": {
+    "explanation": "TLS certificates expire; an expired certificate makes browsers and clients refuse to connect even though the server is running.",
+    "learnMoreUrl": "https://www.cloudflare.com/learning/ssl/what-is-ssl/"
+  },
   "version": "1.0.0",
   "targetKinds": ["application", "network"],
   "verbs": ["health", "diagnose"],
