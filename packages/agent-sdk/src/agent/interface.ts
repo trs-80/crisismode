@@ -20,6 +20,8 @@ export function defaultReplan(): Promise<ReplanResult> {
 
 export interface RecoveryAgent {
   manifest: AgentManifest;
+  /** True when diagnose() can call AI (Claude) for enrichment. Absent/false = rule-based only. */
+  readonly supportsAiDiagnosis?: boolean;
   assessHealth(context: AgentContext): Promise<HealthAssessment>;
   diagnose(context: AgentContext): Promise<DiagnosisResult>;
   plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan>;

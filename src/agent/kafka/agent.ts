@@ -17,6 +17,7 @@ import { aiDiagnose } from './ai-diagnosis.js';
 
 export class KafkaRecoveryAgent implements RecoveryAgent {
   manifest = kafkaRecoveryManifest;
+  readonly supportsAiDiagnosis = true;
   backend: KafkaBackend;
 
   constructor(backend?: KafkaBackend) {

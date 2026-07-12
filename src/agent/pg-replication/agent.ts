@@ -55,6 +55,7 @@ function validateSlotName(name: string): string {
 
 export class PgReplicationAgent implements RecoveryAgent {
   manifest = pgReplicationManifest;
+  readonly supportsAiDiagnosis = true;
   backend: PgBackend;
 
   constructor(backend?: PgBackend) {
