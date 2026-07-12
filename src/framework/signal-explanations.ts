@@ -53,14 +53,14 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://redis.io/docs/latest/develop/reference/eviction/',
   },
   {
-    match: /^etcd|consensus|raft|leader/,
-    explanation: 'etcd is a consensus store: a cluster elects a leader to accept writes. Without a stable leader (quorum), dependent systems like Kubernetes cannot save changes.',
-    learnMoreUrl: 'https://etcd.io/docs/v3.5/faq/',
-  },
-  {
     match: /^kafka|broker|partition|isr/,
     explanation: 'Kafka spreads message partitions across brokers with replicas. Under-replicated partitions mean a broker is down or behind — another failure could lose messages.',
     learnMoreUrl: 'https://kafka.apache.org/documentation/#replication',
+  },
+  {
+    match: /^etcd|consensus|raft|leader/,
+    explanation: 'etcd is a consensus store: a cluster elects a leader to accept writes. Without a stable leader (quorum), dependent systems like Kubernetes cannot save changes.',
+    learnMoreUrl: 'https://etcd.io/docs/v3.5/faq/',
   },
   {
     match: /^k8s|kubernetes|pod|node/,
