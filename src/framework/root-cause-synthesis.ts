@@ -138,6 +138,15 @@ const CORRELATION_RULES: CorrelationRule[] = [
     confidenceBoost: 0.25,
   },
   {
+    name: 'component-failure-cascade',
+    agentKinds: ['postgresql', 'redis', 'kafka', 'etcd', 'application'],
+    sharedSignalTypes: ['connection', 'resource_exhaustion'],
+    sharedPatterns: [],
+    rootCauseTemplate: 'A hard component failure appears to be cascading into dependent-service pressure across {agents} — investigate the unreachable component first',
+    investigationOrder: ['etcd', 'postgresql', 'kafka', 'redis', 'application'],
+    confidenceBoost: 0.25,
+  },
+  {
     name: 'observer-environment',
     agentKinds: ['dns', 'network', 'postgresql', 'redis', 'kafka', 'etcd', 'application'],
     sharedSignalTypes: ['connection', 'timeout'],

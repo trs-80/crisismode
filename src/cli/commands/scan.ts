@@ -76,6 +76,44 @@ function findingId(kind: string, index: number): string {
   return `${prefix}-${String(index + 1).padStart(3, '0')}`;
 }
 
+/**
+ * Build root-cause-synthesis evidence from scan health-check results.
+ *
+ * Two shapes of evidence are emitted:
+ * - Assessed-but-degraded targets (health present, status not healthy/unknown):
+ *   full health + derived signals, as before.
+ * - Hard-down targets that hit the catch path (health null, error summary):
+ *   a signals-only 'connection' entry so the dead root-cause target still
+ *   participates in correlation, even though we couldn't assess its health.
+ */
+export function buildScanEvidence(
+  results: Array<{ kind: string; health: HealthAssessment | null; finding: { service: string; summary: string } }>,
+): AgentEvidence[] {
+  const evidence: AgentEvidence[] = [];
+  for (const r of results) {
+    if (r.health && r.health.status !== 'healthy' && r.health.status !== 'unknown') {
+      evidence.push({
+        agentKind: r.kind,
+        targetName: r.finding.service,
+        health: r.health,
+        signals: healthToSignals(r.health),
+      });
+    } else if (r.health === null && r.finding.summary.startsWith('Error:')) {
+      evidence.push({
+        agentKind: r.kind,
+        targetName: r.finding.service,
+        signals: [{
+          type: 'connection',
+          source: `${r.kind}_connection`,
+          detail: r.finding.summary,
+          severity: 'critical',
+        }],
+      });
+    }
+  }
+  return evidence;
+}
+
 export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   const startTime = Date.now();
   printBanner();
@@ -245,14 +283,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   }
 
   // Cross-system root-cause correlation — only meaningful with 2+ degraded targets
-  const evidence: AgentEvidence[] = agentResults
-    .filter((r) => r.health && r.health.status !== 'healthy' && r.health.status !== 'unknown')
-    .map((r) => ({
-      agentKind: r.kind,
-      targetName: r.finding.service,
-      health: r.health!,
-      signals: healthToSignals(r.health!),
-    }));
+  const evidence: AgentEvidence[] = buildScanEvidence(agentResults);
   if (evidence.length >= 2) {
     printSynthesis(synthesizeByRules(evidence));
   }
