@@ -15,12 +15,14 @@
 
 import { createInterface } from 'node:readline';
 import { assembleContext } from './framework/context.js';
+import { applyEnvironmentGuard } from './framework/environment-guard.js';
 import { buildOperatorSummary } from './framework/operator-summary.js';
 import { validatePlan } from './framework/validator.js';
 import { matchCatalog } from './framework/catalog.js';
 import { ForensicRecorder } from './framework/forensics.js';
 import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './framework/engine.js';
 import { explainPlan } from './framework/ai-explainer.js';
+import { getNetworkProfile, probeNetwork } from './framework/network-profile.js';
 import { loadConfig, parseCliFlags } from './config/loader.js';
 import { validateCredentials } from './config/credentials.js';
 import { AgentRegistry } from './config/agent-registry.js';
@@ -304,7 +306,11 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
       display.step(4, 'Agent querying real PostgreSQL for diagnosis');
     }
 
-    const diagnosis = await agent.diagnose(context);
+    const targetProbes = config.targets
+      .filter((t) => t.primary)
+      .map((t) => ({ host: t.primary!.host, port: t.primary!.port, label: t.name }));
+    const networkProfile = getNetworkProfile() ?? await probeNetwork({ targets: targetProbes });
+    const diagnosis = applyEnvironmentGuard(await agent.diagnose(context), networkProfile, target.name);
     if (isJson()) {
       printDiagnosis(diagnosis);
     } else {
@@ -471,7 +477,14 @@ function runLive(): Promise<void> {
   return runRecovery({ configPath, targetName, execute: execMode, healthOnly });
 }
 
-runLive().catch((err) => {
-  console.error('Live mode failed:', err);
-  process.exit(1);
-});
+// Direct execution entry point (backward compat for `pnpm run live`).
+// Guarded so importing this module (e.g. `runRecovery` from recover.ts, or
+// from tests) never triggers a background CLI run — matches the pattern
+// already used in webhook.ts.
+const isDirectExecution = process.argv[1]?.endsWith('live.ts') || process.argv[1]?.endsWith('live.js');
+if (isDirectExecution) {
+  runLive().catch((err) => {
+    console.error('Live mode failed:', err);
+    process.exit(1);
+  });
+}
