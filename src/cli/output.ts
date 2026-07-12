@@ -134,7 +134,9 @@ export function printHealthStatus(assessment: HealthAssessment): void {
     console.log(color(`    [${signal.status.toUpperCase()}] `) + chalk.dim(`${signal.source}: ${signal.detail}`));
     if (signal.status !== 'healthy' && signal.explanation) {
       console.log(chalk.dim(`        ${signal.explanation}`));
-      console.log(chalk.dim(`        Learn more: ${signal.learnMoreUrl}`));
+      if (signal.learnMoreUrl) {
+        console.log(chalk.dim(`        Learn more: ${signal.learnMoreUrl}`));
+      }
     }
   }
 
@@ -186,7 +188,9 @@ export function printDiagnosis(diagnosis: DiagnosisResult): void {
     console.log(sevColor(`    [${finding.severity.toUpperCase()}] `) + chalk.dim(`${finding.source}: ${finding.observation}`));
     if (finding.severity !== 'info' && finding.explanation) {
       console.log(chalk.dim(`        ${finding.explanation}`));
-      console.log(chalk.dim(`        Learn more: ${finding.learnMoreUrl}`));
+      if (finding.learnMoreUrl) {
+        console.log(chalk.dim(`        Learn more: ${finding.learnMoreUrl}`));
+      }
     }
   }
   console.log('');

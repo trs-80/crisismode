@@ -29,6 +29,10 @@ describe('explainSource', () => {
     expect(explainSource('etcd_leader_lost')?.learnMoreUrl).toContain('etcd.io');
   });
 
+  it('gives redis_replication the redis explanation, not postgresql', () => {
+    expect(explainSource('redis_replication')?.learnMoreUrl).toContain('redis.io');
+  });
+
   it('returns undefined for unknown sources', () => {
     expect(explainSource('bogus_source_xyz')).toBeUndefined();
   });

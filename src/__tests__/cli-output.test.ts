@@ -266,6 +266,39 @@ describe('CLI output — human mode explanations', () => {
     const lines = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
     expect(lines.some((l: string) => /Learn more: https:\/\/www\.postgresql\.org/.test(l))).toBe(true);
   });
+
+  it('never prints "Learn more: undefined" for a signal with a custom explanation and no URL', () => {
+    const health: HealthAssessment = {
+      status: 'unhealthy',
+      confidence: 0.8,
+      summary: 'Plugin check failed',
+      observedAt: new Date().toISOString(),
+      signals: [
+        { source: 'my_plugin_check', status: 'critical', detail: 'boom', observedAt: new Date().toISOString(), explanation: 'A plugin-provided explanation.' },
+      ],
+      recommendedActions: [],
+    };
+
+    printHealthStatus(health);
+
+    const lines = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(lines.some((l: string) => l.includes('A plugin-provided explanation.'))).toBe(true);
+    expect(lines.some((l: string) => l.includes('Learn more:'))).toBe(false);
+  });
+
+  it('never prints "Learn more: undefined" for a finding with a custom explanation and no URL', () => {
+    const diagnosis: DiagnosisResult = {
+      status: 'identified', scenario: 'plugin_failure', confidence: 0.9, diagnosticPlanNeeded: false,
+      findings: [
+        { source: 'my_plugin_check', observation: 'boom', severity: 'critical', explanation: 'A plugin-provided explanation.' },
+      ],
+    };
+
+    printDiagnosis(diagnosis);
+
+    const lines = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(lines.some((l: string) => l.includes('Learn more:'))).toBe(false);
+  });
 });
 
 describe('CLI output — escalation badges', () => {

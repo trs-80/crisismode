@@ -59,7 +59,7 @@ exports[`CLI snapshot — health status JSON > health assessment in JSON mode 1`
         "explanation": "PostgreSQL replication keeps a standby copy of the database in sync with the primary. Lag means the standby is falling behind — failover during lag loses recent writes.",
         "learnMoreUrl": "https://www.postgresql.org/docs/current/warm-standby.html",
         "observedAt": "<<TIMESTAMP>>",
-        "source": "replication_check",
+        "source": "pg_replication_check",
         "status": "critical",
       },
       {

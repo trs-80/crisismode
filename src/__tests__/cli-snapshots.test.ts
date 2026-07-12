@@ -78,7 +78,7 @@ const healthAssessment: HealthAssessment = {
   summary: 'Replication lag exceeds threshold',
   observedAt: '2026-01-15T12:00:00.000Z',
   signals: [
-    { source: 'replication_check', status: 'critical', detail: 'lag at 45s', observedAt: '2026-01-15T12:00:00.000Z' },
+    { source: 'pg_replication_check', status: 'critical', detail: 'lag at 45s', observedAt: '2026-01-15T12:00:00.000Z' },
     { source: 'connection_pool', status: 'healthy', detail: 'pool utilization 30%', observedAt: '2026-01-15T12:00:00.000Z' },
     { source: 'disk_usage', status: 'warning', detail: 'WAL directory 78% full', observedAt: '2026-01-15T12:00:00.000Z' },
   ],

@@ -141,7 +141,10 @@ export async function handleDiagnose(params: Record<string, unknown>): Promise<u
     const context = assembleContext(trigger, agent.manifest);
 
     const health = await agent.assessHealth(context);
-    const networkProfile = getNetworkProfile() ?? await probeNetwork();
+    const targetProbes = result.config.targets
+      .filter((t) => t.primary)
+      .map((t) => ({ host: t.primary!.host, port: t.primary!.port, label: t.name }));
+    const networkProfile = getNetworkProfile() ?? await probeNetwork({ targets: targetProbes });
     const diagnosis = applyEnvironmentGuard(
       await agent.diagnose(context),
       networkProfile,
