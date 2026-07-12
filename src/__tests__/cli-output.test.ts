@@ -46,6 +46,28 @@ describe('CLI output — JSON mode', () => {
     expect(parsed.assessment.status).toBe('healthy');
   });
 
+  it('printHealthStatus enriches a critical pg_replication signal with explanation/learnMoreUrl in machine mode', () => {
+    const health: HealthAssessment = {
+      status: 'unhealthy',
+      confidence: 0.8,
+      summary: 'Replication lag exceeds threshold',
+      observedAt: new Date().toISOString(),
+      signals: [
+        { source: 'pg_replication_lag', status: 'critical', detail: 'lag at 60s', observedAt: new Date().toISOString() },
+      ],
+      recommendedActions: [],
+    };
+
+    printHealthStatus(health);
+
+    const output = logSpy.mock.calls[0][0];
+    const parsed = JSON.parse(output);
+    expect(parsed.type).toBe('health');
+    const signal = parsed.assessment.signals[0];
+    expect(signal.explanation).toBeTruthy();
+    expect(signal.learnMoreUrl).toMatch(/^https:\/\/www\.postgresql\.org/);
+  });
+
   it('printDiagnosis outputs valid JSON', () => {
     const diagnosis: DiagnosisResult = {
       status: 'identified',
@@ -211,6 +233,38 @@ describe('CLI output — pipe mode', () => {
   it('printNextAction is suppressed in pipe mode', () => {
     printNextAction('Run crisismode diagnose PG-001');
     expect(logSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('CLI output — human mode explanations', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configure({ mode: 'human', noColor: true });
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, verbose: false, mode: 'human' });
+  });
+
+  it('printHealthStatus renders a Learn more line for a critical pg_replication signal', () => {
+    const health: HealthAssessment = {
+      status: 'unhealthy',
+      confidence: 0.8,
+      summary: 'Replication lag exceeds threshold',
+      observedAt: new Date().toISOString(),
+      signals: [
+        { source: 'pg_replication_lag', status: 'critical', detail: 'lag at 60s', observedAt: new Date().toISOString() },
+      ],
+      recommendedActions: [],
+    };
+
+    printHealthStatus(health);
+
+    const lines = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(lines.some((l: string) => /Learn more: https:\/\/www\.postgresql\.org/.test(l))).toBe(true);
   });
 });
 

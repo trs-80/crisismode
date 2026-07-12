@@ -17,6 +17,7 @@ import type { DetectedService } from './detect.js';
 import type { NetworkProfile } from '../framework/network-profile.js';
 import type { EscalationLevel } from '../framework/escalation.js';
 import type { PlainEnglishSummary } from './ai-summary.js';
+import { enrichHealth, enrichDiagnosis } from '../framework/signal-explanations.js';
 
 /**
  * Three output modes:
@@ -108,6 +109,7 @@ export function printDetection(services: DetectedService[]): void {
 // ── Health status ──
 
 export function printHealthStatus(assessment: HealthAssessment): void {
+  assessment = enrichHealth(assessment);
   if (outputOptions.mode === 'machine') {
     jsonOut('health', { assessment });
     return;
@@ -130,6 +132,10 @@ export function printHealthStatus(assessment: HealthAssessment): void {
       : signal.status === 'healthy' ? chalk.green
       : chalk.dim;
     console.log(color(`    [${signal.status.toUpperCase()}] `) + chalk.dim(`${signal.source}: ${signal.detail}`));
+    if (signal.status !== 'healthy' && signal.explanation) {
+      console.log(chalk.dim(`        ${signal.explanation}`));
+      console.log(chalk.dim(`        Learn more: ${signal.learnMoreUrl}`));
+    }
   }
 
   if (assessment.recommendedActions.length > 0) {
@@ -145,6 +151,7 @@ export function printHealthStatus(assessment: HealthAssessment): void {
 // ── Diagnosis ──
 
 export function printDiagnosis(diagnosis: DiagnosisResult): void {
+  diagnosis = enrichDiagnosis(diagnosis);
   if (outputOptions.mode === 'machine') {
     jsonOut('diagnosis', { diagnosis });
     return;
@@ -177,6 +184,10 @@ export function printDiagnosis(diagnosis: DiagnosisResult): void {
       : finding.severity === 'warning' ? chalk.yellow
       : chalk.dim;
     console.log(sevColor(`    [${finding.severity.toUpperCase()}] `) + chalk.dim(`${finding.source}: ${finding.observation}`));
+    if (finding.severity !== 'info' && finding.explanation) {
+      console.log(chalk.dim(`        ${finding.explanation}`));
+      console.log(chalk.dim(`        Learn more: ${finding.learnMoreUrl}`));
+    }
   }
   console.log('');
 }
