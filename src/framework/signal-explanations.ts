@@ -53,7 +53,7 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://redis.io/docs/latest/develop/reference/eviction/',
   },
   {
-    match: /^kafka|broker|partition|isr/,
+    match: /^kafka|broker|^partition|isr/,
     explanation: 'Kafka spreads message partitions across brokers with replicas. Under-replicated partitions mean a broker is down or behind — another failure could lose messages.',
     learnMoreUrl: 'https://kafka.apache.org/documentation/#replication',
   },
