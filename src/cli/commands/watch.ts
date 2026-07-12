@@ -11,10 +11,12 @@
  */
 
 import { assembleContext } from '../../framework/context.js';
+import { applyEnvironmentGuard } from '../../framework/environment-guard.js';
 import { buildOperatorSummary } from '../../framework/operator-summary.js';
 import { loadConfig, parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { detectServices } from '../detect.js';
+import { getNetworkProfile, probeNetwork } from '../../framework/network-profile.js';
 import { mergeLocalTargets } from '../local-agents.js';
 import { generateDiagnosisReport } from '../../framework/incident-report.js';
 import { WatchState } from '../../framework/watch-state.js';
@@ -60,6 +62,12 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
 
   // Inject local health agents (DNS, disk) so they work without explicit config
   config = { ...config, targets: mergeLocalTargets(config.targets) };
+
+  // Built once — reused by the cached-or-probe pattern each time a recovery
+  // proposal is generated below.
+  const targetProbes = config.targets
+    .filter((t) => t.primary)
+    .map((t) => ({ host: t.primary!.host, port: t.primary!.port, label: t.name }));
 
   printInfo(`Config: ${source}`);
   console.log('');
@@ -133,7 +141,8 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
           printWarning('Health transitioned from healthy to unhealthy — generating recovery proposal...');
           console.log('');
 
-          const diagnosis = await agent.diagnose(context);
+          const networkProfile = getNetworkProfile() ?? await probeNetwork({ targets: targetProbes });
+          const diagnosis = applyEnvironmentGuard(await agent.diagnose(context), networkProfile, target.name);
           const plan = await agent.plan(context, diagnosis);
 
           watchState.recordProposal(diagnosis, plan, cycleCount);

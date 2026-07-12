@@ -44,6 +44,18 @@ vi.mock('../framework/incident-report.js', () => ({
   })),
 }));
 
+vi.mock('../framework/network-profile.js', () => ({
+  getNetworkProfile: vi.fn(() => null),
+  probeNetwork: vi.fn(async () => ({
+    internet: { status: 'available', probes: [], checkedAt: new Date().toISOString() },
+    hub: { status: 'unknown', probes: [], checkedAt: new Date().toISOString() },
+    targets: { status: 'unknown', probes: [], checkedAt: new Date().toISOString() },
+    dns: { available: true, latencyMs: 0 },
+    mode: 'full',
+    profiledAt: new Date().toISOString(),
+  })),
+}));
+
 // Mock AgentRegistry as a class with static method
 vi.mock('../config/agent-registry.js', () => {
   const createForTarget = vi.fn();
@@ -442,6 +454,51 @@ describe('runWatch', () => {
     expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Uptime:'));
     expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Avg confidence:'));
     expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Total cycles:         3'));
+  });
+
+  it('applies the environment guard to the diagnosis before generating a proposal', async () => {
+    setupConfigSuccess();
+
+    let callCount = 0;
+    const instance = makeAgentInstance();
+    instance.agent.assessHealth.mockImplementation(async () => {
+      callCount++;
+      const status = callCount === 1 ? 'healthy' : 'unhealthy';
+      return {
+        status,
+        confidence: 0.95,
+        summary: `System is ${status}`,
+        observedAt: new Date().toISOString(),
+        signals: [],
+        recommendedActions: [],
+      };
+    });
+    instance.agent.diagnose.mockResolvedValue({
+      status: 'identified',
+      scenario: 'database_unreachable',
+      confidence: 0.99,
+      findings: [{
+        source: 'pg_connection',
+        observation: 'PostgreSQL is unreachable: getaddrinfo ENOTFOUND test-pg.invalid',
+        severity: 'critical',
+        data: { error: 'getaddrinfo ENOTFOUND test-pg.invalid' },
+      }],
+      diagnosticPlanNeeded: false,
+    } as never);
+
+    const registry = new AgentRegistry({} as never);
+    vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
+
+    await runWatch({ maxCycles: 2, intervalMs: 10 });
+
+    expect(vi.mocked(generateDiagnosisReport)).toHaveBeenCalledTimes(1);
+    const reportedDiagnosis = vi.mocked(generateDiagnosisReport).mock.calls[0][0] as {
+      scenario: string;
+      status: string;
+      findings: Array<{ source: string }>;
+    };
+    expect(reportedDiagnosis.scenario).toBe('target_unresolvable');
+    expect(reportedDiagnosis.findings[0].source).toBe('environment_check');
   });
 
   it('handles multiple transitions in sequence', async () => {

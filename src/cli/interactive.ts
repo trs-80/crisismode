@@ -18,9 +18,11 @@ import { noConfig } from './errors.js';
 import { loadConfig } from '../config/loader.js';
 import { AgentRegistry } from '../config/agent-registry.js';
 import { assembleContext } from '../framework/context.js';
+import { applyEnvironmentGuard } from '../framework/environment-guard.js';
 import { buildOperatorSummary } from '../framework/operator-summary.js';
 import { validatePlan } from '../framework/validator.js';
 import { explainPlan } from '../framework/ai-explainer.js';
+import { getNetworkProfile, probeNetwork } from '../framework/network-profile.js';
 import type { AgentContext } from '../types/agent-context.js';
 import type { SiteConfig } from '../config/schema.js';
 
@@ -119,7 +121,11 @@ export async function runInteractive(): Promise<void> {
     // Diagnosis
     const hasAiKey = !!process.env.ANTHROPIC_API_KEY;
     printInfo(hasAiKey ? 'Running AI-powered diagnosis...' : 'Running rule-based diagnosis...');
-    const diagnosis = await agent.diagnose(context);
+    const targetProbes = config.targets
+      .filter((t) => t.primary)
+      .map((t) => ({ host: t.primary!.host, port: t.primary!.port, label: t.name }));
+    const networkProfile = getNetworkProfile() ?? await probeNetwork({ targets: targetProbes });
+    const diagnosis = applyEnvironmentGuard(await agent.diagnose(context), networkProfile, target.name);
     printDiagnosis(diagnosis);
 
     // Plan
