@@ -29,6 +29,14 @@ describe('explainSource', () => {
     expect(explainSource('etcd_leader_lost')?.learnMoreUrl).toContain('etcd.io');
   });
 
+  it('gives etcd_network_partition the etcd explanation, not kafka', () => {
+    expect(explainSource('etcd_network_partition')?.learnMoreUrl).toContain('etcd.io');
+  });
+
+  it('still gives kafka_under_replicated_partitions the kafka explanation', () => {
+    expect(explainSource('kafka_under_replicated_partitions')?.learnMoreUrl).toContain('kafka.apache.org');
+  });
+
   it('gives redis_replication the redis explanation, not postgresql', () => {
     expect(explainSource('redis_replication')?.learnMoreUrl).toContain('redis.io');
   });
