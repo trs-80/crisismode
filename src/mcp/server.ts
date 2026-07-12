@@ -28,6 +28,8 @@ import { AgentRegistry } from '../config/agent-registry.js';
 import { builtinAgents } from '../config/builtin-agents.js';
 import { detectServices } from '../cli/detect.js';
 import { assembleContext } from '../framework/context.js';
+import { applyEnvironmentGuard } from '../framework/environment-guard.js';
+import { getNetworkProfile, probeNetwork } from '../framework/network-profile.js';
 import { buildOperatorSummary } from '../framework/operator-summary.js';
 import { ingestEvidenceBundle } from '../framework/evidence-bundle-ingest.js';
 import { respondToEvidenceBundle } from '../framework/evidence-bundle-respond.js';
@@ -139,7 +141,12 @@ export async function handleDiagnose(params: Record<string, unknown>): Promise<u
     const context = assembleContext(trigger, agent.manifest);
 
     const health = await agent.assessHealth(context);
-    const diagnosis = await agent.diagnose(context);
+    const networkProfile = getNetworkProfile() ?? await probeNetwork();
+    const diagnosis = applyEnvironmentGuard(
+      await agent.diagnose(context),
+      networkProfile,
+      target.name,
+    );
 
     const operatorSummary = buildOperatorSummary({
       health,

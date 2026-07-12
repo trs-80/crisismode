@@ -7,6 +7,7 @@
  */
 
 import { assembleContext } from '../../framework/context.js';
+import { applyEnvironmentGuard } from '../../framework/environment-guard.js';
 import { buildOperatorSummary } from '../../framework/operator-summary.js';
 import { loadConfig, parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
@@ -130,7 +131,11 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     const aiAvailable = hasAiKey && networkProfile.internet.status !== 'unavailable';
     printInfo(aiAvailable ? 'Running AI-powered diagnosis...' : 'Running rule-based diagnosis...');
 
-    const diagnosis = await agent.diagnose(context);
+    const diagnosis = applyEnvironmentGuard(
+      await agent.diagnose(context),
+      networkProfile,
+      target.name,
+    );
     printDiagnosis(diagnosis);
 
     printOperatorSummary(buildOperatorSummary({

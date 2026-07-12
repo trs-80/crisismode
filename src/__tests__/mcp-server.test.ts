@@ -47,6 +47,14 @@ vi.mock('../framework/operator-summary.js', () => ({
 vi.mock('../framework/network-profile.js', () => ({
   getNetworkProfile: vi.fn(() => null),
   isInternetAvailable: vi.fn(() => true),
+  probeNetwork: vi.fn(async () => ({
+    internet: { status: 'available', probes: [], checkedAt: new Date().toISOString() },
+    hub: { status: 'unknown', probes: [], checkedAt: new Date().toISOString() },
+    targets: { status: 'unknown', probes: [], checkedAt: new Date().toISOString() },
+    dns: { available: true, latencyMs: 0 },
+    mode: 'full',
+    profiledAt: new Date().toISOString(),
+  })),
 }));
 
 // ── Imports ──
