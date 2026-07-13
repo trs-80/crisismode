@@ -217,17 +217,40 @@ export class RedisLiveClient implements RedisBackend {
         };
       }
       case 'client_kill': {
-        // Read-only in dry-run: just report what would happen
+        // Real Redis CLIENT KILL has no IDLE filter — passing the plan's
+        // "idle>300" token straight through is invalid syntax and Redis
+        // rejects it with "ERR No such client". Enumerate clients via
+        // CLIENT LIST instead and kill matches individually by ID.
         const filter = command.parameters?.filter as string | undefined;
-        if (filter) {
-          const result = await this.client.call('CLIENT', 'KILL', ...filter.split(' '));
-          return { disconnectedClients: result };
+        const includeBlocked = command.parameters?.includeBlocked === true;
+        const idleThreshold = parseIdleFilter(filter);
+
+        const raw = await this.client.call('CLIENT', 'LIST') as string;
+        const clients = parseClientList(raw);
+
+        let disconnected = 0;
+        for (const c of clients) {
+          const isIdle = idleThreshold !== null && c.idle >= idleThreshold;
+          const isBlocked = includeBlocked && c.flags.includes('b');
+          if (!isIdle && !isBlocked) continue;
+          try {
+            await this.client.call('CLIENT', 'KILL', 'ID', c.id);
+            disconnected++;
+          } catch {
+            // Client may have already disconnected between LIST and KILL.
+          }
         }
-        return { disconnectedClients: 0 };
+
+        return { disconnectedClients: disconnected };
       }
       case 'active_expiry': {
-        // SCAN-based expiry: touch keys to trigger lazy expiry
-        // This is a read-side-effect operation — touching expired keys causes Redis to evict them
+        // SCAN-based expiry. Passively, accessing a key past its expiry
+        // via TTL triggers Redis's own lazy deletion. Under 'aggressive'
+        // effort, also proactively UNLINK keys that carry a TTL (volatile,
+        // disposable cache data) even before their TTL has elapsed —
+        // relieving real memory pressure now beats waiting out an
+        // arbitrary remaining TTL.
+        const aggressive = command.parameters?.effort === 'aggressive';
         let cursor = '0';
         let expired = 0;
         const maxIterations = 1000;
@@ -236,10 +259,17 @@ export class RedisLiveClient implements RedisBackend {
         do {
           const [nextCursor, keys] = await this.client.scan(cursor, 'COUNT', 100);
           cursor = nextCursor;
-          // Simply accessing keys with TTL triggers lazy expiry in Redis
           for (const key of keys) {
             const ttl = await this.client.ttl(key);
-            if (ttl >= -1 && ttl <= 0) expired++;
+            if (ttl === -2) continue; // already gone
+            if (ttl === -1) continue; // persistent — not volatile, leave it
+            if (ttl === 0) {
+              // Past/at expiry — the TTL call itself already triggered lazy deletion.
+              expired++;
+            } else if (aggressive) {
+              await this.client.unlink(key);
+              expired++;
+            }
           }
           iterations++;
         } while (cursor !== '0' && iterations < maxIterations);
@@ -364,4 +394,39 @@ export class RedisLiveClient implements RedisBackend {
       default: return false;
     }
   }
+}
+
+export interface ParsedClient {
+  id: string;
+  idle: number;
+  flags: string;
+}
+
+/** Parse a plan filter like "idle>300" into the idle-seconds threshold. */
+export function parseIdleFilter(filter: string | undefined): number | null {
+  if (!filter) return null;
+  const match = filter.match(/^idle>(\d+)$/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/** Parse Redis's `CLIENT LIST` reply (one space-separated key=value line per client). */
+export function parseClientList(raw: string): ParsedClient[] {
+  const clients: ParsedClient[] = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const fields: Record<string, string> = {};
+    for (const pair of trimmed.split(' ')) {
+      const idx = pair.indexOf('=');
+      if (idx === -1) continue;
+      fields[pair.slice(0, idx)] = pair.slice(idx + 1);
+    }
+    if (!fields['id']) continue;
+    clients.push({
+      id: fields['id'],
+      idle: parseInt(fields['idle'] ?? '0', 10),
+      flags: fields['flags'] ?? '',
+    });
+  }
+  return clients;
 }
