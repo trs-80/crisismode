@@ -45,7 +45,8 @@
     "test:watch": "vitest",
     "typecheck": "pnpm --filter @crisismode/agent-sdk run build && tsc --noEmit",
     "prepare": "husky",
-    "eval:diagnosis": "tsx eval/run-diagnosis-eval.ts"
+    "eval:diagnosis": "tsx eval/run-diagnosis-eval.ts",
+    "eval:diagnosis:gate": "tsx eval/run-diagnosis-eval.ts --min-score 13"
   },
   "packageManager": "pnpm@10.30.3",
   "engines": {

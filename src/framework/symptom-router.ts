@@ -244,6 +244,15 @@ const ROUTING_RULES: RoutingRule[] = [
   },
 ];
 
+/**
+ * Keywords associated with a routing rule's scenario, for callers that
+ * need to sanity-check whether other text (e.g. an AI-generated
+ * hypothesis) actually concerns the same subsystem the router picked.
+ */
+export function keywordsForScenario(scenario: string): string[] {
+  return ROUTING_RULES.find((rule) => rule.scenario === scenario)?.keywords ?? [];
+}
+
 // ── Rule-based routing ──
 
 /**

@@ -18,6 +18,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { aiCallText, type AiDiagnosisConfig } from './ai-diagnosis.js';
+import { applyCanonicalHypothesisBackstop } from './canonical-hypothesis.js';
 import { buildPromptFromBundle, validateAdapterRequest } from './evidence-bundle-ingest.js';
 import { evidenceItemsToSignals } from './evidence-to-signals.js';
 import { routeBySymptoms, type RoutingResult } from './symptom-router.js';
@@ -409,7 +410,12 @@ export async function respondToEvidenceBundle(
 
   const validEvidenceIds = new Set(validated.evidence_items.map((e) => e.evidence_id));
 
-  const hypotheses_ranked = normalizeHypotheses(parsed.hypotheses_ranked, validEvidenceIds);
+  const abstention = normalizeAbstention(parsed.abstention);
+  const hypotheses_ranked = applyCanonicalHypothesisBackstop(
+    normalizeHypotheses(parsed.hypotheses_ranked, validEvidenceIds),
+    routing,
+    abstention.abstained,
+  );
   const { evidence_refs, invalidEvidenceRefs } = normalizeEvidenceRefs(
     parsed.evidence_refs,
     validEvidenceIds,
@@ -419,7 +425,6 @@ export async function respondToEvidenceBundle(
     normalizeProposedActions(parsed.proposed_actions, validEvidenceIds),
     validated.action_policy,
   );
-  const abstention = normalizeAbstention(parsed.abstention);
   const uncertainty = normalizeUncertainty(parsed.uncertainty);
   const aiUnsafeAvoided = asStringArray(parsed.unsafe_actions_avoided);
   const unsafe_actions_avoided = uniq([...aiUnsafeAvoided, ...rejected]);
