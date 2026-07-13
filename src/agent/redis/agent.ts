@@ -316,7 +316,7 @@ export class RedisMemoryAgent implements RecoveryAgent {
         stepId: 'step-005',
         type: 'system_action',
         name: 'Trigger active expiry of volatile keys',
-        description: 'Run SCAN-based expiry to free memory from keys past their TTL.',
+        description: 'Run SCAN-based expiry to free memory: lazily reclaim keys already past their TTL, and — under aggressive effort — proactively evict volatile (TTL-bearing) keys that have not yet expired, since relieving memory pressure now outweighs waiting out their remaining TTL.',
         executionContext: 'redis_admin',
         target: instance,
         riskLevel: 'routine',
@@ -337,12 +337,12 @@ export class RedisMemoryAgent implements RecoveryAgent {
         },
         rollback: {
           type: 'automatic',
-          description: 'No rollback needed — only expired keys are removed.',
+          description: 'No explicit rollback: evicted keys — including any not yet at their TTL — are not recoverable from Redis. Only volatile (TTL-bearing) keys are touched; applications are expected to repopulate cache data on next access.',
         },
         blastRadius: {
           directComponents: [instance],
           indirectComponents: [],
-          maxImpact: 'expired_keys_evicted',
+          maxImpact: 'unexpired_volatile_keys_evicted',
           cascadeRisk: 'none',
         },
         timeout: 'PT2M',
