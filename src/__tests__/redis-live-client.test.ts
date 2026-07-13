@@ -87,12 +87,38 @@ describe('RedisLiveClient executeCommand', () => {
         throw new Error(`unexpected call: ${args.join(' ')}`);
       });
       const backend = makeClient(RedisLiveClient, { call });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const result = await backend.executeCommand(
         structuredCommand('client_kill', { filter: 'idle>300', includeBlocked: true }),
       );
 
       expect(result).toEqual({ disconnectedClients: 0 });
+      expect(errorSpy).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+
+    it('surfaces an unexpected KILL failure instead of swallowing it silently', async () => {
+      const RedisLiveClient = await loadClient();
+      const clientListReply = 'id=9 addr=10.0.0.9:1 idle=900 flags=N';
+      const call = vi.fn(async (...args: unknown[]) => {
+        if (args[0] === 'CLIENT' && args[1] === 'LIST') return clientListReply;
+        if (args[0] === 'CLIENT' && args[1] === 'KILL') throw new Error('ERR connection reset by peer');
+        throw new Error(`unexpected call: ${args.join(' ')}`);
+      });
+      const backend = makeClient(RedisLiveClient, { call });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = await backend.executeCommand(
+        structuredCommand('client_kill', { filter: 'idle>300', includeBlocked: true }),
+      );
+
+      expect(result).toEqual({ disconnectedClients: 0 });
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('CLIENT KILL ID 9 failed'),
+        expect.any(Error),
+      );
+      errorSpy.mockRestore();
     });
   });
 

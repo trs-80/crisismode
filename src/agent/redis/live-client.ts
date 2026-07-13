@@ -236,8 +236,14 @@ export class RedisLiveClient implements RedisBackend {
           try {
             await this.client.call('CLIENT', 'KILL', 'ID', c.id);
             disconnected++;
-          } catch {
-            // Client may have already disconnected between LIST and KILL.
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (!msg.includes('No such client')) {
+              // Anything other than "it already disconnected on its own"
+              // (e.g. a permissions or connection error) is unexpected —
+              // surface it instead of swallowing it silently.
+              console.error(`CLIENT KILL ID ${c.id} failed`, err);
+            }
           }
         }
 
