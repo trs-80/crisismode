@@ -212,11 +212,21 @@ export class PgReplicationAgent implements RecoveryAgent {
       };
     }
 
+    // Ground-truth check: pg_is_wal_replay_paused() is a direct, unambiguous
+    // signal (unlike lag, which can be explained several ways). When it's
+    // available and true, that IS the root cause — diagnose deterministically
+    // rather than let AI/rule-based heuristics guess at the LSN gap pattern.
+    const replayPaused = await this.backend.queryReplayPaused().catch(() => null);
+    if (replayPaused === true) {
+      return this.diagnoseReplayPaused(replStatus, slots, connCount);
+    }
+
     // Try AI-powered diagnosis first
     const aiResult = await aiDiagnose({
       replicas: replStatus,
       slots,
       connectionCount: connCount,
+      isReplayPaused: replayPaused,
     });
 
     if (aiResult) {
@@ -230,6 +240,40 @@ export class PgReplicationAgent implements RecoveryAgent {
 
     // Fallback: rule-based diagnosis
     return this.ruleBasedDiagnose(replStatus, slots, connCount);
+  }
+
+  private diagnoseReplayPaused(
+    replStatus: ReplicaStatus[],
+    slots: import('./backend.js').ReplicationSlot[],
+    connCount: number,
+  ): DiagnosisResult {
+    const target = this.findWorstReplica(replStatus);
+    return {
+      status: 'identified',
+      scenario: 'wal_replay_paused',
+      confidence: 0.97,
+      findings: [
+        {
+          source: 'pg_stat_replication',
+          observation: `${replStatus.length} replicas found. Target replica ${target?.client_addr ?? 'unknown'} reports ${target?.lag_seconds ?? '?'}s of replay lag.`,
+          severity: 'critical',
+          data: { replicas: replStatus },
+        },
+        {
+          source: 'pg_replay_state',
+          observation: 'WAL replay is explicitly paused on the replica (pg_is_wal_replay_paused() = true). sent_lsn continues to advance on the primary while replay_lsn is frozen on the replica, so lag will keep growing until replay is resumed.',
+          severity: 'critical',
+          data: { replayPaused: true },
+        },
+        {
+          source: 'pg_stat_activity',
+          observation: `${connCount} active connections on primary.`,
+          severity: 'info',
+          data: { connectionCount: connCount },
+        },
+      ],
+      diagnosticPlanNeeded: false,
+    };
   }
 
   private ruleBasedDiagnose(
@@ -307,6 +351,13 @@ export class PgReplicationAgent implements RecoveryAgent {
     // Handle unreachable database — generate investigation/restart plan
     if (diagnosis.scenario === 'database_unreachable') {
       return this.planForUnreachable(primaryId, diagnosis);
+    }
+
+    // Handle a confirmed WAL-replay pause — the honest, targeted fix (resume
+    // replay on the replica) rather than the disconnect/reseed cascade below,
+    // which addresses a different (unexplained) lag scenario.
+    if (diagnosis.scenario === 'wal_replay_paused') {
+      return this.planForReplayPaused(primaryId, diagnosis);
     }
 
     // Dynamic target resolution: find the worst-lagging replica from diagnosis
@@ -884,6 +935,233 @@ export class PgReplicationAgent implements RecoveryAgent {
     }
 
     return { action: 'continue' };
+  }
+
+  /**
+   * All-SQL recovery for a confirmed WAL-replay pause: resume replay on the
+   * replica that actually has it paused. Unlike replication_lag_cascade
+   * (which disconnects/reseeds because the cause is unknown), here the root
+   * cause is confirmed by ground truth (pg_is_wal_replay_paused() = true),
+   * so the fix is the direct inverse of the fault.
+   */
+  private planForReplayPaused(primaryId: string, diagnosis: DiagnosisResult): RecoveryPlan {
+    const replicas = (diagnosis.findings[0]?.data as { replicas: ReplicaStatus[] })?.replicas ?? [];
+    const target = this.findWorstReplica(replicas);
+    const targetAddr = target ? validateIPv4(target.client_addr) : 'unknown';
+    const targetId = `pg-replica-${targetAddr.replace(/[./]/g, '-')}`;
+    const replayStateQuery =
+      'SELECT pg_is_wal_replay_paused() AS replay_paused, pg_last_wal_receive_lsn()::text AS received_lsn, pg_last_wal_replay_lsn()::text AS replayed_lsn;';
+    const replicationStatusQuery =
+      "SELECT client_addr, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, COALESCE(EXTRACT(EPOCH FROM replay_lag)::int, 0) AS lag_seconds FROM pg_stat_replication;";
+
+    const steps: RecoveryStep[] = [
+      // Step 1: diagnosis_action (primary) — current lag from the primary's view
+      {
+        stepId: 'step-001',
+        type: 'diagnosis_action',
+        name: 'Assess current replication lag on the primary',
+        executionContext: 'postgresql_read',
+        target: primaryId,
+        command: { type: 'sql', subtype: 'query', statement: replicationStatusQuery },
+        outputCapture: {
+          name: 'pre_resume_replication_status',
+          format: 'table',
+          availableTo: 'subsequent_steps',
+        },
+        timeout: 'PT30S',
+      },
+      // Step 2: diagnosis_action (replica) — confirm the pause + LSN state directly
+      {
+        stepId: 'step-002',
+        type: 'diagnosis_action',
+        name: `Confirm WAL replay pause state on ${targetId}`,
+        executionContext: 'postgresql_read',
+        target: targetId,
+        command: { type: 'sql', subtype: 'query', statement: replayStateQuery, parameters: { node: 'replica' } },
+        outputCapture: {
+          name: 'pre_resume_replay_state',
+          format: 'table',
+          availableTo: 'subsequent_steps',
+        },
+        timeout: 'PT30S',
+      },
+      // Step 3: human_notification
+      {
+        stepId: 'step-003',
+        type: 'human_notification',
+        name: 'Notify on-call DBA before resuming WAL replay',
+        recipients: [{ role: 'on_call_dba', urgency: 'high' }],
+        message: {
+          summary: 'Automated recovery initiated for paused WAL replay on a PostgreSQL replica',
+          detail:
+            `Agent 'postgresql-replication-recovery' confirmed WAL replay is paused on ${targetId} ` +
+            `(primary: ${primaryId}) via pg_is_wal_replay_paused(). Replay will be resumed with ` +
+            `SELECT pg_wal_replay_resume();. This is fully reversible — re-issuing ` +
+            `SELECT pg_wal_replay_pause(); on the replica restores the exact prior state.`,
+          contextReferences: ['pre_resume_replication_status', 'pre_resume_replay_state'],
+          actionRequired: false,
+        },
+        channel: 'auto',
+      },
+      // Step 4: checkpoint — pre-recovery snapshot of lag/LSN state
+      {
+        stepId: 'step-004',
+        type: 'checkpoint',
+        name: 'Pre-recovery checkpoint',
+        description: 'Capture replication lag and replay LSN state before resuming WAL replay.',
+        stateCaptures: [
+          {
+            name: 'replication_status_checkpoint',
+            captureType: 'sql_query',
+            statement: replicationStatusQuery,
+            captureCost: 'negligible',
+            capturePolicy: 'required',
+          },
+          {
+            name: 'replay_lsn_checkpoint',
+            captureType: 'sql_query',
+            statement: replayStateQuery,
+            captureCost: 'negligible',
+            capturePolicy: 'required',
+          },
+        ],
+      },
+      // Step 5: system_action (elevated) — resume WAL replay on the replica
+      {
+        stepId: 'step-005',
+        type: 'system_action',
+        name: `Resume WAL replay on ${targetId}`,
+        description:
+          `Replay was explicitly paused via pg_wal_replay_pause(); resuming it re-enables WAL apply ` +
+          `so the replica drains its backlog and catches up to the primary. Risk is 'elevated' (not ` +
+          `'routine') because it changes live replica read-serving behavior and increases replica I/O ` +
+          `while it catches up — but not 'high', because the action is idempotent (a no-op if replay ` +
+          `is already resumed), causes no data loss, and is fully reversible by re-pausing.`,
+        executionContext: 'postgresql_write',
+        target: targetId,
+        riskLevel: 'elevated',
+        requiredCapabilities: ['db.wal_replay.resume'],
+        command: {
+          type: 'sql',
+          subtype: 'function_call',
+          statement: 'SELECT pg_wal_replay_resume();',
+          parameters: { node: 'replica' },
+        },
+        statePreservation: {
+          before: [
+            {
+              name: 'replay_state_before_resume',
+              captureType: 'sql_query',
+              statement: replayStateQuery,
+              captureCost: 'negligible',
+              capturePolicy: 'required',
+              retention: 'P30D',
+            },
+          ],
+          after: [
+            {
+              name: 'replay_state_after_resume',
+              captureType: 'sql_query',
+              statement: replayStateQuery,
+              captureCost: 'negligible',
+              capturePolicy: 'best_effort',
+              retention: 'P30D',
+            },
+          ],
+        },
+        successCriteria: {
+          description: `WAL replay on ${targetId} is no longer paused`,
+          check: {
+            type: 'sql',
+            statement: 'SELECT pg_is_wal_replay_paused()::int AS paused;',
+            parameters: { node: 'replica' },
+            expect: { operator: 'eq', value: 0 },
+          },
+        },
+        rollback: {
+          type: 'command',
+          description:
+            'Re-pausing replay restores the exact prior state with no data loss: resume only re-enables ' +
+            'applying WAL already streamed to the replica, it does not discard or rewrite anything.',
+          command: {
+            type: 'sql',
+            subtype: 'function_call',
+            statement: 'SELECT pg_wal_replay_pause();',
+            parameters: { node: 'replica' },
+          },
+        },
+        blastRadius: {
+          directComponents: [targetId],
+          indirectComponents: ['read-pool'],
+          maxImpact: 'replica_replay_resumed',
+          cascadeRisk: 'low',
+        },
+        timeout: 'PT60S',
+        retryPolicy: { maxRetries: 1, retryable: true },
+        stateTransition: 'recovering',
+      },
+      // Step 6: diagnosis_action — verify lag is draining post-resume
+      {
+        stepId: 'step-006',
+        type: 'diagnosis_action',
+        name: 'Verify replication lag is draining after resume',
+        executionContext: 'postgresql_read',
+        target: primaryId,
+        command: { type: 'sql', subtype: 'query', statement: replicationStatusQuery },
+        outputCapture: {
+          name: 'post_resume_replication_status',
+          format: 'table',
+          availableTo: 'subsequent_steps',
+        },
+        timeout: 'PT30S',
+      },
+      // Step 7: human_notification — recovery summary
+      {
+        stepId: 'step-007',
+        type: 'human_notification',
+        name: 'Send recovery summary',
+        recipients: [
+          { role: 'on_call_dba', urgency: 'medium' },
+          { role: 'incident_commander', urgency: 'medium' },
+        ],
+        message: {
+          summary: 'PostgreSQL WAL replay resume completed',
+          detail: `Recovery plan for wal_replay_paused on ${primaryId} has completed. Target replica: ${targetAddr} (${targetId}).`,
+          contextReferences: ['post_resume_replication_status'],
+          actionRequired: false,
+        },
+        channel: 'auto',
+      },
+    ];
+
+    return {
+      ...createPlanEnvelope({
+        planIdSuffix: 'pg-repl-resume',
+        agentName: 'postgresql-replication-recovery',
+        agentVersion: '1.2.0',
+        scenario: 'wal_replay_paused',
+        estimatedDuration: 'PT5M',
+        summary: `Resume paused WAL replay on ${targetAddr} so replication lag drains.`,
+      }),
+      impact: {
+        affectedSystems: [
+          { identifier: primaryId, technology: 'postgresql', role: 'primary', impactType: 'none' },
+          { identifier: targetId, technology: 'postgresql', role: 'replica', impactType: 'reduced_read_capacity' },
+        ],
+        affectedServices: ['read-pool'],
+        estimatedUserImpact:
+          'Read queries served from the affected replica may return stale data until lag drains; ' +
+          'the primary and write traffic are unaffected. No data loss.',
+        dataLossRisk: 'none',
+      },
+      steps,
+      rollbackStrategy: {
+        type: 'stepwise',
+        description:
+          'The resume step is independently reversible: re-issue SELECT pg_wal_replay_pause(); on the ' +
+          'replica to restore the exact prior state. No other step in this plan performs a mutation.',
+      },
+    };
   }
 
   private planForUnreachable(primaryId: string, diagnosis: DiagnosisResult): RecoveryPlan {

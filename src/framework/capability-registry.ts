@@ -47,6 +47,13 @@ let CAPABILITIES: CapabilityDefinition[] = [
     manualFallback: 'Create the replacement replication slot manually with an approved PostgreSQL administration workflow.',
   },
   {
+    id: 'db.wal_replay.resume',
+    actionKind: 'mutate',
+    description: 'Resume WAL replay on a replica where it has been explicitly paused.',
+    targetKinds: ['postgresql'],
+    manualFallback: 'Resume WAL replay manually by running `SELECT pg_wal_replay_resume();` on the replica with an approved PostgreSQL administration workflow.',
+  },
+  {
     id: 'traffic.backend.detach',
     actionKind: 'mutate',
     description: 'Remove a backend from traffic serving rotation.',

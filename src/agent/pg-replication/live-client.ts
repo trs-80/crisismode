@@ -133,6 +133,21 @@ export class PgLiveClient implements PgBackend {
     return result.rows[0].count;
   }
 
+  /**
+   * Select which pool a command/check targets. Steps that must run against the
+   * replica (e.g. pg_wal_replay_resume(), which only exists in recovery mode)
+   * set `parameters.node === 'replica'`; everything else defaults to the primary.
+   */
+  private poolFor(parameters?: Record<string, unknown>): PoolType {
+    if (parameters?.node === 'replica') {
+      if (!this.replicaPool) {
+        throw new Error("Step targets node='replica' but no replica connection is configured");
+      }
+      return this.replicaPool;
+    }
+    return this.primaryPool;
+  }
+
   async evaluateCheck(check: CheckExpression): Promise<boolean> {
     if (check.type === 'structured_command') {
       return false;
@@ -143,7 +158,8 @@ export class PgLiveClient implements PgBackend {
     }
 
     try {
-      const result = await this.primaryPool.query(check.statement);
+      const pool = this.poolFor(check.parameters);
+      const result = await pool.query(check.statement);
       if (result.rows.length === 0) {
         return this.compare(0, check.expect.operator, check.expect.value);
       }
@@ -160,7 +176,8 @@ export class PgLiveClient implements PgBackend {
 
   async executeCommand(command: Command): Promise<unknown> {
     if (command.type === 'sql' && command.statement) {
-      const result = await this.primaryPool.query(command.statement);
+      const pool = this.poolFor(command.parameters);
+      const result = await pool.query(command.statement);
       return {
         rowCount: result.rowCount,
         rows: result.rows,
@@ -189,6 +206,7 @@ export class PgLiveClient implements PgBackend {
           'db.replica.disconnect',
           'db.replication_slot.drop',
           'db.replication_slot.create',
+          'db.wal_replay.resume',
         ],
         executionContexts: ['postgresql_read', 'postgresql_write'],
         targetKinds: ['postgresql'],
@@ -208,6 +226,23 @@ export class PgLiveClient implements PgBackend {
     await this.primaryPool.end();
     if (this.replicaPool) {
       await this.replicaPool.end();
+    }
+  }
+
+  /**
+   * Query whether WAL replay is paused on the replica (SELECT pg_is_wal_replay_paused()).
+   * Returns null when no replica connection is configured or reachable.
+   */
+  async queryReplayPaused(): Promise<boolean | null> {
+    if (!this.replicaPool) return null;
+
+    try {
+      const result = await this.replicaPool.query<{ paused: boolean }>(
+        'SELECT pg_is_wal_replay_paused() AS paused;',
+      );
+      return result.rows[0]?.paused ?? null;
+    } catch {
+      return null;
     }
   }
 
