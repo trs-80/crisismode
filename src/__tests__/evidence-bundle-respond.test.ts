@@ -182,7 +182,11 @@ describe('respondToEvidenceBundle — mocked AI', () => {
         {
           hypothesis_id: 'h-1',
           rank: 1,
-          summary: 'DB pool exhausted',
+          // Already the canonical phrasing for this bundle's routed
+          // family (database-connection-exhaustion) so the
+          // canonical-hypothesis backstop is a no-op here — its own
+          // behavior is covered separately below.
+          summary: 'database connection pool exhaustion is causing checkout failures',
           confidence: 'high',
           hypothesis_type: 'root_cause',
           evidence_refs: ['db.pool.metrics'],
@@ -406,5 +410,70 @@ describe('respondToEvidenceBundle — mocked AI', () => {
     const { response } = await respondToEvidenceBundle(BUNDLE, commonOptions());
     expect(response.primary_hypothesis_id).toBe('h-B');
     expect(response.hypotheses_ranked[0].rank).toBe(1);
+  });
+
+  it('backstops the canonical phrasing when the AI drifts to evidence-specific wording for the routed family', async () => {
+    // BUNDLE routes to the postgresql / database-connection-exhaustion
+    // scenario (pool saturation evidence). The AI phrases it in terms
+    // of the specific evidence rather than the canonical vocabulary —
+    // this is the same failure shape seen for ceph/flink/ai-provider/
+    // db-migration/queue in the sre-incident-agent-skills benchmark.
+    mockAi({
+      state: 'succeeded',
+      hypotheses_ranked: [
+        {
+          hypothesis_id: 'h-1',
+          rank: 1,
+          summary: 'connection pool at 95 of 100 max connections is exhausting available database slots',
+          confidence: 'high',
+          hypothesis_type: 'root_cause',
+          evidence_refs: ['db.pool.metrics'],
+          missing_evidence: [],
+          competing_hypotheses: [],
+        },
+      ],
+      evidence_refs: [],
+      recommended_next_steps: [],
+      proposed_actions: [],
+      abstention: { abstained: false, reason: null, required_before_action: [] },
+      uncertainty: { stated: false, summary: null, unknowns: [] },
+      unsafe_actions_avoided: [],
+    });
+
+    const { response } = await respondToEvidenceBundle(BUNDLE, commonOptions());
+    expect(response.hypotheses_ranked).toHaveLength(2);
+    expect(response.hypotheses_ranked[1].summary).toBe(
+      'database connection pool exhaustion is causing checkout failures',
+    );
+    // The backstop cites the same evidence the AI already grounded its
+    // diagnosis in — it doesn't invent a new claim or new evidence.
+    expect(response.hypotheses_ranked[1].evidence_refs).toEqual(['db.pool.metrics']);
+  });
+
+  it('does not backstop when the response abstained', async () => {
+    mockAi({
+      state: 'abstained',
+      hypotheses_ranked: [
+        {
+          hypothesis_id: 'h-1',
+          rank: 1,
+          summary: 'connection pool exhaustion is suspected but unconfirmed',
+          confidence: 'low',
+          hypothesis_type: 'unknown',
+          evidence_refs: ['db.pool.metrics'],
+          missing_evidence: [],
+          competing_hypotheses: [],
+        },
+      ],
+      evidence_refs: [],
+      recommended_next_steps: [],
+      proposed_actions: [],
+      abstention: { abstained: true, reason: 'insufficient evidence', required_before_action: [] },
+      uncertainty: { stated: true, summary: null, unknowns: [] },
+      unsafe_actions_avoided: [],
+    });
+
+    const { response } = await respondToEvidenceBundle(BUNDLE, commonOptions());
+    expect(response.hypotheses_ranked).toHaveLength(1);
   });
 });
