@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { PgBackend, ReplicaStatus, ReplicationSlot } from './backend.js';
+import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage, IdleInTransactionSession } from './backend.js';
 import type { Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
+// Mirrors the torture harness's `-c max_connections=25` so simulator-driven
+// unit tests exercise the same utilization math as the live scenario.
+const SIMULATOR_MAX_CONNECTIONS = 25;
+
 export class PgSimulator implements PgBackend {
   private state: SimulatorState = 'degraded';
   private slotInvalid = true;
   private replayPaused = false;
+  private idleInTxSessions: IdleInTransactionSession[] = [];
+  private otherActiveConnections = 4;
 
   getState(): SimulatorState {
     return this.state;
@@ -27,6 +33,38 @@ export class PgSimulator implements PgBackend {
 
   async queryReplayPaused(): Promise<boolean | null> {
     return this.replayPaused;
+  }
+
+  /**
+   * Simulate primary connection-pool exhaustion caused by leaked
+   * idle-in-transaction sessions (a client opens a transaction and never
+   * commits/rolls back or closes the connection). `otherActiveConnections`
+   * lets tests independently vary total utilization vs. the number of
+   * idle-in-transaction contributors (e.g. high usage from ordinary active
+   * queries, with too few idle-in-tx sessions to be the material cause).
+   */
+  setConnectionPoolExhausted(sessionCount = 20, otherActiveConnections = 4): void {
+    this.idleInTxSessions = Array.from({ length: sessionCount }, (_, i) => ({
+      pid: 20000 + i,
+      ageSeconds: 90 + i * 5,
+      applicationName: 'checkout-worker',
+    }));
+    this.otherActiveConnections = otherActiveConnections;
+  }
+
+  async queryConnectionUsage(): Promise<ConnectionUsage | null> {
+    const idleCount = this.idleInTxSessions.length;
+    const total = this.otherActiveConnections + idleCount;
+    const byState: Record<string, number> = idleCount > 0
+      ? { active: this.otherActiveConnections, 'idle in transaction': idleCount }
+      : { active: total };
+
+    return {
+      max: SIMULATOR_MAX_CONNECTIONS,
+      total,
+      byState,
+      idleInTransactionOldest: [...this.idleInTxSessions].sort((a, b) => b.ageSeconds - a.ageSeconds),
+    };
   }
 
   async queryReplicationStatus(): Promise<ReplicaStatus[]> {
@@ -217,11 +255,27 @@ export class PgSimulator implements PgBackend {
       return this.compareValue(paused, check.expect.operator, check.expect.value);
     }
 
+    // Idle-in-transaction count vs. an age threshold — used for both the
+    // terminate step's preCondition (>=1 stale sessions exist) and its
+    // successCriteria (0 remain after termination). Threshold is read out of
+    // the statement text itself so the check stays in sync with whatever
+    // threshold the plan embedded.
+    if (stmt.includes('pg_stat_activity') && stmt.includes('idle in transaction') && stmt.toLowerCase().includes('count(')) {
+      const count = this.countStaleIdleInTx(stmt);
+      return this.compareValue(count, check.expect.operator, check.expect.value);
+    }
+
     if (check.type === 'structured_command' && check.expect.operator === 'eq') {
       return check.expect.value === 'running';
     }
 
     return true;
+  }
+
+  private countStaleIdleInTx(stmt: string): number {
+    const thresholdMatch = /INTERVAL '(\d+) seconds?'/i.exec(stmt);
+    const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : 0;
+    return this.idleInTxSessions.filter((s) => s.ageSeconds >= threshold).length;
   }
 
   async executeCommand(command: Command): Promise<unknown> {
@@ -237,6 +291,13 @@ export class PgSimulator implements PgBackend {
       }
       if (stmt.includes('pg_is_wal_replay_paused')) {
         return { replay_paused: this.replayPaused };
+      }
+      if (stmt.includes('pg_terminate_backend') && stmt.includes('idle in transaction')) {
+        const thresholdMatch = /INTERVAL '(\d+) seconds?'/i.exec(stmt);
+        const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : 0;
+        const terminated = this.idleInTxSessions.filter((s) => s.ageSeconds >= threshold);
+        this.idleInTxSessions = this.idleInTxSessions.filter((s) => s.ageSeconds < threshold);
+        return { simulated: true, statement: stmt, terminatedCount: terminated.length, remaining: this.idleInTxSessions.length };
       }
       if (stmt.includes('FROM pg_stat_replication')) {
         return this.queryReplicationStatus();
@@ -271,6 +332,7 @@ export class PgSimulator implements PgBackend {
           'db.replication_slot.drop',
           'db.replication_slot.create',
           'db.wal_replay.resume',
+          'db.connections.terminate',
         ],
         executionContexts: ['postgresql_read', 'postgresql_write'],
         targetKinds: ['postgresql'],

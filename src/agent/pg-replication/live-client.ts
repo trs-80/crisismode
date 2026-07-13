@@ -10,7 +10,7 @@
  */
 
 import pg, { type Pool as PoolType } from 'pg';
-import type { PgBackend, ReplicaStatus, ReplicationSlot } from './backend.js';
+import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 
@@ -134,6 +134,51 @@ export class PgLiveClient implements PgBackend {
   }
 
   /**
+   * Query connection-pool usage on the primary: total connections vs.
+   * max_connections, broken down by state, plus the oldest idle-in-transaction
+   * sessions (the usual cause of pool exhaustion). Returns null rather than
+   * throwing so a transient failure here doesn't break the rest of diagnose().
+   */
+  async queryConnectionUsage(): Promise<ConnectionUsage | null> {
+    try {
+      const totalResult = await this.primaryPool.query<{ total: number; max_connections: number }>(
+        "SELECT count(*)::int AS total, current_setting('max_connections')::int AS max_connections FROM pg_stat_activity;",
+      );
+      const totalRow = totalResult.rows[0];
+      if (!totalRow) return null;
+
+      const byStateResult = await this.primaryPool.query<{ state: string | null; count: number }>(
+        'SELECT state, count(*)::int AS count FROM pg_stat_activity GROUP BY state;',
+      );
+      const byState: Record<string, number> = {};
+      for (const row of byStateResult.rows) {
+        byState[row.state ?? 'unknown'] = row.count;
+      }
+
+      const idleResult = await this.primaryPool.query<{ pid: number; age_seconds: number; application_name: string | null }>(`
+        SELECT pid, COALESCE(EXTRACT(EPOCH FROM (now() - state_change))::int, 0) AS age_seconds, application_name
+        FROM pg_stat_activity
+        WHERE state = 'idle in transaction'
+        ORDER BY age_seconds DESC
+      `);
+      const idleInTransactionOldest = idleResult.rows.map((row) => ({
+        pid: row.pid,
+        ageSeconds: row.age_seconds,
+        applicationName: row.application_name ?? undefined,
+      }));
+
+      return {
+        max: totalRow.max_connections,
+        total: totalRow.total,
+        byState,
+        idleInTransactionOldest,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Select which pool a command/check targets. Steps that must run against the
    * replica (e.g. pg_wal_replay_resume(), which only exists in recovery mode)
    * set `parameters.node === 'replica'`; everything else defaults to the primary.
@@ -207,6 +252,7 @@ export class PgLiveClient implements PgBackend {
           'db.replication_slot.drop',
           'db.replication_slot.create',
           'db.wal_replay.resume',
+          'db.connections.terminate',
         ],
         executionContexts: ['postgresql_read', 'postgresql_write'],
         targetKinds: ['postgresql'],

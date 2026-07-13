@@ -15,7 +15,7 @@
 
 import { aiDiagnose as frameworkAiDiagnose } from '../../framework/ai-diagnosis.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { ReplicaStatus, ReplicationSlot } from './backend.js';
+import type { ReplicaStatus, ReplicationSlot, ConnectionUsage } from './backend.js';
 
 interface SystemState {
   replicas: ReplicaStatus[];
@@ -25,6 +25,13 @@ interface SystemState {
   isReplicaInRecovery?: boolean;
   /** Ground truth from SELECT pg_is_wal_replay_paused() on the replica, or null if unavailable. */
   isReplayPaused?: boolean | null;
+  /**
+   * Connection-pool usage vs. max_connections, or null if unavailable. Fed to
+   * the model even when it falls short of the deterministic pool-exhaustion
+   * threshold, so borderline cases (e.g. climbing utilization with a growing
+   * idle-in-transaction count) can still be flagged as a contributing factor.
+   */
+  connectionUsage?: ConnectionUsage | null;
 }
 
 const PG_SYSTEM_PROMPT = `You are a PostgreSQL database reliability expert integrated into an automated recovery framework. Your job is to analyze raw PostgreSQL system state and produce a structured diagnosis.
@@ -35,7 +42,7 @@ Respond with ONLY a JSON object matching this exact schema — no markdown, no e
 
 {
   "status": "identified" | "investigating" | "inconclusive",
-  "scenario": "replication_lag_cascade" | "replication_slot_overflow" | "replica_divergence" | "wal_sender_timeout" | "wal_replay_paused" | null,
+  "scenario": "replication_lag_cascade" | "replication_slot_overflow" | "replica_divergence" | "wal_sender_timeout" | "wal_replay_paused" | "connection_pool_exhaustion" | null,
   "confidence": <number between 0 and 1>,
   "root_cause": "<one paragraph explaining the most likely root cause>",
   "findings": [
@@ -57,6 +64,7 @@ Guidelines:
 - If one replica lags, suspect replica-side issue (disk, CPU, paused replay)
 - Check slot wal_status: "lost" means the slot fell behind and WAL was recycled
 - High connection counts + lagging replicas suggests read traffic is being redirected to primary
+- If connection-pool usage is climbing toward max_connections and idle-in-transaction sessions are a meaningful share of that, diagnose "connection_pool_exhaustion" — leaked/held transactions are consuming slots that new clients need
 - Be specific about root cause — don't just restate the symptoms`;
 
 function buildUserMessage(state: SystemState): string {
@@ -75,6 +83,9 @@ Active connections: ${state.connectionCount}
 ${state.isReplicaInRecovery !== undefined ? `In recovery mode: ${state.isReplicaInRecovery}` : 'Not available'}
 ${state.replicaViewLag !== undefined ? `Self-reported lag: ${state.replicaViewLag}s` : 'Not available'}
 ${state.isReplayPaused !== undefined ? `WAL replay paused (pg_is_wal_replay_paused()): ${state.isReplayPaused === null ? 'unknown — replica connection unavailable' : state.isReplayPaused}` : 'Not available'}
+
+## Connection-pool usage (primary)
+${state.connectionUsage ? JSON.stringify(state.connectionUsage, null, 2) : 'Not available'}
 
 Produce your diagnosis.`;
 }

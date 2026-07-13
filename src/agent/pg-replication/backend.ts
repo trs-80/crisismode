@@ -30,6 +30,23 @@ export interface ReplicationSlot {
   wal_status: string;
 }
 
+export interface IdleInTransactionSession {
+  pid: number;
+  ageSeconds: number;
+  applicationName?: string;
+}
+
+export interface ConnectionUsage {
+  /** SHOW max_connections on the primary */
+  max: number;
+  /** Total rows in pg_stat_activity (all states) */
+  total: number;
+  /** Connection count grouped by pg_stat_activity.state */
+  byState: Record<string, number>;
+  /** idle-in-transaction sessions, oldest first */
+  idleInTransactionOldest: IdleInTransactionSession[];
+}
+
 export interface PgBackend extends ExecutionBackend {
   /** Query pg_stat_replication on the primary */
   queryReplicationStatus(): Promise<ReplicaStatus[]>;
@@ -45,6 +62,14 @@ export interface PgBackend extends ExecutionBackend {
    * Returns null when no replica connection is available/configured.
    */
   queryReplayPaused(): Promise<boolean | null>;
+
+  /**
+   * Query connection-pool usage on the primary: total connections vs.
+   * max_connections, broken down by state, plus the oldest idle-in-transaction
+   * sessions (the usual cause of pool exhaustion — leaked/held transactions).
+   * Returns null when the query fails (e.g. connection unavailable).
+   */
+  queryConnectionUsage(): Promise<ConnectionUsage | null>;
 
   /** Transition state (simulator) or no-op (live) */
   transition(to: string): void;
