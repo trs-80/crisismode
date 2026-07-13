@@ -62,6 +62,28 @@ export function hypothesesContainCanonical(summaries: string[], canonical: strin
   return summaries.some((summary) => normalizeForMatch(summary).includes(normalizedCanonical));
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * True when `keyword` appears in `text` as whole word(s), not merely as a
+ * substring inside a longer, unrelated word.
+ *
+ * Plain `.includes()` is too permissive for the short abbreviations some
+ * routing rules use (e.g. the ai-provider rule's `'ai'` keyword matches
+ * inside "faAIlures" / "avAIlable"), which would make the overlap guard in
+ * applyCanonicalHypothesisBackstop() below pass almost unconditionally and
+ * defeat its purpose. `\b` treats `_` as a word character like the rest of
+ * `\w`, so underscored keywords (e.g. `'pg_locks'`) and multi-word phrases
+ * (e.g. `'rate limit'`) both still match as intended.
+ */
+export function keywordAppears(text: string, keyword: string): boolean {
+  const pattern = escapeRegExp(keyword.trim()).replace(/\s+/g, '\\s+');
+  if (!pattern) return false;
+  return new RegExp(`\\b${pattern}\\b`, 'i').test(text);
+}
+
 /**
  * Append the routed scenario's canonical hypothesis sentence when it's
  * missing from what the AI produced, so the emitted response always
@@ -95,8 +117,8 @@ export function applyCanonicalHypothesisBackstop(
   if (hypothesesContainCanonical(summaries, canonical)) return hypotheses;
 
   const keywords = keywordsForScenario(topScenario);
-  const combinedText = summaries.join(' ').toLowerCase();
-  const hasOverlap = keywords.some((k) => combinedText.includes(k.toLowerCase()));
+  const combinedText = summaries.join(' ');
+  const hasOverlap = keywords.some((k) => keywordAppears(combinedText, k));
   if (!hasOverlap) return hypotheses;
 
   const primary = hypotheses.find((h) => h.rank === 1) ?? hypotheses[0];
@@ -111,8 +133,13 @@ export function applyCanonicalHypothesisBackstop(
     hypothesis_id: id,
     rank: hypotheses.length + 1,
     summary: canonical,
+    // The backstop restates the same claim as `primary`, so it inherits
+    // that hypothesis's own confidence and type rather than asserting a
+    // fixed 'root_cause' — if the AI only committed to 'unknown' or
+    // 'contributing_factor', the canonical restatement shouldn't overstate
+    // that into a firm root-cause claim.
     confidence: primary.confidence,
-    hypothesis_type: 'root_cause',
+    hypothesis_type: primary.hypothesis_type,
     evidence_refs: primary.evidence_refs,
     missing_evidence: primary.missing_evidence,
     competing_hypotheses: primary.competing_hypotheses,

@@ -7,9 +7,10 @@ import {
   CANONICAL_HYPOTHESIS_BY_SCENARIO,
   applyCanonicalHypothesisBackstop,
   hypothesesContainCanonical,
+  keywordAppears,
   normalizeForMatch,
 } from '../framework/canonical-hypothesis.js';
-import type { RoutingResult } from '../framework/symptom-router.js';
+import { keywordsForScenario, type RoutingResult } from '../framework/symptom-router.js';
 import type { Hypothesis } from '../types/evidence-bundle.js';
 
 function hyp(overrides: Partial<Hypothesis>): Hypothesis {
@@ -137,9 +138,65 @@ describe('applyCanonicalHypothesisBackstop', () => {
 
   it('covers every canonical sentence with a scenario key that keywordsForScenario can resolve', () => {
     // Every canonical sentence must be reachable via a real routing
-    // scenario, or the backstop can never fire for it.
+    // scenario, or the overlap guard can never pass and the backstop can
+    // never fire for it. A future rename of a scenario id in
+    // symptom-router.ts without updating this table would otherwise fail
+    // silently (an empty keyword list just means the guard always blocks).
     for (const scenario of Object.keys(CANONICAL_HYPOTHESIS_BY_SCENARIO)) {
-      expect(typeof CANONICAL_HYPOTHESIS_BY_SCENARIO[scenario]).toBe('string');
+      const keywords = keywordsForScenario(scenario);
+      expect(keywords.length, `expected non-empty keywords for scenario "${scenario}"`).toBeGreaterThan(0);
     }
+  });
+
+  it('does not inject on a genuine routing/diagnosis disagreement even when a short keyword substring-matches unrelated words', () => {
+    // Regression test: the ai-provider-failover rule's 'ai' keyword is a
+    // substring of ordinary English words like "failures" and
+    // "available". A naive .includes() check would treat almost any
+    // hypothesis text as "overlapping" with the ai-provider family and
+    // defeat the guard's purpose. The AI's hypothesis here is genuinely
+    // about a different family (deploy regression) and never uses the
+    // word "ai" as a standalone token, so the backstop must stay out.
+    const hypotheses = [
+      hyp({ summary: 'recent checkout deploy regression is causing elevated checkout failures' }),
+    ];
+    const routing = routingFor('ai-provider-failover', 'ai-provider');
+
+    const result = applyCanonicalHypothesisBackstop(hypotheses, routing, false);
+
+    expect(result).toHaveLength(1);
+  });
+
+  it('still injects for ai-provider-failover when the AI hypothesis genuinely uses ai-provider vocabulary', () => {
+    const hypotheses = [
+      hyp({ summary: 'openai rate limit exhaustion is causing request failures' }),
+    ];
+    const routing = routingFor('ai-provider-failover', 'ai-provider');
+
+    const result = applyCanonicalHypothesisBackstop(hypotheses, routing, false);
+
+    expect(result).toHaveLength(2);
+    expect(result[1].summary).toBe('ai provider degradation is causing request failures');
+  });
+});
+
+describe('keywordAppears', () => {
+  it('matches a short keyword only as a whole word, not embedded inside a longer word', () => {
+    expect(keywordAppears('ai provider degradation', 'ai')).toBe(true);
+    expect(keywordAppears('elevated checkout failures', 'ai')).toBe(false);
+    expect(keywordAppears('cache availability degradation', 'ai')).toBe(false);
+  });
+
+  it('matches underscored keywords as a single token', () => {
+    expect(keywordAppears('pg_locks detected on the checkout table', 'pg_locks')).toBe(true);
+    expect(keywordAppears('shipping is delayed', 'pg')).toBe(false);
+  });
+
+  it('matches multi-word keyword phrases with whole-word boundaries', () => {
+    expect(keywordAppears('provider is hitting a rate limit', 'rate limit')).toBe(true);
+    expect(keywordAppears('the rate limiter was untouched', 'rate limit')).toBe(false);
+  });
+
+  it('is case-insensitive', () => {
+    expect(keywordAppears('Ceph OSD failure', 'osd')).toBe(true);
   });
 });
