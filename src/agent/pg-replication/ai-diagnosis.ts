@@ -23,6 +23,8 @@ interface SystemState {
   connectionCount: number;
   replicaViewLag?: number;
   isReplicaInRecovery?: boolean;
+  /** Ground truth from SELECT pg_is_wal_replay_paused() on the replica, or null if unavailable. */
+  isReplayPaused?: boolean | null;
 }
 
 const PG_SYSTEM_PROMPT = `You are a PostgreSQL database reliability expert integrated into an automated recovery framework. Your job is to analyze raw PostgreSQL system state and produce a structured diagnosis.
@@ -33,7 +35,7 @@ Respond with ONLY a JSON object matching this exact schema — no markdown, no e
 
 {
   "status": "identified" | "investigating" | "inconclusive",
-  "scenario": "replication_lag_cascade" | "replication_slot_overflow" | "replica_divergence" | "wal_sender_timeout" | null,
+  "scenario": "replication_lag_cascade" | "replication_slot_overflow" | "replica_divergence" | "wal_sender_timeout" | "wal_replay_paused" | null,
   "confidence": <number between 0 and 1>,
   "root_cause": "<one paragraph explaining the most likely root cause>",
   "findings": [
@@ -50,6 +52,7 @@ Respond with ONLY a JSON object matching this exact schema — no markdown, no e
 Guidelines:
 - Look at the GAP between sent_lsn and replay_lsn — this shows how far behind a replica is
 - If replay is frozen but sent is advancing, WAL replay may be paused (deliberate or I/O issue)
+- If the replica self-reported state confirms replay is explicitly paused (pg_is_wal_replay_paused() = true), diagnose "wal_replay_paused" — this is ground truth, not an inference
 - If multiple replicas lag, suspect primary-side issue (high WAL generation, network)
 - If one replica lags, suspect replica-side issue (disk, CPU, paused replay)
 - Check slot wal_status: "lost" means the slot fell behind and WAL was recycled
@@ -71,6 +74,7 @@ Active connections: ${state.connectionCount}
 ## Replica self-reported state
 ${state.isReplicaInRecovery !== undefined ? `In recovery mode: ${state.isReplicaInRecovery}` : 'Not available'}
 ${state.replicaViewLag !== undefined ? `Self-reported lag: ${state.replicaViewLag}s` : 'Not available'}
+${state.isReplayPaused !== undefined ? `WAL replay paused (pg_is_wal_replay_paused()): ${state.isReplayPaused === null ? 'unknown — replica connection unavailable' : state.isReplayPaused}` : 'Not available'}
 
 Produce your diagnosis.`;
 }

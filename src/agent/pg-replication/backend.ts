@@ -40,6 +40,12 @@ export interface PgBackend extends ExecutionBackend {
   /** Query active connection count from pg_stat_activity */
   queryConnectionCount(): Promise<number>;
 
+  /**
+   * Query whether WAL replay is paused on the replica (SELECT pg_is_wal_replay_paused()).
+   * Returns null when no replica connection is available/configured.
+   */
+  queryReplayPaused(): Promise<boolean | null>;
+
   /** Transition state (simulator) or no-op (live) */
   transition(to: string): void;
 }

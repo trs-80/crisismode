@@ -10,6 +10,7 @@ export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 export class PgSimulator implements PgBackend {
   private state: SimulatorState = 'degraded';
   private slotInvalid = true;
+  private replayPaused = false;
 
   getState(): SimulatorState {
     return this.state;
@@ -17,6 +18,15 @@ export class PgSimulator implements PgBackend {
 
   transition(to: string): void {
     this.state = to as SimulatorState;
+  }
+
+  /** Simulate an operator/fault having paused WAL replay on the replica. */
+  pauseReplay(): void {
+    this.replayPaused = true;
+  }
+
+  async queryReplayPaused(): Promise<boolean | null> {
+    return this.replayPaused;
   }
 
   async queryReplicationStatus(): Promise<ReplicaStatus[]> {
@@ -202,6 +212,11 @@ export class PgSimulator implements PgBackend {
       return this.compareValue(count, check.expect.operator, check.expect.value);
     }
 
+    if (stmt.includes('pg_is_wal_replay_paused')) {
+      const paused = this.replayPaused ? 1 : 0;
+      return this.compareValue(paused, check.expect.operator, check.expect.value);
+    }
+
     if (check.type === 'structured_command' && check.expect.operator === 'eq') {
       return check.expect.value === 'running';
     }
@@ -212,6 +227,17 @@ export class PgSimulator implements PgBackend {
   async executeCommand(command: Command): Promise<unknown> {
     if (command.type === 'sql') {
       const stmt = command.statement ?? '';
+      if (stmt.includes('pg_wal_replay_resume')) {
+        this.replayPaused = false;
+        return { simulated: true, statement: stmt, replayPaused: this.replayPaused };
+      }
+      if (stmt.includes('pg_wal_replay_pause')) {
+        this.replayPaused = true;
+        return { simulated: true, statement: stmt, replayPaused: this.replayPaused };
+      }
+      if (stmt.includes('pg_is_wal_replay_paused')) {
+        return { replay_paused: this.replayPaused };
+      }
       if (stmt.includes('FROM pg_stat_replication')) {
         return this.queryReplicationStatus();
       }
@@ -244,6 +270,7 @@ export class PgSimulator implements PgBackend {
           'db.replica.disconnect',
           'db.replication_slot.drop',
           'db.replication_slot.create',
+          'db.wal_replay.resume',
         ],
         executionContexts: ['postgresql_read', 'postgresql_write'],
         targetKinds: ['postgresql'],
