@@ -172,10 +172,20 @@ failures, and real AWS RDS/S3/DynamoDB). What it currently proves:
 
 - **Validated:** failure detection (typically 3–5s), AI diagnosis, and dry-run
   recovery planning against real infrastructure, including real AWS and Vercel.
-- **Not yet validated:** end-to-end `--execute` recovery. No torture scenario
-  has completed a mutating recovery with post-recovery health verification.
-  Execute mode is functional for individual actions (as shown above) but should
-  be treated as experimental until the harness verifies full recoveries.
+- **Execute-verified (as of 2026-07-13):** end-to-end `--execute` recovery —
+  a mutating recovery plan that actually ran, plus post-recovery health
+  verification confirming the underlying fault was resolved (not just that
+  the engine exited without error) — for exactly two scenarios: Redis memory
+  pressure and PostgreSQL WAL-replay-paused replication lag. Both are
+  reproducible via the crisismode-torture harness.
+- **Not yet validated:** end-to-end `--execute` recovery for every other
+  agent/scenario in the tables above. Execute mode is functional for
+  individual actions, and the engine correctly refuses to run a plan when a
+  required live provider is missing (a blocked run is never counted as a
+  recovery), but no torture scenario besides the two above has completed a
+  full mutating recovery with post-recovery verification — treat the rest as
+  experimental until the harness verifies them. AWS and Vercel scenarios
+  remain dry-run/skipped in `--execute` mode.
 
 ## Building Agents
 
