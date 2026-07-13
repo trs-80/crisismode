@@ -52,7 +52,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.110.0",
+    "@anthropic-ai/sdk": "^0.111.0",
     "@crisismode/agent-sdk": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
     "@langchain/core": "^1.2.2",
@@ -66,10 +66,10 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1083.0",
-    "@aws-sdk/client-rds": "^3.1083.0",
-    "@aws-sdk/client-s3": "^3.1083.0",
-    "@aws-sdk/client-sts": "^3.1083.0"
+    "@aws-sdk/client-dynamodb": "^3.1086.0",
+    "@aws-sdk/client-rds": "^3.1086.0",
+    "@aws-sdk/client-s3": "^3.1086.0",
+    "@aws-sdk/client-sts": "^3.1086.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
@@ -81,7 +81,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
     "postject": "^1.0.0-alpha.6",
-    "tsx": "^4.23.0",
+    "tsx": "^4.23.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   },
