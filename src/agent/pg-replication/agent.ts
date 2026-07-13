@@ -11,11 +11,62 @@ import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
 import { createPlanEnvelope } from '../../framework/plan-helpers.js';
-import type { ReplicaStatus } from './backend.js';
+import type { ReplicaStatus, ConnectionUsage } from './backend.js';
 import { pgReplicationManifest } from './manifest.js';
 import type { PgBackend } from './backend.js';
 import { PgSimulator } from './simulator.js';
 import { aiDiagnose } from './ai-diagnosis.js';
+
+// Connection-pool exhaustion is diagnosed deterministically off a direct
+// measurement (pg_stat_activity vs. max_connections), not inferred — same
+// category of "ground truth" signal as pg_is_wal_replay_paused(). A pool is
+// considered exhausted only when BOTH utilization is critical AND
+// idle-in-transaction sessions are a material contributor, so we don't
+// misdiagnose ordinary high query load (many short-lived active connections)
+// as a leak.
+const CONNECTION_USAGE_CRITICAL_RATIO = 0.9;
+const MIN_IDLE_IN_TRANSACTION_CONTRIBUTORS = 3;
+/** Idle-in-transaction sessions older than this are considered stale/leaked and eligible for termination. */
+const IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS = 60;
+
+const CONNECTION_USAGE_QUERY =
+  "SELECT count(*)::int AS total, current_setting('max_connections')::int AS max_connections FROM pg_stat_activity;";
+
+const ACTIVITY_SNAPSHOT_QUERY =
+  'SELECT pid, usename, application_name, client_addr, state, ' +
+  'COALESCE(EXTRACT(EPOCH FROM (now() - state_change))::int, 0) AS age_seconds, query ' +
+  'FROM pg_stat_activity WHERE state IS NOT NULL ORDER BY age_seconds DESC;';
+
+function idleInTxCountQuery(thresholdSeconds: number): string {
+  return `SELECT count(*)::int FROM pg_stat_activity WHERE state = 'idle in transaction' AND state_change < NOW() - INTERVAL '${thresholdSeconds} seconds';`;
+}
+
+function terminateIdleInTxStatement(thresholdSeconds: number): string {
+  // pg_terminate_backend() only SIGNALS the target backend — it returns
+  // once the signal is sent, not once the backend has actually exited and
+  // its pg_stat_activity row is gone. A bare `SELECT pg_terminate_backend(...)`
+  // followed immediately by a successCriteria check that expects 0 matching
+  // rows is a genuine race: the row can still be visible for a few tens of
+  // milliseconds after the signal is sent, especially when terminating many
+  // sessions in one pass. Wrap it in a short, bounded poll so the command
+  // only returns once termination has actually settled (or the bound is
+  // hit), instead of leaving that wait to chance.
+  return (
+    'DO $$\n' +
+    'DECLARE\n' +
+    '  remaining int;\n' +
+    'BEGIN\n' +
+    '  PERFORM pg_terminate_backend(pid) FROM pg_stat_activity\n' +
+    `    WHERE state = 'idle in transaction' AND state_change < NOW() - INTERVAL '${thresholdSeconds} seconds';\n` +
+    '  FOR i IN 1..50 LOOP\n' +
+    '    SELECT count(*) INTO remaining FROM pg_stat_activity\n' +
+    `      WHERE state = 'idle in transaction' AND state_change < NOW() - INTERVAL '${thresholdSeconds} seconds';\n` +
+    '    EXIT WHEN remaining = 0;\n' +
+    '    PERFORM pg_sleep(0.1);\n' +
+    '  END LOOP;\n' +
+    'END $$;'
+  );
+}
 
 /**
  * Validates and normalizes a PostgreSQL inet value to a bare IPv4 host address.
@@ -212,7 +263,22 @@ export class PgReplicationAgent implements RecoveryAgent {
       };
     }
 
-    // Ground-truth check: pg_is_wal_replay_paused() is a direct, unambiguous
+    // Ground-truth check #1: connection-pool exhaustion is a direct
+    // measurement (pg_stat_activity vs. max_connections), checked before
+    // wal_replay_paused. Precedence is deliberate: near-total connection
+    // exhaustion risks the primary refusing ALL new connections — a
+    // total-outage-adjacent failure — whereas a single paused replica only
+    // serves stale reads from that one replica. When both are true, resolve
+    // the more severe/urgent failure first; diagnoseConnectionPoolExhaustion
+    // still surfaces the co-occurring replay pause as an informational
+    // finding so it isn't silently dropped.
+    const connUsage = await this.backend.queryConnectionUsage().catch(() => null);
+    if (connUsage && this.isConnectionPoolExhausted(connUsage)) {
+      const alsoReplayPaused = await this.backend.queryReplayPaused().catch(() => null);
+      return this.diagnoseConnectionPoolExhaustion(connUsage, replStatus, alsoReplayPaused === true);
+    }
+
+    // Ground-truth check #2: pg_is_wal_replay_paused() is a direct, unambiguous
     // signal (unlike lag, which can be explained several ways). When it's
     // available and true, that IS the root cause — diagnose deterministically
     // rather than let AI/rule-based heuristics guess at the LSN gap pattern.
@@ -227,6 +293,7 @@ export class PgReplicationAgent implements RecoveryAgent {
       slots,
       connectionCount: connCount,
       isReplayPaused: replayPaused,
+      connectionUsage: connUsage,
     });
 
     if (aiResult) {
@@ -240,6 +307,76 @@ export class PgReplicationAgent implements RecoveryAgent {
 
     // Fallback: rule-based diagnosis
     return this.ruleBasedDiagnose(replStatus, slots, connCount);
+  }
+
+  private isConnectionPoolExhausted(usage: ConnectionUsage): boolean {
+    if (usage.max <= 0) return false;
+    const utilization = usage.total / usage.max;
+    return (
+      utilization > CONNECTION_USAGE_CRITICAL_RATIO &&
+      usage.idleInTransactionOldest.length >= MIN_IDLE_IN_TRANSACTION_CONTRIBUTORS
+    );
+  }
+
+  private diagnoseConnectionPoolExhaustion(
+    usage: ConnectionUsage,
+    replStatus: ReplicaStatus[],
+    alsoReplayPaused: boolean,
+  ): DiagnosisResult {
+    const utilizationPct = Math.round((usage.total / usage.max) * 100);
+    const oldest = usage.idleInTransactionOldest[0];
+    const staleCount = usage.idleInTransactionOldest.filter(
+      (s) => s.ageSeconds >= IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS,
+    ).length;
+
+    const findings: DiagnosisResult['findings'] = [
+      {
+        source: 'pg_stat_activity',
+        observation:
+          `${usage.total}/${usage.max} connections in use (${utilizationPct}%) on the primary. ` +
+          `${usage.idleInTransactionOldest.length} session(s) are idle-in-transaction, the oldest held ` +
+          `open for ${oldest?.ageSeconds ?? 0}s.`,
+        severity: 'critical',
+        data: { connectionUsage: usage },
+      },
+      {
+        source: 'pg_stat_activity',
+        observation:
+          `${staleCount} idle-in-transaction session(s) have been held open longer than ` +
+          `${IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS}s — consistent with a client leaking ` +
+          `transactions (opened and never committed, rolled back, or closed) rather than ordinary load. ` +
+          `These sessions are consuming connection slots that new clients need.`,
+        severity: 'critical',
+        data: { idleInTransactionOldest: usage.idleInTransactionOldest },
+      },
+      {
+        source: 'pg_stat_replication',
+        observation: `${replStatus.length} replica(s) found; replication is not implicated in this failure.`,
+        severity: 'info',
+        data: { replicas: replStatus },
+      },
+    ];
+
+    if (alsoReplayPaused) {
+      findings.push({
+        source: 'pg_replay_state',
+        observation:
+          'WAL replay is also currently paused on a replica. That is a separate, lower-priority issue ' +
+          '(it only affects read freshness on one replica, vs. the primary risking outright connection ' +
+          'refusal here) and will surface on the next diagnosis pass once this connection-pool ' +
+          'exhaustion is resolved.',
+        severity: 'warning',
+        data: { replayPaused: true },
+      });
+    }
+
+    return {
+      status: 'identified',
+      scenario: 'connection_pool_exhaustion',
+      confidence: 0.96,
+      findings,
+      diagnosticPlanNeeded: false,
+    };
   }
 
   private diagnoseReplayPaused(
@@ -358,6 +495,12 @@ export class PgReplicationAgent implements RecoveryAgent {
     // which addresses a different (unexplained) lag scenario.
     if (diagnosis.scenario === 'wal_replay_paused') {
       return this.planForReplayPaused(primaryId, diagnosis);
+    }
+
+    // Handle confirmed connection-pool exhaustion — terminate the stale
+    // idle-in-transaction sessions consuming connection slots.
+    if (diagnosis.scenario === 'connection_pool_exhaustion') {
+      return this.planForConnectionPoolExhaustion(primaryId, diagnosis);
     }
 
     // Dynamic target resolution: find the worst-lagging replica from diagnosis
@@ -1160,6 +1303,221 @@ export class PgReplicationAgent implements RecoveryAgent {
         description:
           'The resume step is independently reversible: re-issue SELECT pg_wal_replay_pause(); on the ' +
           'replica to restore the exact prior state. No other step in this plan performs a mutation.',
+      },
+    };
+  }
+
+  /**
+   * All-SQL recovery for confirmed connection-pool exhaustion: terminate the
+   * stale idle-in-transaction sessions consuming connection slots. Unlike
+   * the wal_replay_paused resume (idempotent, no data loss), this step is
+   * genuinely irreversible — pg_terminate_backend() drops the connection and
+   * discards any uncommitted work in that session's transaction. It is
+   * declared 'elevated' risk with a required pre-termination statePreservation
+   * capture, and no part of this plan claims the termination is reversible.
+   */
+  private planForConnectionPoolExhaustion(primaryId: string, diagnosis: DiagnosisResult): RecoveryPlan {
+    const usage = (diagnosis.findings[0]?.data as { connectionUsage?: ConnectionUsage })?.connectionUsage;
+    const idleSessions = usage?.idleInTransactionOldest ?? [];
+    const staleSessions = idleSessions.filter(
+      (s) => s.ageSeconds >= IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS,
+    );
+    const applicationNames = [...new Set(staleSessions.map((s) => s.applicationName).filter((n): n is string => !!n))];
+    const clientDescription = applicationNames.length > 0 ? applicationNames.join(', ') : 'unidentified client application(s)';
+    const utilizationPct = usage && usage.max > 0 ? Math.round((usage.total / usage.max) * 100) : 0;
+
+    const terminateStatement = terminateIdleInTxStatement(IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS);
+    const idleCountCheck = idleInTxCountQuery(IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS);
+
+    const steps: RecoveryStep[] = [
+      // Step 1: diagnosis_action — full pg_stat_activity snapshot (also forensic evidence)
+      {
+        stepId: 'step-001',
+        type: 'diagnosis_action',
+        name: 'Capture full pg_stat_activity snapshot',
+        executionContext: 'postgresql_read',
+        target: primaryId,
+        command: { type: 'sql', subtype: 'query', statement: ACTIVITY_SNAPSHOT_QUERY },
+        outputCapture: {
+          name: 'pre_termination_activity_snapshot',
+          format: 'table',
+          availableTo: 'subsequent_steps',
+        },
+        timeout: 'PT30S',
+      },
+      // Step 2: human_notification — honest, upfront about irreversibility
+      {
+        stepId: 'step-002',
+        type: 'human_notification',
+        name: 'Notify on-call DBA before terminating idle-in-transaction sessions',
+        recipients: [{ role: 'on_call_dba', urgency: 'critical' }],
+        message: {
+          summary: `Automated recovery initiated for connection-pool exhaustion on ${primaryId}`,
+          detail:
+            `Agent 'postgresql-replication-recovery' confirmed ${usage?.total ?? '?'}/${usage?.max ?? '?'} ` +
+            `connections in use (${utilizationPct}%), with ${staleSessions.length} idle-in-transaction ` +
+            `session(s) held open for over ${IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS}s by ` +
+            `${clientDescription}. These sessions will be terminated with pg_terminate_backend(), which is ` +
+            `IRREVERSIBLE: any uncommitted work in those transactions is discarded. Affected clients will ` +
+            `see their connection drop and must reconnect and retry at the application layer.`,
+          contextReferences: ['pre_termination_activity_snapshot'],
+          actionRequired: false,
+        },
+        channel: 'auto',
+      },
+      // Step 3: checkpoint — required because terminated sessions cannot be un-terminated
+      {
+        stepId: 'step-003',
+        type: 'checkpoint',
+        name: 'Pre-recovery checkpoint',
+        description:
+          'Capture pg_stat_activity state before terminating any sessions — pg_terminate_backend() is ' +
+          'irreversible, so this snapshot is the only record of what was running in each terminated session.',
+        stateCaptures: [
+          {
+            name: 'activity_snapshot_checkpoint',
+            captureType: 'sql_query',
+            statement: ACTIVITY_SNAPSHOT_QUERY,
+            captureCost: 'negligible',
+            capturePolicy: 'required',
+          },
+        ],
+      },
+      // Step 4: system_action (elevated) — terminate stale idle-in-transaction sessions
+      {
+        stepId: 'step-004',
+        type: 'system_action',
+        name: `Terminate idle-in-transaction sessions older than ${IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS}s`,
+        description:
+          `pg_terminate_backend() closes the target session's connection and discards any uncommitted ` +
+          `work in its transaction — this is NOT reversible. Risk is 'elevated' (not 'routine') because ` +
+          `of that irreversibility and because it affects live client sessions; only sessions idle in a ` +
+          `transaction for over ${IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS}s are targeted, so ` +
+          `active application work in progress is not touched. The command waits (bounded, up to 5s) for ` +
+          `termination to actually take effect before returning, since pg_terminate_backend() only signals ` +
+          `the backend rather than confirming it has exited.`,
+        executionContext: 'postgresql_write',
+        target: primaryId,
+        riskLevel: 'elevated',
+        requiredCapabilities: ['db.connections.terminate'],
+        command: { type: 'sql', subtype: 'plpgsql_block', statement: terminateStatement },
+        preConditions: [
+          {
+            description: `At least one idle-in-transaction session older than ${IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS}s exists`,
+            check: { type: 'sql', statement: idleCountCheck, expect: { operator: 'gte', value: 1 } },
+          },
+        ],
+        statePreservation: {
+          before: [
+            {
+              name: 'activity_snapshot_before_termination',
+              captureType: 'sql_query',
+              statement: ACTIVITY_SNAPSHOT_QUERY,
+              captureCost: 'negligible',
+              capturePolicy: 'required',
+              retention: 'P30D',
+            },
+          ],
+          after: [
+            {
+              name: 'activity_snapshot_after_termination',
+              captureType: 'sql_query',
+              statement: ACTIVITY_SNAPSHOT_QUERY,
+              captureCost: 'negligible',
+              capturePolicy: 'best_effort',
+              retention: 'P30D',
+            },
+          ],
+        },
+        successCriteria: {
+          description: `No idle-in-transaction sessions remain older than ${IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS}s`,
+          check: { type: 'sql', statement: idleCountCheck, expect: { operator: 'eq', value: 0 } },
+        },
+        rollback: {
+          type: 'manual',
+          description:
+            'Terminated sessions cannot be un-terminated and their uncommitted transaction state is lost ' +
+            'permanently — there is no automatic rollback. Affected client applications must open a new ' +
+            'connection and retry their work from the application layer; new connections are free to ' +
+            'establish immediately since this step frees the slots they were holding.',
+        },
+        blastRadius: {
+          directComponents: [primaryId],
+          indirectComponents: applicationNames.length > 0 ? applicationNames : ['unidentified-client-applications'],
+          maxImpact: 'idle_in_transaction_sessions_terminated',
+          cascadeRisk: 'medium',
+        },
+        timeout: 'PT30S',
+        retryPolicy: { maxRetries: 0, retryable: false },
+        stateTransition: 'recovering',
+      },
+      // Step 5: diagnosis_action — verify headroom after termination
+      {
+        stepId: 'step-005',
+        type: 'diagnosis_action',
+        name: 'Verify connection headroom after termination',
+        executionContext: 'postgresql_read',
+        target: primaryId,
+        command: { type: 'sql', subtype: 'query', statement: CONNECTION_USAGE_QUERY },
+        outputCapture: {
+          name: 'post_termination_connection_usage',
+          format: 'table',
+          availableTo: 'subsequent_steps',
+        },
+        timeout: 'PT30S',
+      },
+      // Step 6: human_notification — recovery summary
+      {
+        stepId: 'step-006',
+        type: 'human_notification',
+        name: 'Send recovery summary',
+        recipients: [
+          { role: 'on_call_dba', urgency: 'medium' },
+          { role: 'incident_commander', urgency: 'medium' },
+        ],
+        message: {
+          summary: 'PostgreSQL connection-pool exhaustion recovery completed',
+          detail:
+            `Terminated stale idle-in-transaction session(s) on ${primaryId}. Verify ` +
+            `post_termination_connection_usage shows headroom below the alert threshold, and confirm with ` +
+            `${clientDescription} whether the leaked transactions indicate an application bug that needs ` +
+            `fixing (e.g. missing commit/rollback, or a client not closing connections).`,
+          contextReferences: ['post_termination_connection_usage'],
+          actionRequired: false,
+        },
+        channel: 'auto',
+      },
+    ];
+
+    return {
+      ...createPlanEnvelope({
+        planIdSuffix: 'pg-connpool',
+        agentName: 'postgresql-replication-recovery',
+        agentVersion: '1.2.0',
+        scenario: 'connection_pool_exhaustion',
+        estimatedDuration: 'PT5M',
+        summary: `Free up primary connection headroom on ${primaryId} by terminating ${staleSessions.length} stale idle-in-transaction session(s).`,
+      }),
+      impact: {
+        affectedSystems: [
+          { identifier: primaryId, technology: 'postgresql', role: 'primary', impactType: 'connections_terminated' },
+        ],
+        affectedServices: applicationNames.length > 0 ? applicationNames : ['unidentified-client-applications'],
+        estimatedUserImpact:
+          `Terminated sessions lose any uncommitted transaction state; affected clients (${clientDescription}) ` +
+          `will see their connection drop and must reconnect and retry at the application layer. No ` +
+          `previously committed data is at risk, and freed connection slots are immediately available to ` +
+          `other clients.`,
+        dataLossRisk: 'possible',
+      },
+      steps,
+      rollbackStrategy: {
+        type: 'none',
+        description:
+          'The termination step is NOT reversible: pg_terminate_backend() permanently ends the targeted ' +
+          'sessions and discards their uncommitted transaction state — there is no automatic un-terminate, ' +
+          'so this plan has no working rollback for its one mutation. The preceding snapshot, notification, ' +
+          'and checkpoint steps perform no mutation and require no rollback of their own.',
       },
     };
   }

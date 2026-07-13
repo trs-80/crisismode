@@ -51,6 +51,7 @@ export const pgReplicationManifest: AgentManifest = {
       'replica_divergence',
       'wal_sender_timeout',
       'wal_replay_paused',
+      'connection_pool_exhaustion',
     ],
     executionContexts: [
       {
@@ -73,6 +74,7 @@ export const pgReplicationManifest: AgentManifest = {
           'db.replication_slot.drop',
           'db.replication_slot.create',
           'db.wal_replay.resume',
+          'db.connections.terminate',
         ],
       },
       {
