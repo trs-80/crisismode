@@ -319,14 +319,26 @@ export class RedisMemoryAgent implements RecoveryAgent {
         description: 'Run SCAN-based expiry to free memory: lazily reclaim keys already past their TTL, and — under aggressive effort — proactively evict volatile (TTL-bearing) keys that have not yet expired, since relieving memory pressure now outweighs waiting out their remaining TTL.',
         executionContext: 'redis_admin',
         target: instance,
-        riskLevel: 'routine',
+        riskLevel: 'elevated',
         requiredCapabilities: ['cache.expiry.trigger'],
         command: {
           type: 'structured_command',
           operation: 'active_expiry',
           parameters: { effort: 'aggressive' },
         },
-        statePreservation: { before: [], after: [] },
+        statePreservation: {
+          before: [
+            {
+              name: 'keyspace_before',
+              captureType: 'command_output',
+              statement: 'INFO keyspace',
+              captureCost: 'negligible',
+              capturePolicy: 'required',
+              retention: 'P30D',
+            },
+          ],
+          after: [],
+        },
         successCriteria: {
           description: 'Memory usage decreased',
           check: {
@@ -341,9 +353,9 @@ export class RedisMemoryAgent implements RecoveryAgent {
         },
         blastRadius: {
           directComponents: [instance],
-          indirectComponents: [],
+          indirectComponents: ['application-pool'],
           maxImpact: 'unexpired_volatile_keys_evicted',
-          cascadeRisk: 'none',
+          cascadeRisk: 'low',
         },
         timeout: 'PT2M',
         retryPolicy: { maxRetries: 1, retryable: true },
@@ -453,13 +465,13 @@ export class RedisMemoryAgent implements RecoveryAgent {
           },
         ],
         affectedServices: ['cache-layer'],
-        estimatedUserImpact: 'Brief increase in cache misses during client reconnection. No data loss.',
-        dataLossRisk: 'none',
+        estimatedUserImpact: 'Brief increase in cache misses during client reconnection, plus a further cache-miss spike as aggressive active-expiry evicts unexpired volatile keys. Applications are expected to repopulate cache data on next access; no impact to the backing source of truth.',
+        dataLossRisk: 'low',
       },
       steps,
       rollbackStrategy: {
         type: 'stepwise',
-        description: 'Each step is independently reversible. Client disconnections recover automatically via connection pooling.',
+        description: 'Most steps are independently reversible: client disconnections recover automatically via connection pooling, and the eviction policy change can be reverted manually. Volatile key eviction (step-005) is not reversible — evicted keys, including any not yet at their TTL, are not recoverable from Redis.',
       },
     };
   }
