@@ -43,10 +43,14 @@ export class PgSimulator implements PgBackend {
    * idle-in-transaction contributors (e.g. high usage from ordinary active
    * queries, with too few idle-in-tx sessions to be the material cause).
    */
-  setConnectionPoolExhausted(sessionCount = 20, otherActiveConnections = 4): void {
+  setConnectionPoolExhausted(
+    sessionCount = 20,
+    otherActiveConnections = 4,
+    oldestAgeSeconds?: number,
+  ): void {
     this.idleInTxSessions = Array.from({ length: sessionCount }, (_, i) => ({
       pid: 20000 + i,
-      ageSeconds: 90 + i * 5,
+      ageSeconds: oldestAgeSeconds !== undefined ? oldestAgeSeconds : 90 + i * 5,
       applicationName: 'checkout-worker',
     }));
     this.otherActiveConnections = otherActiveConnections;
