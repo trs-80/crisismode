@@ -11,6 +11,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
@@ -528,19 +529,19 @@ export class K8sSimulator implements K8sBackend {
     if (stmt === 'node_ready_count') {
       const nodes = await this.getNodeStatus();
       const readyCount = nodes.filter((n) => n.status === 'Ready').length;
-      return this.compare(readyCount, check.expect.operator, check.expect.value);
+      return compareCheckValue(readyCount, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'pod_crashloop_count') {
       const pods = await this.getPodsByNamespace('production');
       const crashloopCount = pods.filter((p) => p.status === 'CrashLoopBackOff').length;
-      return this.compare(crashloopCount, check.expect.operator, check.expect.value);
+      return compareCheckValue(crashloopCount, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'deployment_ready') {
       const deployments = await this.getDeploymentStatus('production');
       const allReady = deployments.every((d) => d.readyReplicas >= d.replicas);
-      return this.compare(allReady, check.expect.operator, check.expect.value);
+      return compareCheckValue(allReady, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -571,28 +572,4 @@ export class K8sSimulator implements K8sBackend {
 
   async close(): Promise<void> {}
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

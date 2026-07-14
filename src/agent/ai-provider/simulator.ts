@@ -10,6 +10,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'provider_degraded' | 'failover_active' | 'stabilized';
 
@@ -232,34 +233,34 @@ export class AiProviderSimulator implements AiProviderBackend {
     const stmt = check.statement ?? '';
 
     if (stmt === 'provider_ping') {
-      return this.compare('ok', check.expect.operator, check.expect.value);
+      return compareCheckValue('ok', check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('p95_latency')) {
       const metrics = await this.getRequestMetrics();
-      return this.compare(metrics.p95LatencyMs, check.expect.operator, check.expect.value);
+      return compareCheckValue(metrics.p95LatencyMs, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('error_rate')) {
       const metrics = await this.getRequestMetrics();
-      return this.compare(metrics.successRate, check.expect.operator, check.expect.value);
+      return compareCheckValue(metrics.successRate, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('timeout_rate')) {
       const metrics = await this.getRequestMetrics();
-      return this.compare(metrics.timeoutRate, check.expect.operator, check.expect.value);
+      return compareCheckValue(metrics.timeoutRate, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('circuit_breaker_open')) {
       const states = await this.getCircuitBreakerState();
       const openCount = states.filter((s) => s.state === 'open').length;
-      return this.compare(openCount, check.expect.operator, check.expect.value);
+      return compareCheckValue(openCount, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('fallback_active')) {
       const config = await this.getFallbackConfig();
       const primaryEnabled = config.chain.find((c) => c.priority === 1)?.enabled ?? true;
-      return this.compare(!primaryEnabled, check.expect.operator, check.expect.value);
+      return compareCheckValue(!primaryEnabled, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -296,28 +297,4 @@ export class AiProviderSimulator implements AiProviderBackend {
 
   async close(): Promise<void> {}
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

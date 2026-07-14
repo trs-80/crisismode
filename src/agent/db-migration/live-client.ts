@@ -20,6 +20,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 const { Pool } = pg;
 
@@ -355,31 +356,31 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
     if (stmt.includes('pg_isready') || stmt === 'SELECT 1') {
       try {
         await this.pool.query('SELECT 1');
-        return this.compare(1, check.expect.operator, check.expect.value);
+        return compareCheckValue(1, check.expect.operator, check.expect.value);
       } catch {
-        return this.compare(0, check.expect.operator, check.expect.value);
+        return compareCheckValue(0, check.expect.operator, check.expect.value);
       }
     }
 
     if (stmt.includes('connection_pool_utilization')) {
       const pool = await this.getConnectionPoolStats();
-      return this.compare(pool.utilizationPct, check.expect.operator, check.expect.value);
+      return compareCheckValue(pool.utilizationPct, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('active_locks')) {
       const locks = await this.getTableLockInfo();
       const blockedCount = locks.filter((l) => !l.granted).length;
-      return this.compare(blockedCount, check.expect.operator, check.expect.value);
+      return compareCheckValue(blockedCount, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('migration_status')) {
       const migration = await this.getMigrationStatus();
-      return this.compare(migration.status, check.expect.operator, check.expect.value);
+      return compareCheckValue(migration.status, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('waiting_connections')) {
       const pool = await this.getConnectionPoolStats();
-      return this.compare(pool.waiting, check.expect.operator, check.expect.value);
+      return compareCheckValue(pool.waiting, check.expect.operator, check.expect.value);
     }
 
     // Fallback: try executing as raw SQL
@@ -387,10 +388,10 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
       try {
         const result = await this.pool.query(check.statement);
         if (result.rows.length === 0) {
-          return this.compare(0, check.expect.operator, check.expect.value);
+          return compareCheckValue(0, check.expect.operator, check.expect.value);
         }
         const actual = Object.values(result.rows[0])[0];
-        return this.compare(actual, check.expect.operator, check.expect.value);
+        return compareCheckValue(actual, check.expect.operator, check.expect.value);
       } catch {
         return false;
       }
@@ -441,28 +442,4 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
     await this.pool.end();
   }
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

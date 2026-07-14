@@ -11,6 +11,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 export type KafkaScenario = 'urp' | 'broker_down' | 'consumer_lag_cascade';
@@ -404,36 +405,36 @@ export class KafkaSimulator implements KafkaBackend {
 
     if (stmt === 'under_replicated_count') {
       const urps = await this.getUnderReplicatedPartitions();
-      return this.compare(urps.length, check.expect.operator, check.expect.value);
+      return compareCheckValue(urps.length, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'consumer_lag') {
       const groups = await this.getConsumerGroups();
       const maxLag = Math.max(0, ...groups.map((g) => g.lag));
-      return this.compare(maxLag, check.expect.operator, check.expect.value);
+      return compareCheckValue(maxLag, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'broker_count') {
       const meta = await this.getClusterMetadata();
-      return this.compare(meta.brokers.filter((b) => b.isAlive).length, check.expect.operator, check.expect.value);
+      return compareCheckValue(meta.brokers.filter((b) => b.isAlive).length, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'leaderless_partition_count') {
       const partitions = await this.getTopicPartitions();
       const leaderless = partitions.filter((p) => p.leader === -1).length;
-      return this.compare(leaderless, check.expect.operator, check.expect.value);
+      return compareCheckValue(leaderless, check.expect.operator, check.expect.value);
     }
 
     if (stmt.startsWith('broker_liveness:')) {
       const brokerId = Number(stmt.split(':')[1]);
       const liveness = await this.getBrokerLiveness(brokerId);
-      return this.compare(liveness.reachable ? 1 : 0, check.expect.operator, check.expect.value);
+      return compareCheckValue(liveness.reachable ? 1 : 0, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'consumer_group_rebalancing_count') {
       const groups = await this.getConsumerGroups();
       const rebalancing = groups.filter((g) => g.state !== 'Stable').length;
-      return this.compare(rebalancing, check.expect.operator, check.expect.value);
+      return compareCheckValue(rebalancing, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -463,28 +464,4 @@ export class KafkaSimulator implements KafkaBackend {
 
   async close(): Promise<void> {}
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

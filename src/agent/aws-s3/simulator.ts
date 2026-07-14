@@ -4,6 +4,7 @@
 import type { S3RecoveryBackend, BucketConfig } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
@@ -78,16 +79,16 @@ export class S3RecoverySimulator implements S3RecoveryBackend {
 
     if (stmt.includes('versioning_status')) {
       const config = await this.getBucketConfig();
-      return this.compare(config.versioningStatus, check.expect.operator, check.expect.value);
+      return compareCheckValue(config.versioningStatus, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('lifecycle_rule_count')) {
       const config = await this.getBucketConfig();
-      return this.compare(config.lifecycleRules.length, check.expect.operator, check.expect.value);
+      return compareCheckValue(config.lifecycleRules.length, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('bucket_exists')) {
-      return this.compare('true', check.expect.operator, check.expect.value);
+      return compareCheckValue('true', check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -112,28 +113,4 @@ export class S3RecoverySimulator implements S3RecoveryBackend {
 
   async close(): Promise<void> {}
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

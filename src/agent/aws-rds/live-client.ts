@@ -12,6 +12,7 @@ import { tryImportAws } from '../aws-common.js';
 import type { RdsRecoveryBackend, InstanceBackupConfig } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export interface RdsConnectionConfig {
   region: string;
@@ -153,22 +154,22 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
 
     if (stmt.includes('backup_retention_period')) {
       const config = await this.getInstanceBackupConfig();
-      return this.compare(config.backupRetentionPeriod, check.expect.operator, check.expect.value);
+      return compareCheckValue(config.backupRetentionPeriod, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('snapshot_count')) {
       const config = await this.getInstanceBackupConfig();
-      return this.compare(config.snapshotCount, check.expect.operator, check.expect.value);
+      return compareCheckValue(config.snapshotCount, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('automated_backups_enabled')) {
       const config = await this.getInstanceBackupConfig();
-      return this.compare(config.automatedBackupsEnabled ? 1 : 0, check.expect.operator, check.expect.value);
+      return compareCheckValue(config.automatedBackupsEnabled ? 1 : 0, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('instance_status')) {
       const config = await this.getInstanceBackupConfig();
-      return this.compare(config.status, check.expect.operator, check.expect.value);
+      return compareCheckValue(config.status, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -197,28 +198,4 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
     this.rdsSdk = null;
   }
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

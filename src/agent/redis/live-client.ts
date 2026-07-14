@@ -12,6 +12,7 @@ import { Redis as RedisClient } from 'ioredis';
 import type { RedisBackend, RedisInfo, RedisSlaveInfo, RedisSlowlogEntry, RedisClusterInfo, RedisClusterNodeInfo } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export interface RedisConnectionConfig {
   host: string;
@@ -300,33 +301,33 @@ export class RedisLiveClient implements RedisBackend {
 
     if (stmt === 'PING') {
       const result = await this.client.ping();
-      return this.compare(result, check.expect.operator, check.expect.value);
+      return compareCheckValue(result, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('used_memory_percent')) {
       const info = await this.getInfo();
-      return this.compare(info.memoryUsagePercent, check.expect.operator, check.expect.value);
+      return compareCheckValue(info.memoryUsagePercent, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('connected_clients')) {
       const info = await this.getInfo();
-      return this.compare(info.connectedClients, check.expect.operator, check.expect.value);
+      return compareCheckValue(info.connectedClients, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('blocked_clients')) {
       const info = await this.getInfo();
-      return this.compare(info.blockedClients, check.expect.operator, check.expect.value);
+      return compareCheckValue(info.blockedClients, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('evicted_keys')) {
       const info = await this.getInfo();
-      return this.compare(info.evictedKeys, check.expect.operator, check.expect.value);
+      return compareCheckValue(info.evictedKeys, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'CONFIG GET maxmemory-policy') {
       const result = await this.client.config('GET', 'maxmemory-policy');
       const value = Array.isArray(result) ? result[1] : result;
-      return this.compare(value, check.expect.operator, check.expect.value);
+      return compareCheckValue(value, check.expect.operator, check.expect.value);
     }
 
     // For INFO-based checks, parse the specific field
@@ -376,30 +377,6 @@ export class RedisLiveClient implements RedisBackend {
     return result;
   }
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }
 
 export interface ParsedClient {

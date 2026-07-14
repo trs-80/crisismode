@@ -12,6 +12,7 @@ import { tryImportAws } from '../aws-common.js';
 import type { DynamoDbRecoveryBackend, TableBackupConfig } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 /** Dynamically-imported AWS SDK module shape. */
 interface DynamoDbSdkModule {
@@ -123,7 +124,7 @@ export class DynamoDbRecoveryLiveClient implements DynamoDbRecoveryBackend {
     if (stmt.includes('pitr_status') || stmt.includes('continuous_backups_status')) {
       const config = await this.getTableBackupConfig();
       const actual = config.pitrEnabled ? 'ENABLED' : 'DISABLED';
-      return this.compare(actual, check.expect.operator, check.expect.value);
+      return compareCheckValue(actual, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -151,28 +152,4 @@ export class DynamoDbRecoveryLiveClient implements DynamoDbRecoveryBackend {
     this.client = null;
   }
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

@@ -13,6 +13,7 @@ import pg, { type Pool as PoolType } from 'pg';
 import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 const { Pool } = pg;
 
@@ -206,13 +207,13 @@ export class PgLiveClient implements PgBackend {
       const pool = this.poolFor(check.parameters);
       const result = await pool.query(check.statement);
       if (result.rows.length === 0) {
-        return this.compare(0, check.expect.operator, check.expect.value);
+        return compareCheckValue(0, check.expect.operator, check.expect.value);
       }
 
       // The query should return a single value (count, boolean, etc.)
       const firstRow = result.rows[0];
       const actual = Object.values(firstRow)[0];
-      return this.compare(actual, check.expect.operator, check.expect.value);
+      return compareCheckValue(actual, check.expect.operator, check.expect.value);
     } catch (err) {
       console.error(`Check evaluation failed: ${check.statement}`, err);
       return false;
@@ -330,29 +331,4 @@ export class PgLiveClient implements PgBackend {
     }
   }
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (isNaN(a) || isNaN(e)) {
-      // Fall back to string comparison for non-numeric values
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }
