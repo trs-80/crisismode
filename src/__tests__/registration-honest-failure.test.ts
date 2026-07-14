@@ -94,10 +94,13 @@ describe('tls registration', () => {
     await instance.backend.close();
   });
 
-  it('rejects default/empty hosts with a configuration error instead of simulating', async () => {
+  it('rejects default/auto/empty hosts with a configuration error instead of simulating', async () => {
     const { tlsRecoveryRegistration } = await import('../agent/tls/registration.js');
     await expect(
       tlsRecoveryRegistration.createAgent(target('tls', 'default', 443)),
+    ).rejects.toThrow(/requires an endpoint host/);
+    await expect(
+      tlsRecoveryRegistration.createAgent(target('tls', 'auto', 443)),
     ).rejects.toThrow(/requires an endpoint host/);
     await expect(
       tlsRecoveryRegistration.createAgent(target('tls', '', 443)),
@@ -120,11 +123,21 @@ describe('backup registration', () => {
     await instance.backend.close();
   });
 
-  it('uses the composite live client for live targets', async () => {
+  it('uses the composite live client for explicit backup locations', async () => {
     const { backupVerificationRegistration } = await import('../agent/backup/registration.js');
-    const instance = await backupVerificationRegistration.createAgent(target('backup', 'default'));
+    const instance = await backupVerificationRegistration.createAgent(target('backup', '/var/backups,/mnt/nas'));
     expect(instance.backend.constructor.name).toBe('BackupCompositeClient');
     await instance.backend.close();
+  });
+
+  it('rejects default/auto hosts with a configuration error instead of guessing a path', async () => {
+    const { backupVerificationRegistration } = await import('../agent/backup/registration.js');
+    await expect(
+      backupVerificationRegistration.createAgent(target('backup', 'default')),
+    ).rejects.toThrow(/requires explicit backup locations/);
+    await expect(
+      backupVerificationRegistration.createAgent(target('backup', 'auto')),
+    ).rejects.toThrow(/requires explicit backup locations/);
   });
 });
 

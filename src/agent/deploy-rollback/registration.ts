@@ -30,7 +30,10 @@ export const deployRollbackRegistration = createLiveRegistration({
       token,
       projectId,
       teamId: process.env['VERCEL_TEAM_ID'],
-      healthEndpoints: process.env['VERCEL_HEALTH_ENDPOINTS']?.split(',').filter(Boolean),
+      healthEndpoints: process.env['VERCEL_HEALTH_ENDPOINTS']
+        ?.split(',')
+        .map((endpoint) => endpoint.trim())
+        .filter((endpoint) => endpoint.length > 0),
     });
   },
 });

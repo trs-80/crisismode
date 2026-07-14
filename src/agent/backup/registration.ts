@@ -20,11 +20,15 @@ export const backupVerificationRegistration = createLiveRegistration({
   buildLiveBackend: async (target) => {
     const providers: BackupProvider[] = [];
 
+    if (target.primary.host === 'default' || target.primary.host === 'auto') {
+      throw new Error(
+        "backup target requires explicit backup locations (e.g. host: /var/backups,/mnt/nas). Use host: 'simulator' for demo mode.",
+      );
+    }
+
     // Always include filesystem provider
     const { BackupLiveClient } = await import('./live-client.js');
-    const locations = target.primary.host !== 'default' && target.primary.host !== 'auto'
-      ? target.primary.host.split(',').map((loc) => loc.trim())
-      : ['/var/backups'];
+    const locations = target.primary.host.split(',').map((loc) => loc.trim());
     const liveClient = new BackupLiveClient({ locations });
     providers.push(liveClient.asProvider());
 

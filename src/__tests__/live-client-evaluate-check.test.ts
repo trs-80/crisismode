@@ -334,17 +334,37 @@ describe('S3RecoveryLiveClient evaluateCheck', () => {
     expect(await client.evaluateCheck(check('bucket_exists', 'eq', 'false'))).toBe(false);
   });
 
-  it('bucket_exists reports false when HeadBucket throws', async () => {
+  it('bucket_exists reports false when HeadBucket returns 404', async () => {
     class HeadBucketCommand {
       constructor(public input: unknown) {}
     }
+    const notFound = Object.assign(new Error('bucket not found'), {
+      name: 'NotFound',
+      $metadata: { httpStatusCode: 404 },
+    });
     const client = await makeClient({
       config: { bucket: 'missing-bucket' },
       getS3Module: vi.fn().mockResolvedValue({ HeadBucketCommand }),
-      getClient: vi.fn().mockResolvedValue({ send: vi.fn().mockRejectedValue(new Error('NotFound')) }),
+      getClient: vi.fn().mockResolvedValue({ send: vi.fn().mockRejectedValue(notFound) }),
     });
     expect(await client.evaluateCheck(check('bucket_exists', 'eq', 'false'))).toBe(true);
     expect(await client.evaluateCheck(check('bucket_exists', 'eq', 'true'))).toBe(false);
+  });
+
+  it('bucket_exists rethrows non-404 HeadBucket failures instead of reporting a missing bucket', async () => {
+    class HeadBucketCommand {
+      constructor(public input: unknown) {}
+    }
+    const forbidden = Object.assign(new Error('access denied'), {
+      name: 'AccessDenied',
+      $metadata: { httpStatusCode: 403 },
+    });
+    const client = await makeClient({
+      config: { bucket: 'private-bucket' },
+      getS3Module: vi.fn().mockResolvedValue({ HeadBucketCommand }),
+      getClient: vi.fn().mockResolvedValue({ send: vi.fn().mockRejectedValue(forbidden) }),
+    });
+    await expect(client.evaluateCheck(check('bucket_exists', 'eq', 'false'))).rejects.toThrow('access denied');
   });
 });
 

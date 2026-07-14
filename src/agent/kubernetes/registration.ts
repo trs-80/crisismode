@@ -19,7 +19,9 @@ export const k8sRecoveryRegistration = createLiveRegistration({
   buildLiveBackend: async (target) => {
     const { K8sLiveClient } = await import('./live-client.js');
     const backend = new K8sLiveClient({
-      kubeconfig: target.primary.host !== 'default' ? target.primary.host : undefined,
+      kubeconfig: target.primary.host !== 'default' && target.primary.host !== 'auto'
+        ? target.primary.host
+        : undefined,
       context: target.primary.database || undefined,
       inCluster: target.primary.host === 'in-cluster',
       connectTimeoutMs: 2000,
