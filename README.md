@@ -136,10 +136,10 @@ Status legend:
 | Scenario | Agent | Status |
 |---|---|---|
 | Bad deploy rollback | Deploy Rollback | Live (execute-capable) -- Vercel, requires `VERCEL_TOKEN` |
-| AI provider degradation / failover | AI Provider | Simulator (live probing client exists, not yet wired) |
-| Database migration failures | DB Migration | Simulator (live client exists, not yet wired) |
-| Queue and worker backlog | Queue Backlog | Simulator |
-| Config and environment drift | Config Drift | Simulator (live client exists, not yet wired) |
+| AI provider degradation / failover | AI Provider | Live (execute-capable) -- not yet torture-tested |
+| Database migration failures | DB Migration | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
+| Queue and worker backlog | Queue Backlog | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
+| Config and environment drift | Config Drift | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
 
 ### Stateful Infrastructure Recovery
 
