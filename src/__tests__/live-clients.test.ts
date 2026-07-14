@@ -497,9 +497,8 @@ describe('K8s registration', () => {
     expect(health.status).toBeDefined();
   });
 
-  it('falls back to simulator when live client connection fails', async () => {
+  it('rejects (never simulates) when live client connection fails', async () => {
     const { k8sRecoveryRegistration } = await import('../agent/kubernetes/registration.js');
-    const { assembleContext } = await import('../framework/context.js');
     const target = {
       name: 'test-k8s',
       kind: 'kubernetes',
@@ -508,13 +507,9 @@ describe('K8s registration', () => {
       replicas: [],
       credentials: { username: '', password: '' },
     };
-    const result = await k8sRecoveryRegistration.createAgent(target);
-    // Should succeed (fell back to simulator) — not throw
-    expect(result.agent).toBeDefined();
-    const trigger = { type: 'manual' as const, source: 'test', payload: {}, receivedAt: new Date().toISOString() };
-    const context = assembleContext(trigger, k8sRecoveryRegistration.manifest);
-    const health = await result.agent.assessHealth(context);
-    expect(health.status).toBeDefined();
+    // Connection failures propagate so scan reports an honest "could not
+    // connect" finding instead of silently substituting simulated data.
+    await expect(k8sRecoveryRegistration.createAgent(target)).rejects.toThrow();
   });
 });
 
