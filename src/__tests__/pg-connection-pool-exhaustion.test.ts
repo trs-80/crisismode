@@ -59,6 +59,18 @@ describe('PgReplicationAgent — connection_pool_exhaustion', () => {
       expect(result.scenario).not.toBe('connection_pool_exhaustion');
     });
 
+    it('does not trigger when idle-in-tx sessions are all younger than the terminate threshold (nothing the plan could act on)', async () => {
+      const simulator = new PgSimulator();
+      // >90% utilization and many idle-in-tx contributors, but every session
+      // is 30s old — below IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS,
+      // so the recovery plan's terminate step would target zero sessions.
+      simulator.setConnectionPoolExhausted(20, 4, 30);
+      const agent = new PgReplicationAgent(simulator);
+      const context = makeContext(agent);
+      const result = await agent.diagnose(context);
+      expect(result.scenario).not.toBe('connection_pool_exhaustion');
+    });
+
     it('precedence: connection_pool_exhaustion takes priority over wal_replay_paused when both are true, and notes the co-occurring replay pause', async () => {
       const simulator = new PgSimulator();
       simulator.setConnectionPoolExhausted();

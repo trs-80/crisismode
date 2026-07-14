@@ -312,9 +312,16 @@ export class PgReplicationAgent implements RecoveryAgent {
   private isConnectionPoolExhausted(usage: ConnectionUsage): boolean {
     if (usage.max <= 0) return false;
     const utilization = usage.total / usage.max;
+    // Count only sessions old enough for the plan's terminate step to target:
+    // younger idle-in-transaction sessions are ordinary load the recovery
+    // could not act on, so diagnosing exhaustion from them would produce a
+    // no-op plan.
+    const staleContributors = usage.idleInTransactionOldest.filter(
+      (s) => s.ageSeconds >= IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS,
+    ).length;
     return (
       utilization > CONNECTION_USAGE_CRITICAL_RATIO &&
-      usage.idleInTransactionOldest.length >= MIN_IDLE_IN_TRANSACTION_CONTRIBUTORS
+      staleContributors >= MIN_IDLE_IN_TRANSACTION_CONTRIBUTORS
     );
   }
 
