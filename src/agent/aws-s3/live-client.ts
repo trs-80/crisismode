@@ -179,8 +179,16 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
       try {
         await client.send(new s3.HeadBucketCommand({ Bucket: this.config.bucket }));
         return compareCheckValue('true', check.expect.operator, check.expect.value);
-      } catch {
-        return compareCheckValue('false', check.expect.operator, check.expect.value);
+      } catch (err) {
+        // Only a confirmed 404 means the bucket is missing. Auth failures,
+        // throttling, and timeouts must surface as probe errors, not as a
+        // false "bucket does not exist" finding.
+        const status = (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+        const name = err instanceof Error ? err.name : '';
+        if (status === 404 || name === 'NotFound' || name === 'NoSuchBucket') {
+          return compareCheckValue('false', check.expect.operator, check.expect.value);
+        }
+        throw err;
       }
     }
 

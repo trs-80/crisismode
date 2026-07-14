@@ -17,7 +17,7 @@ export const tlsRecoveryRegistration = createLiveRegistration({
     return TlsSimulator as never;
   },
   buildLiveBackend: async (target) => {
-    if (target.primary.host === 'default' || target.primary.host === '') {
+    if (target.primary.host === 'default' || target.primary.host === 'auto' || target.primary.host === '') {
       throw new Error(
         "tls target requires an endpoint host to inspect (e.g. host: example.com). Use host: 'simulator' for demo mode.",
       );
