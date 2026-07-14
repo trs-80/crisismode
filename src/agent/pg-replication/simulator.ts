@@ -4,6 +4,7 @@
 import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage, IdleInTransactionSession } from './backend.js';
 import type { Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
@@ -241,22 +242,22 @@ export class PgSimulator implements PgBackend {
 
     if (stmt.includes('pg_stat_replication') && stmt.includes("client_addr = '10.0.1.52'") && stmt.includes("state = 'streaming'")) {
       const count = this.state === 'degraded' ? 1 : this.state === 'recovered' ? 1 : 0;
-      return this.compareValue(count, check.expect.operator, check.expect.value);
+      return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('pg_stat_replication') && stmt.includes("client_addr = '10.0.1.52'") && !stmt.includes("state = 'streaming'")) {
       const count = this.state === 'recovered' ? 1 : this.state === 'degraded' ? 1 : 0;
-      return this.compareValue(count, check.expect.operator, check.expect.value);
+      return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('replay_lag') && stmt.includes("client_addr = '10.0.1.52'")) {
       const count = this.state === 'recovered' ? 1 : 0;
-      return this.compareValue(count, check.expect.operator, check.expect.value);
+      return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('pg_is_wal_replay_paused')) {
       const paused = this.replayPaused ? 1 : 0;
-      return this.compareValue(paused, check.expect.operator, check.expect.value);
+      return compareCheckValue(paused, check.expect.operator, check.expect.value);
     }
 
     // Idle-in-transaction count vs. an age threshold — used for both the
@@ -266,7 +267,7 @@ export class PgSimulator implements PgBackend {
     // threshold the plan embedded.
     if (stmt.includes('pg_stat_activity') && stmt.includes('idle in transaction') && stmt.toLowerCase().includes('count(')) {
       const count = this.countStaleIdleInTx(stmt);
-      return this.compareValue(count, check.expect.operator, check.expect.value);
+      return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
     if (check.type === 'structured_command' && check.expect.operator === 'eq') {
@@ -375,17 +376,4 @@ export class PgSimulator implements PgBackend {
     // No-op for simulator
   }
 
-  private compareValue(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

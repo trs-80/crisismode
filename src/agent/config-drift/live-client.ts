@@ -21,6 +21,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -321,24 +322,24 @@ export class ConfigDriftLiveClient implements ConfigDriftBackend {
 
     if (stmt === 'config_drift_count') {
       const diffs = await this.getConfigDiff();
-      return this.compare(diffs.length, check.expect.operator, check.expect.value);
+      return compareCheckValue(diffs.length, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'expired_secrets_count') {
       const secrets = await this.getSecretStatus();
       const expiredCount = secrets.filter((s) => s.expired).length;
-      return this.compare(expiredCount, check.expect.operator, check.expect.value);
+      return compareCheckValue(expiredCount, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'env_var_mismatches') {
       const diffs = await this.getConfigDiff();
       const envMismatches = diffs.filter((d) => d.source === 'env').length;
-      return this.compare(envMismatches, check.expect.operator, check.expect.value);
+      return compareCheckValue(envMismatches, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'all_configs_aligned') {
       const diffs = await this.getConfigDiff();
-      return this.compare(diffs.length === 0, check.expect.operator, check.expect.value);
+      return compareCheckValue(diffs.length === 0, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -381,28 +382,4 @@ export class ConfigDriftLiveClient implements ConfigDriftBackend {
     // No persistent connections to clean up.
   }
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

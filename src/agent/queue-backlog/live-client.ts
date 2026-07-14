@@ -18,6 +18,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export interface QueueLiveConfig {
   /** Redis connection URL (e.g. redis://localhost:6379) */
@@ -334,32 +335,32 @@ export class QueueLiveClient implements QueueBackend {
       try {
         const redis = await this.getRedis();
         const pong = await redis.ping();
-        return this.compare(pong === 'PONG' ? 'ok' : 'fail', check.expect.operator, check.expect.value);
+        return compareCheckValue(pong === 'PONG' ? 'ok' : 'fail', check.expect.operator, check.expect.value);
       } catch {
-        return this.compare('fail', check.expect.operator, check.expect.value);
+        return compareCheckValue('fail', check.expect.operator, check.expect.value);
       }
     }
 
     if (stmt.includes('total_queue_depth')) {
       const stats = await this.getQueueStats();
       const totalDepth = stats.reduce((sum, q) => sum + q.depth, 0);
-      return this.compare(totalDepth, check.expect.operator, check.expect.value);
+      return compareCheckValue(totalDepth, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('stuck_worker_count')) {
       const workers = await this.getWorkerStatus();
       const stuckCount = workers.filter((w) => w.status === 'stuck' || w.status === 'dead').length;
-      return this.compare(stuckCount, check.expect.operator, check.expect.value);
+      return compareCheckValue(stuckCount, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('backlog_growth_rate')) {
       const rates = await this.getProcessingRate();
-      return this.compare(rates.backlogGrowthRate, check.expect.operator, check.expect.value);
+      return compareCheckValue(rates.backlogGrowthRate, check.expect.operator, check.expect.value);
     }
 
     if (stmt.includes('dlq_depth')) {
       const dlq = await this.getDeadLetterStats();
-      return this.compare(dlq.depth, check.expect.operator, check.expect.value);
+      return compareCheckValue(dlq.depth, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -405,28 +406,4 @@ export class QueueLiveClient implements QueueBackend {
     }
   }
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

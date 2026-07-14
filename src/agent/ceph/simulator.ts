@@ -11,6 +11,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
@@ -214,22 +215,22 @@ export class CephSimulator implements CephBackend {
 
     if (stmt === 'cluster_health') {
       const status = await this.getClusterStatus();
-      return this.compare(status.health, check.expect.operator, check.expect.value);
+      return compareCheckValue(status.health, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'osd_up_count') {
       const status = await this.getClusterStatus();
-      return this.compare(status.osdUp, check.expect.operator, check.expect.value);
+      return compareCheckValue(status.osdUp, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'pg_degraded_count') {
       const status = await this.getClusterStatus();
-      return this.compare(status.pgDegraded, check.expect.operator, check.expect.value);
+      return compareCheckValue(status.pgDegraded, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'usage_percent') {
       const status = await this.getClusterStatus();
-      return this.compare(status.usagePercent, check.expect.operator, check.expect.value);
+      return compareCheckValue(status.usagePercent, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -254,28 +255,4 @@ export class CephSimulator implements CephBackend {
 
   async close(): Promise<void> {}
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

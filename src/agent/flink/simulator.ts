@@ -11,6 +11,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 
@@ -365,7 +366,7 @@ export class FlinkSimulator implements FlinkBackend {
     if (stmt === 'job_state') {
       const jobs = await this.getJobStatus();
       const currentState = jobs[0]?.state ?? 'UNKNOWN';
-      return this.compare(currentState, check.expect.operator, check.expect.value);
+      return compareCheckValue(currentState, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'checkpoint_success_rate') {
@@ -373,18 +374,18 @@ export class FlinkSimulator implements FlinkBackend {
       const completed = checkpoints.filter((cp) => cp.status === 'COMPLETED').length;
       const total = checkpoints.length;
       const rate = total > 0 ? completed / total : 0;
-      return this.compare(rate, check.expect.operator, check.expect.value);
+      return compareCheckValue(rate, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'backpressure_level') {
       const bp = await this.getBackpressure('job-abc123');
       const highCount = bp.filter((b) => b.backpressureLevel === 'high').length;
-      return this.compare(highCount, check.expect.operator, check.expect.value);
+      return compareCheckValue(highCount, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'taskmanager_count') {
       const tms = await this.getTaskManagers();
-      return this.compare(tms.length, check.expect.operator, check.expect.value);
+      return compareCheckValue(tms.length, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -414,28 +415,4 @@ export class FlinkSimulator implements FlinkBackend {
 
   async close(): Promise<void> {}
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }

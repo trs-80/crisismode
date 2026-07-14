@@ -17,6 +17,7 @@ import type {
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export interface VercelConfig {
   token: string;
@@ -225,7 +226,7 @@ export class DeployLiveClient implements DeployBackend {
       const endpoints = await this.getHealthEndpoints();
       if (endpoints.length === 0) return true;
       const maxErrorRate = Math.max(...endpoints.map((e) => e.errorRate));
-      return this.compare(maxErrorRate, check.expect.operator, check.expect.value);
+      return compareCheckValue(maxErrorRate, check.expect.operator, check.expect.value);
     }
 
     if (stmt === 'error_rate') {
@@ -233,7 +234,7 @@ export class DeployLiveClient implements DeployBackend {
       if (endpoints.length === 0) return true;
       const avgErrorRate =
         endpoints.reduce((sum, e) => sum + e.errorRate, 0) / endpoints.length;
-      return this.compare(avgErrorRate, check.expect.operator, check.expect.value);
+      return compareCheckValue(avgErrorRate, check.expect.operator, check.expect.value);
     }
 
     return true;
@@ -268,28 +269,4 @@ export class DeployLiveClient implements DeployBackend {
     // No persistent connections to clean up — uses fetch per request.
   }
 
-  private compare(actual: unknown, operator: string, expected: unknown): boolean {
-    const a = Number(actual);
-    const e = Number(expected);
-
-    if (Number.isNaN(a) || Number.isNaN(e)) {
-      const sa = String(actual);
-      const se = String(expected);
-      switch (operator) {
-        case 'eq': return sa === se;
-        case 'neq': return sa !== se;
-        default: return false;
-      }
-    }
-
-    switch (operator) {
-      case 'eq': return a === e;
-      case 'neq': return a !== e;
-      case 'gt': return a > e;
-      case 'gte': return a >= e;
-      case 'lt': return a < e;
-      case 'lte': return a <= e;
-      default: return false;
-    }
-  }
 }
