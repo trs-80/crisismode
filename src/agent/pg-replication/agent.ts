@@ -391,7 +391,13 @@ export class PgReplicationAgent implements RecoveryAgent {
     slots: import('./backend.js').ReplicationSlot[],
     connCount: number,
   ): DiagnosisResult {
-    const target = this.findWorstReplica(replStatus);
+    // Replay pause is measured over the single configured replica connection
+    // (queryReplayPaused), and the recovery resumes over that same connection.
+    // With multiple replicas in pg_stat_replication we cannot tell which entry
+    // that connection corresponds to, so only claim a specific address when
+    // exactly one replica exists — naming the worst-lagging one could
+    // misattribute the fault to a standby the recovery never touches.
+    const target = replStatus.length === 1 ? replStatus[0] : null;
     return {
       status: 'identified',
       scenario: 'wal_replay_paused',
@@ -399,7 +405,9 @@ export class PgReplicationAgent implements RecoveryAgent {
       findings: [
         {
           source: 'pg_stat_replication',
-          observation: `${replStatus.length} replicas found. Target replica ${target?.client_addr ?? 'unknown'} reports ${target?.lag_seconds ?? '?'}s of replay lag.`,
+          observation: target
+            ? `1 replica found. Target replica ${target.client_addr} reports ${target.lag_seconds}s of replay lag.`
+            : `${replStatus.length} replicas found. Replay pause was measured on the configured replica connection; per-replica attribution across multiple replicas is not supported, so no specific address is claimed.`,
           severity: 'critical',
           data: { replicas: replStatus },
         },
@@ -1096,9 +1104,15 @@ export class PgReplicationAgent implements RecoveryAgent {
    */
   private planForReplayPaused(primaryId: string, diagnosis: DiagnosisResult): RecoveryPlan {
     const replicas = (diagnosis.findings[0]?.data as { replicas: ReplicaStatus[] })?.replicas ?? [];
-    const target = this.findWorstReplica(replicas);
-    const targetAddr = target ? validateIPv4(target.client_addr) : 'unknown';
-    const targetId = `pg-replica-${targetAddr.replace(/[./]/g, '-')}`;
+    // Every replica-side step in this plan executes over the single configured
+    // replica connection (parameters.node === 'replica' → PgLiveClient's one
+    // replicaPool, built from config replicas[0]). Only claim a specific
+    // address in labels when exactly one replica exists; with several, an
+    // address picked from pg_stat_replication could name a standby this plan
+    // never touches. Per-replica selection/routing is a known follow-up.
+    const target = replicas.length === 1 ? replicas[0] : null;
+    const targetAddr = target ? validateIPv4(target.client_addr) : 'configured-replica';
+    const targetId = target ? `pg-replica-${targetAddr.replace(/[./]/g, '-')}` : 'pg-replica-configured';
     const replayStateQuery =
       'SELECT pg_is_wal_replay_paused() AS replay_paused, pg_last_wal_receive_lsn()::text AS received_lsn, pg_last_wal_replay_lsn()::text AS replayed_lsn;';
     const replicationStatusQuery =

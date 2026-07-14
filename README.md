@@ -145,7 +145,7 @@ Status legend:
 
 | System | Scenarios | Status |
 |---|---|---|
-| PostgreSQL | Replication lag, slot overflow, replica divergence | Live (execute-capable) -- see validation status below |
+| PostgreSQL | Replication lag, slot overflow, replica divergence, connection-pool exhaustion | Live (execute-capable) -- see validation status below |
 | Redis | Memory pressure, client exhaustion, slow queries, cluster health | Live (execute-capable) |
 | etcd | Leader election loop, member thrashing, snapshot corruption | Simulator |
 | Kafka | Under-replicated partitions, consumer lag cascade | Simulator |
