@@ -19,6 +19,7 @@ import { getNetworkProfile } from '../../framework/network-profile.js';
 import { printBanner, printInfo, printWarning } from '../output.js';
 import { missingEnvVar } from '../errors.js';
 import { defaultAiModel } from '../../framework/ai-model.js';
+import { callClaude } from '../../framework/ai-client.js';
 
 // ── Types ──
 
@@ -204,40 +205,25 @@ async function sendWithHistory(ctx: ReplContext, question: string): Promise<stri
     }
   }
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const messages = ctx.history.map((m) => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+  }));
 
   try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-
-    const messages = ctx.history.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
-
-    const response = await client.messages.create(
-      {
-        model: DEFAULT_MODEL,
-        max_tokens: 1024,
-        messages,
-        system: systemParts.join('\n'),
-      },
-      { signal: controller.signal },
-    );
-
-    clearTimeout(timeoutId);
-
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => ('text' in block ? block.text : ''))
-      .join('');
+    const text = await callClaude({
+      system: systemParts.join('\n'),
+      messages,
+      model: DEFAULT_MODEL,
+      maxTokens: 1024,
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+      apiKey: process.env.ANTHROPIC_API_KEY!,
+    });
 
     const trimmed = text.trim();
     ctx.history.push({ role: 'assistant', content: trimmed });
     return trimmed;
   } catch (err) {
-    clearTimeout(timeoutId);
     // Remove the user message that failed
     ctx.history.pop();
     throw err;

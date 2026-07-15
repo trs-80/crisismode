@@ -18,6 +18,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { aiCallText, type AiDiagnosisConfig } from './ai-diagnosis.js';
+import { stripCodeFence } from './ai-client.js';
 import { applyCanonicalHypothesisBackstop } from './canonical-hypothesis.js';
 import { buildPromptFromBundle, validateAdapterRequest } from './evidence-bundle-ingest.js';
 import { evidenceItemsToSignals } from './evidence-to-signals.js';
@@ -463,7 +464,7 @@ export async function respondToEvidenceBundle(
 // ── helpers ──────────────────────────────────────────────────────────
 
 function parseBriefJson(text: string): RawBrief {
-  const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  const stripped = stripCodeFence(text);
   // Tolerate AI prose before/after the JSON block by extracting the
   // outermost { ... }.
   const first = stripped.indexOf('{');

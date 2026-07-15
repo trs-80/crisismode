@@ -18,6 +18,8 @@ import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import { sanitizeInput } from './ai-diagnosis.js';
 import { getNetworkProfile } from './network-profile.js';
 import { defaultAiModel } from './ai-model.js';
+import { callClaude, stripCodeFence } from './ai-client.js';
+import { riskExceeds } from './risk.js';
 
 const DEFAULT_MODEL = defaultAiModel();
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -124,49 +126,30 @@ Confidence: ${(diagnosis.confidence * 100).toFixed(0)}%
 ## Plan
 ${JSON.stringify(planSummary, null, 2)}`);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const text = await callClaude({
+    system: systemPrompt,
+    user: userMessage,
+    model: DEFAULT_MODEL,
+    maxTokens: 1024,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    apiKey,
+  });
 
-  try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic({ apiKey });
+  const jsonStr = stripCodeFence(text);
+  const parsed = JSON.parse(jsonStr);
 
-    const response = await client.messages.create(
-      {
-        model: DEFAULT_MODEL,
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: userMessage }],
-        system: systemPrompt,
-      },
-      { signal: controller.signal },
-    );
-
-    clearTimeout(timeoutId);
-
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => 'text' in block ? block.text : '')
-      .join('');
-
-    const jsonStr = text.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
-    const parsed = JSON.parse(jsonStr);
-
-    return {
-      summary: String(parsed.summary ?? plan.metadata.summary),
-      stepExplanations: Array.isArray(parsed.stepExplanations)
-        ? parsed.stepExplanations.map((se: Record<string, unknown>) => ({
-            stepId: String(se.stepId ?? ''),
-            name: String(se.name ?? ''),
-            explanation: String(se.explanation ?? ''),
-          }))
-        : plan.steps.map((s) => ({ stepId: s.stepId, name: s.name, explanation: '' })),
-      risks: Array.isArray(parsed.risks) ? parsed.risks.map(String) : [],
-      source: 'ai' as const,
-    };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw err;
-  }
+  return {
+    summary: String(parsed.summary ?? plan.metadata.summary),
+    stepExplanations: Array.isArray(parsed.stepExplanations)
+      ? parsed.stepExplanations.map((se: Record<string, unknown>) => ({
+          stepId: String(se.stepId ?? ''),
+          name: String(se.name ?? ''),
+          explanation: String(se.explanation ?? ''),
+        }))
+      : plan.steps.map((s) => ({ stepId: s.stepId, name: s.name, explanation: '' })),
+    risks: Array.isArray(parsed.risks) ? parsed.risks.map(String) : [],
+    source: 'ai' as const,
+  };
 }
 
 /**
@@ -205,7 +188,7 @@ function buildFallbackExplanation(
   });
 
   const elevatedSteps = plan.steps.filter(
-    (s) => s.type === 'system_action' && ['elevated', 'high', 'critical'].includes(s.riskLevel),
+    (s) => s.type === 'system_action' && riskExceeds(s.riskLevel, 'routine'),
   );
 
   const risks: string[] = [];

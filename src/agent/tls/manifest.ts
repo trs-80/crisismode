@@ -2,23 +2,27 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { AgentManifest } from '../../types/manifest.js';
+import {
+  MANIFEST_API_VERSION,
+  RECOVERY_AGENT_COMPATIBILITY_MODE,
+  defaultManifestMetadata,
+} from '../../framework/manifest-defaults.js';
 
 export const tlsManifest: AgentManifest = {
-  apiVersion: 'v0.2.1',
+  apiVersion: MANIFEST_API_VERSION,
   kind: 'AgentManifest',
   metadata: {
     name: 'tls-certificate-recovery',
     version: '1.0.0',
     description:
       'Detects and alerts on TLS certificate issues including expiration, chain validation failures, hostname mismatches, and weak cryptographic configurations.',
-    authors: ['SRE Team <sre@example.com>'],
-    license: 'Apache-2.0',
+    ...defaultManifestMetadata(),
     tags: ['tls', 'ssl', 'certificate', 'expiry', 'security'],
     plugin: {
       id: 'tls.certificate',
       kind: 'domain_pack',
       maturity: 'live_validated',
-      compatibilityMode: 'recovery_agent',
+      compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
     },
   },
   spec: {

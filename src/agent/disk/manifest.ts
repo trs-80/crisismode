@@ -2,23 +2,27 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { AgentManifest } from '../../types/manifest.js';
+import {
+  MANIFEST_API_VERSION,
+  RECOVERY_AGENT_COMPATIBILITY_MODE,
+  defaultManifestMetadata,
+} from '../../framework/manifest-defaults.js';
 
 export const diskManifest: AgentManifest = {
-  apiVersion: 'v0.2.1',
+  apiVersion: MANIFEST_API_VERSION,
   kind: 'AgentManifest',
   metadata: {
     name: 'disk-exhaustion-recovery',
     version: '1.0.0',
     description:
       'Detects and alerts on local disk exhaustion including filesystem full, inode exhaustion, log directory bloat, and boot partition issues.',
-    authors: ['SRE Team <sre@example.com>'],
-    license: 'Apache-2.0',
+    ...defaultManifestMetadata(),
     tags: ['disk', 'storage', 'filesystem', 'inode', 'log-rotation'],
     plugin: {
       id: 'disk.exhaustion',
       kind: 'domain_pack',
       maturity: 'live_validated',
-      compatibilityMode: 'recovery_agent',
+      compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
     },
   },
   spec: {

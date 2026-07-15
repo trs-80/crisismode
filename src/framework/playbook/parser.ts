@@ -11,8 +11,9 @@ import type {
   PlaybookValidationError,
   PlaybookValidationResult,
 } from './types.js';
+import { RISK_ORDER } from '../risk.js';
 
-const VALID_SEVERITIES = ['routine', 'elevated', 'high', 'critical'] as const;
+const VALID_SEVERITIES = RISK_ORDER;
 
 const SNAKE_TO_CAMEL: Record<string, keyof PlaybookStep> = {
   type: 'type',

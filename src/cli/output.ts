@@ -62,7 +62,8 @@ export function getOutputMode(): OutputMode {
   return outputOptions.mode;
 }
 
-function jsonOut(type: string, data: unknown): void {
+/** Emit one JSONL record in the machine-output shape ({ type, ...data }). */
+export function jsonOut(type: string, data: unknown): void {
   console.log(JSON.stringify({ type, ...data as Record<string, unknown> }));
 }
 

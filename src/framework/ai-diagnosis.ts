@@ -19,6 +19,7 @@
 import type { DiagnosisResult, DiagnosisFinding } from '../types/diagnosis-result.js';
 import { isInternetAvailable, getNetworkProfile } from './network-profile.js';
 import { defaultAiModel } from './ai-model.js';
+import { callClaude, stripCodeFence } from './ai-client.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_FIELD_LENGTH = 10_000;
@@ -75,7 +76,7 @@ export function sanitizeInput(text: string, maxLength: number = MAX_FIELD_LENGTH
  */
 export function parseStandardDiagnosisResponse(text: string): DiagnosisResult {
   // Strip markdown code fences if present
-  const jsonStr = text.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
+  const jsonStr = stripCodeFence(text);
   const parsed: AiRawResponse = JSON.parse(jsonStr);
 
   const findings: DiagnosisFinding[] = (parsed.findings ?? []).map((f) => ({
@@ -131,36 +132,16 @@ export async function aiCallText(
   const sanitizedSystem = sanitizeInput(systemPrompt, 5000);
   const sanitizedUser = sanitizeInput(userMessage, MAX_FIELD_LENGTH);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic({ apiKey });
-
-    const response = await client.messages.create(
-      {
-        model,
-        max_tokens: maxTokens,
-        // No sampling parameters: current Claude models reject non-default
-        // temperature/top_p. Determinism-sensitive consumers (the bundle
-        // judge matches canonical hypothesis phrasing) rely on prompt
-        // wording instead.
-        messages: [{ role: 'user', content: sanitizedUser }],
-        system: sanitizedSystem,
-      },
-      { signal: controller.signal },
-    );
-
-    clearTimeout(timeoutId);
-
-    return response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => ('text' in block ? block.text : ''))
-      .join('');
+    return await callClaude({
+      system: sanitizedSystem,
+      user: sanitizedUser,
+      model,
+      maxTokens,
+      timeoutMs,
+      apiKey,
+    });
   } catch (err) {
-    clearTimeout(timeoutId);
-
     if (err instanceof Error && err.name === 'AbortError') {
       console.error(`AI call timed out after ${timeoutMs}ms`);
     } else {

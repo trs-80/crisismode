@@ -19,6 +19,7 @@ import { sanitizeInput } from './ai-diagnosis.js';
 import type { StackProfile } from '../cli/autodiscovery.js';
 import { PKG_TO_SERVICE, pkgsForService } from '../config/service-registry.js';
 import { defaultAiModel } from './ai-model.js';
+import { callClaude } from './ai-client.js';
 
 // ── Types ──
 
@@ -521,52 +522,33 @@ async function callRoutingAi(
 
   const userMessage = sanitizeInput(parts.join('\n'));
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15_000);
+  const text = await callClaude({
+    system: ROUTING_SYSTEM_PROMPT,
+    user: userMessage,
+    model: defaultAiModel(),
+    maxTokens: 512,
+    timeoutMs: 15_000,
+    apiKey,
+  });
 
-  try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic({ apiKey });
+  const parsed = JSON.parse(text.trim()) as {
+    scenarios?: Array<{ scenario: string; agentKind: string; confidence: number; reasoning: string }>;
+    explanation?: string;
+  };
 
-    const response = await client.messages.create(
-      {
-        model: defaultAiModel(),
-        max_tokens: 512,
-        messages: [{ role: 'user', content: userMessage }],
-        system: ROUTING_SYSTEM_PROMPT,
-      },
-      { signal: controller.signal },
-    );
+  const scenarios: ScoredScenario[] = (parsed.scenarios ?? []).map((s) => ({
+    scenario: s.scenario,
+    agentKind: s.agentKind,
+    confidence: Math.round(Math.min(Math.max(s.confidence, 0), 1) * 100) / 100,
+    reasoning: s.reasoning,
+  }));
 
-    clearTimeout(timeoutId);
-
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => ('text' in block ? block.text : ''))
-      .join('');
-
-    const parsed = JSON.parse(text.trim()) as {
-      scenarios?: Array<{ scenario: string; agentKind: string; confidence: number; reasoning: string }>;
-      explanation?: string;
-    };
-
-    const scenarios: ScoredScenario[] = (parsed.scenarios ?? []).map((s) => ({
-      scenario: s.scenario,
-      agentKind: s.agentKind,
-      confidence: Math.round(Math.min(Math.max(s.confidence, 0), 1) * 100) / 100,
-      reasoning: s.reasoning,
-    }));
-
-    return {
-      scenarios,
-      recommendedAgent: scenarios[0]?.agentKind ?? null,
-      explanation: parsed.explanation ?? 'AI routing completed.',
-      evidence: [`user question: "${question}"`],
-    };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw err;
-  }
+  return {
+    scenarios,
+    recommendedAgent: scenarios[0]?.agentKind ?? null,
+    explanation: parsed.explanation ?? 'AI routing completed.',
+    evidence: [`user question: "${question}"`],
+  };
 }
 
 function buildAiFallback(

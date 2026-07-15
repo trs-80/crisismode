@@ -40,7 +40,7 @@ import type {
   HumanNotificationStep,
   RecoveryStep,
 } from '../types/step-types.js';
-import type { RiskLevel } from '../types/common.js';
+import { riskExceeds } from './risk.js';
 
 const ADAPTER_AGENT_NAME = 'bundle-adapter';
 const ADAPTER_AGENT_VERSION = '0.1.0';
@@ -339,12 +339,8 @@ function deriveRollbackStrategy(steps: RecoveryStep[]): RollbackStrategy {
 
 function hasElevatedOrHigher(steps: RecoveryStep[]): boolean {
   return steps.some(
-    (s) => s.type === 'system_action' && riskExceedsRoutine(s.riskLevel),
+    (s) => s.type === 'system_action' && riskExceeds(s.riskLevel, 'routine'),
   );
-}
-
-function riskExceedsRoutine(risk: RiskLevel): boolean {
-  return risk === 'elevated' || risk === 'high' || risk === 'critical';
 }
 
 function buildNotificationStep(

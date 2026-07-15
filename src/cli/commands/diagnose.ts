@@ -9,19 +9,18 @@
 import { assembleContext } from '../../framework/context.js';
 import { applyEnvironmentGuard } from '../../framework/environment-guard.js';
 import { buildOperatorSummary } from '../../framework/operator-summary.js';
-import { loadConfig, parseCliFlags } from '../../config/loader.js';
+import { parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
-import { detectServices } from '../detect.js';
+import { loadConfigWithLocalTargets } from '../runtime.js';
 import { probeNetwork } from '../../framework/network-profile.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution } from '../../framework/check-plugin.js';
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 import {
   printBanner, printHealthStatus, printDiagnosis, printOperatorSummary,
-  printInfo, printSuccess, printWarning, printDetection, printNetworkProfile,
+  printInfo, printSuccess, printWarning, printNetworkProfile,
 } from '../output.js';
 import { noConfig, formatError } from '../errors.js';
-import { mergeLocalTargets } from '../local-agents.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { CheckDiagnoseResult } from '../../framework/check-plugin.js';
 
@@ -42,31 +41,8 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     }
   }
 
-  // Load config or detect
-  let config;
-  let source: string;
-  try {
-    const result = loadConfig(opts.configPath !== undefined ? { configPath: opts.configPath } : {});
-    config = result.config;
-    source = result.source === 'file' ? result.filePath ?? 'crisismode.yaml' : 'env-var fallback';
-  } catch {
-    // No config — try detection
-    printInfo('No configuration found, scanning localhost...');
-    const services = await detectServices();
-    printDetection(services);
-
-    const detected = services.filter((s) => s.detected);
-
-    // Build config from detection (may be empty — local agents fill the gap)
-    config = buildConfigFromDetection(detected);
-    source = 'auto-detected';
-  }
-
-  // Inject local health agents (DNS, disk) so they work without explicit config
-  config = { ...config, targets: mergeLocalTargets(config.targets) };
-
-  printInfo(`Config: ${source}`);
-  console.log('');
+  // Load config or detect (injects local health agents, prints Config: line)
+  const { config } = await loadConfigWithLocalTargets(opts);
 
   // Probe network connectivity (runs in parallel with agent setup)
   const targetProbes = config.targets
@@ -206,19 +182,4 @@ async function runPluginDiagnose(pluginIndex: number): Promise<void> {
     if (docs.learnMoreUrl) printInfo(`Learn more: ${docs.learnMoreUrl}`);
   }
   console.log('');
-}
-
-function buildConfigFromDetection(detected: Array<{ kind: string; host: string; port: number }>) {
-  return {
-    apiVersion: 'crisismode/v1' as const,
-    kind: 'SiteConfig' as const,
-    metadata: { name: 'auto-detected', environment: 'development' as const },
-    targets: detected.map((s) => ({
-      name: `detected-${s.kind}`,
-      kind: s.kind,
-      primary: { host: s.host, port: s.port },
-      replicas: [] as Array<{ host: string; port: number }>,
-      credentials: { type: 'value' as const, username: '', password: '' },
-    })),
-  };
 }
