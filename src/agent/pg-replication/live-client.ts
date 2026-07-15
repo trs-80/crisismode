@@ -131,7 +131,7 @@ export class PgLiveClient implements PgBackend {
       FROM pg_stat_activity
       WHERE state IS NOT NULL
     `);
-    return result.rows[0].count;
+    return result.rows[0]!.count;
   }
 
   /**
@@ -211,7 +211,7 @@ export class PgLiveClient implements PgBackend {
       }
 
       // The query should return a single value (count, boolean, etc.)
-      const firstRow = result.rows[0];
+      const firstRow = result.rows[0]!;
       const actual = Object.values(firstRow)[0];
       return compareCheckValue(actual, check.expect.operator, check.expect.value);
     } catch (err) {
@@ -266,7 +266,7 @@ export class PgLiveClient implements PgBackend {
 
   async discoverVersion(): Promise<string> {
     const result = await this.primaryPool.query<{ server_version: string }>('SHOW server_version');
-    return result.rows[0].server_version;
+    return result.rows[0]!.server_version;
   }
 
   async close(): Promise<void> {
@@ -319,7 +319,7 @@ export class PgLiveClient implements PgBackend {
           ) AS lag_seconds
       `);
 
-      const row = result.rows[0];
+      const row = result.rows[0]!;
       return {
         isInRecovery: row.is_in_recovery,
         receivedLsn: row.received_lsn,

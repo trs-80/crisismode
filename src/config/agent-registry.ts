@@ -111,7 +111,7 @@ export class AgentRegistry {
     if (this.targets.length === 0) {
       throw new Error('No targets configured');
     }
-    return this.createForTarget(this.targets[0].name);
+    return this.createForTarget(this.targets[0]!.name);
   }
 
   /**
@@ -177,7 +177,7 @@ export class AgentRegistry {
       );
     }
 
-    return compatible[0].createAgent(target);
+    return compatible[0]!.createAgent(target);
   }
 
   /**

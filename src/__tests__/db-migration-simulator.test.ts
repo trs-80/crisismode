@@ -68,8 +68,9 @@ describe('DbMigrationSimulator', () => {
       const sim = new DbMigrationSimulator();
       const queries = await sim.getActiveQueries();
       expect(queries).toHaveLength(4);
-      expect(queries[0].state).toBe('idle in transaction (aborted)');
-      expect(queries[0].waitEvent).toBe('Lock');
+      const query = queries[0]!;
+      expect(query.state).toBe('idle in transaction (aborted)');
+      expect(query.waitEvent).toBe('Lock');
     });
 
     it('returns 1 query in recovering', async () => {
@@ -77,7 +78,7 @@ describe('DbMigrationSimulator', () => {
       sim.transition('recovering');
       const queries = await sim.getActiveQueries();
       expect(queries).toHaveLength(1);
-      expect(queries[0].state).toBe('active');
+      expect(queries[0]!.state).toBe('active');
     });
 
     it('returns 0 queries in recovered', async () => {
@@ -96,9 +97,10 @@ describe('DbMigrationSimulator', () => {
       const sim = new DbMigrationSimulator();
       const locks = await sim.getTableLockInfo();
       expect(locks).toHaveLength(3);
-      expect(locks[0].lockType).toBe('AccessExclusiveLock');
-      expect(locks[0].granted).toBe(true);
-      expect(locks[1].granted).toBe(false);
+      const lock = locks[0]!;
+      expect(lock.lockType).toBe('AccessExclusiveLock');
+      expect(lock.granted).toBe(true);
+      expect(locks[1]!.granted).toBe(false);
     });
 
     it('returns no locks in recovering', async () => {
@@ -286,8 +288,8 @@ describe('DbMigrationSimulator', () => {
       const sim = new DbMigrationSimulator();
       const providers = sim.listCapabilityProviders();
       expect(providers).toHaveLength(2);
-      expect(providers[0].id).toBe('db-migration-simulator-read');
-      expect(providers[1].id).toBe('db-migration-simulator-write');
+      expect(providers[0]!.id).toBe('db-migration-simulator-read');
+      expect(providers[1]!.id).toBe('db-migration-simulator-write');
     });
   });
 

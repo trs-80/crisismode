@@ -341,7 +341,7 @@ describe('routeBySymptoms', () => {
     ];
     const result = routeBySymptoms(signals);
     for (let i = 1; i < result.scenarios.length; i++) {
-      expect(result.scenarios[i - 1].confidence).toBeGreaterThanOrEqual(result.scenarios[i].confidence);
+      expect(result.scenarios[i - 1]!.confidence).toBeGreaterThanOrEqual(result.scenarios[i]!.confidence);
     }
   });
 
@@ -373,11 +373,11 @@ describe('collectSignalsFromStack', () => {
 
     const signals = await collectSignalsFromStack(profile);
     expect(signals).toHaveLength(1);
-    expect(signals[0].type).toBe('connection');
-    expect(signals[0].severity).toBe('critical');
-    expect(signals[0].source).toContain('DATABASE_URL');
-    expect(signals[0].detail).toContain('not reachable');
-    expect(signals[0].detail).toContain('postgresql');
+    expect(signals[0]!.type).toBe('connection');
+    expect(signals[0]!.severity).toBe('critical');
+    expect(signals[0]!.source).toContain('DATABASE_URL');
+    expect(signals[0]!.detail).toContain('not reachable');
+    expect(signals[0]!.detail).toContain('postgresql');
   });
 
   it('emits config_mismatch signal when dependency found but no env var and no service', async () => {
@@ -389,11 +389,11 @@ describe('collectSignalsFromStack', () => {
 
     const signals = await collectSignalsFromStack(profile);
     expect(signals).toHaveLength(1);
-    expect(signals[0].type).toBe('config_mismatch');
-    expect(signals[0].severity).toBe('warning');
-    expect(signals[0].source).toContain('pg');
-    expect(signals[0].detail).toContain('pg');
-    expect(signals[0].detail).toContain('postgresql');
+    expect(signals[0]!.type).toBe('config_mismatch');
+    expect(signals[0]!.severity).toBe('warning');
+    expect(signals[0]!.source).toContain('pg');
+    expect(signals[0]!.detail).toContain('pg');
+    expect(signals[0]!.detail).toContain('postgresql');
   });
 
   it('emits config_mismatch signal for AI provider SDK without API key', async () => {
@@ -403,10 +403,10 @@ describe('collectSignalsFromStack', () => {
 
     const signals = await collectSignalsFromStack(profile);
     expect(signals).toHaveLength(1);
-    expect(signals[0].type).toBe('config_mismatch');
-    expect(signals[0].severity).toBe('info');
-    expect(signals[0].source).toContain('openai');
-    expect(signals[0].detail).toContain('OPENAI_API_KEY');
+    expect(signals[0]!.type).toBe('config_mismatch');
+    expect(signals[0]!.severity).toBe('info');
+    expect(signals[0]!.source).toContain('openai');
+    expect(signals[0]!.detail).toContain('OPENAI_API_KEY');
   });
 
   it('returns empty signals for a clean profile with no issues', async () => {

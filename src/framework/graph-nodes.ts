@@ -119,7 +119,7 @@ export function makeCheckpointNode(step: RecoveryStep & { type: 'checkpoint' }, 
     });
 
     const requiredFailed = captureResults.some(
-      (r, i) => r.status === 'failed' && step.stateCaptures[i].capturePolicy === 'required',
+      (r, i) => r.status === 'failed' && step.stateCaptures[i]!.capturePolicy === 'required',
     );
 
     const captures: Record<string, unknown> = {};
@@ -198,7 +198,7 @@ export function makeSystemActionNode(step: SystemActionStep, ctx: GraphNodeConte
     // Execute before captures
     const beforeCaptures = step.statePreservation.before.map((capture) => executeCapture(capture));
     const requiredBeforeFailed = beforeCaptures.some(
-      (r, i) => r.status === 'failed' && step.statePreservation.before[i].capturePolicy === 'required',
+      (r, i) => r.status === 'failed' && step.statePreservation.before[i]!.capturePolicy === 'required',
     );
     if (requiredBeforeFailed) {
       return {

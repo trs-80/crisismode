@@ -502,7 +502,7 @@ export function generatePostmortemDraft(ctx: NotificationContext): PostmortemDra
 
 function formatDate(iso: string): string {
   try {
-    return new Date(iso).toISOString().split('T')[0];
+    return new Date(iso).toISOString().split('T')[0]!;
   } catch {
     return iso;
   }

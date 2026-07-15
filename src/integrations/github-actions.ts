@@ -134,7 +134,7 @@ export class GitHubActionsIntegration {
     let prNumber: number | null = null;
     const refMatch = process.env.GITHUB_REF?.match(/^refs\/pull\/(\d+)\//);
     if (refMatch) {
-      prNumber = parseInt(refMatch[1], 10);
+      prNumber = parseInt(refMatch[1]!, 10);
     }
 
     return {

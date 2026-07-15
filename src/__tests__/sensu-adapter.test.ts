@@ -188,8 +188,8 @@ describe('parseSensuMetrics', () => {
       'graphite_plaintext',
     );
     expect(metrics).toHaveLength(2);
-    expect(metrics[0].name).toBe('cpu.usage');
-    expect(metrics[1].name).toBe('memory.used');
+    expect(metrics[0]!.name).toBe('cpu.usage');
+    expect(metrics[1]!.name).toBe('memory.used');
   });
 
   it('dispatches to influxdb parser', () => {
@@ -198,7 +198,7 @@ describe('parseSensuMetrics', () => {
       'influxdb_line',
     );
     expect(metrics).toHaveLength(1);
-    expect(metrics[0].name).toBe('cpu.usage');
+    expect(metrics[0]!.name).toBe('cpu.usage');
   });
 
   it('dispatches to opentsdb parser', () => {
@@ -207,7 +207,7 @@ describe('parseSensuMetrics', () => {
       'opentsdb_line',
     );
     expect(metrics).toHaveLength(1);
-    expect(metrics[0].name).toBe('sys.cpu.user');
+    expect(metrics[0]!.name).toBe('sys.cpu.user');
   });
 
   it('dispatches to prometheus parser', () => {
@@ -216,7 +216,7 @@ describe('parseSensuMetrics', () => {
       'prometheus_text',
     );
     expect(metrics).toHaveLength(1);
-    expect(metrics[0].name).toBe('process_cpu_seconds_total');
+    expect(metrics[0]!.name).toBe('process_cpu_seconds_total');
   });
 
   it('handles empty lines', () => {
@@ -255,8 +255,8 @@ describe('parseSensuOutput', () => {
     expect(result.healthStatus).toBe('healthy');
     expect(result.format).toBe('nagios_perfdata');
     expect(result.metrics).toHaveLength(1);
-    expect(result.metrics[0].name).toBe('/');
-    expect(result.metrics[0].value).toBe(2643);
+    expect(result.metrics[0]!.name).toBe('/');
+    expect(result.metrics[0]!.value).toBe(2643);
   });
 
   it('graphite format parses all lines as metrics', () => {
@@ -304,7 +304,7 @@ describe('parseSensuOutput', () => {
     expect(result.format).toBe('prometheus_text');
     expect(result.exitStatus).toBe('warning');
     expect(result.metrics).toHaveLength(1);
-    expect(result.metrics[0].name).toBe('node_load1');
+    expect(result.metrics[0]!.name).toBe('node_load1');
     // statusText should be the first data line, NOT the # HELP comment
     expect(result.statusText).toBe('node_load1 0.85');
     expect(result.statusText).not.toContain('# HELP');
@@ -336,8 +336,8 @@ describe('sensuToHealthResult', () => {
     expect(result.status).toBe('recovering');
     expect(result.confidence).toBe(0.85);
     expect(result.signals).toHaveLength(1);
-    expect(result.signals![0].source).toBe('/');
-    expect(result.signals![0].status).toBe('warning');
+    expect(result.signals![0]!.source).toBe('/');
+    expect(result.signals![0]!.status).toBe('warning');
   });
 
   it('non-nagios format healthy', () => {
@@ -351,9 +351,10 @@ describe('sensuToHealthResult', () => {
     expect(result.status).toBe('healthy');
     expect(result.confidence).toBe(0.8);
     expect(result.signals).toHaveLength(1);
-    expect(result.signals![0].source).toBe('sensu');
-    expect(result.signals![0].status).toBe('healthy');
-    expect(result.signals![0].detail).toContain('2 metric(s) collected');
+    const signal = result.signals![0]!;
+    expect(signal.source).toBe('sensu');
+    expect(signal.status).toBe('healthy');
+    expect(signal.detail).toContain('2 metric(s) collected');
   });
 
   it('non-nagios format unhealthy', () => {
@@ -367,7 +368,7 @@ describe('sensuToHealthResult', () => {
     expect(result.status).toBe('unhealthy');
     expect(result.confidence).toBe(0.8);
     expect(result.signals).toHaveLength(1);
-    expect(result.signals![0].status).toBe('critical');
+    expect(result.signals![0]!.status).toBe('critical');
   });
 
   it('nagios_perfdata without perfdata falls back to text signal', () => {
@@ -377,8 +378,8 @@ describe('sensuToHealthResult', () => {
     expect(result.status).toBe('unhealthy');
     expect(result.confidence).toBe(0.7);
     expect(result.signals).toHaveLength(1);
-    expect(result.signals![0].source).toBe('sensu');
-    expect(result.signals![0].status).toBe('critical');
+    expect(result.signals![0]!.source).toBe('sensu');
+    expect(result.signals![0]!.status).toBe('critical');
   });
 });
 
@@ -393,10 +394,11 @@ describe('sensuToDiagnoseResult', () => {
 
     expect(result.healthy).toBe(false);
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].id).toBe('sensu--');
-    expect(result.findings[0].severity).toBe('critical');
-    expect(result.findings[0].title).toBe('/ threshold exceeded');
-    expect(result.findings[0].evidence).toEqual({
+    const finding = result.findings[0]!;
+    expect(finding.id).toBe('sensu--');
+    expect(finding.severity).toBe('critical');
+    expect(finding.title).toBe('/ threshold exceeded');
+    expect(finding.evidence).toEqual({
       value: 6800,
       uom: 'MB',
       warn: 5765,
@@ -426,11 +428,12 @@ describe('sensuToDiagnoseResult', () => {
 
     expect(result.healthy).toBe(false);
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].id).toBe('sensu-status');
-    expect(result.findings[0].severity).toBe('critical');
-    expect(result.findings[0].evidence).toBeDefined();
-    expect(result.findings[0].evidence!.metricCount).toBe(2);
-    expect(result.findings[0].evidence!.format).toBe('graphite_plaintext');
+    const finding = result.findings[0]!;
+    expect(finding.id).toBe('sensu-status');
+    expect(finding.severity).toBe('critical');
+    expect(finding.evidence).toBeDefined();
+    expect(finding.evidence!.metricCount).toBe(2);
+    expect(finding.evidence!.format).toBe('graphite_plaintext');
   });
 
   it('nagios_perfdata ok returns empty findings', () => {
@@ -451,9 +454,10 @@ describe('sensuToDiagnoseResult', () => {
 
     expect(result.healthy).toBe(false);
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].id).toBe('sensu-status');
-    expect(result.findings[0].severity).toBe('warning');
-    expect(result.findings[0].title).toBe('WARNING - High load');
+    const finding = result.findings[0]!;
+    expect(finding.id).toBe('sensu-status');
+    expect(finding.severity).toBe('warning');
+    expect(finding.title).toBe('WARNING - High load');
   });
 
   it('prometheus_text summary does not contain HELP comments', () => {

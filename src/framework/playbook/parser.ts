@@ -188,8 +188,8 @@ function parseSteps(body: string): PlaybookStep[] {
   while ((match = stepPattern.exec(body)) !== null) {
     matches.push({
       index: match.index,
-      position: parseInt(match[1], 10),
-      title: match[2].trim(),
+      position: parseInt(match[1]!, 10),
+      title: match[2]!.trim(),
     });
   }
 
@@ -197,18 +197,19 @@ function parseSteps(body: string): PlaybookStep[] {
   const rollbackIndex = body.search(/^## Rollback/m);
 
   for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].index + body.slice(matches[i].index).indexOf('\n') + 1;
+    const current = matches[i]!;
+    const start = current.index + body.slice(current.index).indexOf('\n') + 1;
     let end: number;
     if (i + 1 < matches.length) {
-      end = matches[i + 1].index;
-    } else if (rollbackIndex !== -1 && rollbackIndex > matches[i].index) {
+      end = matches[i + 1]!.index;
+    } else if (rollbackIndex !== -1 && rollbackIndex > current.index) {
       end = rollbackIndex;
     } else {
       end = body.length;
     }
 
     const sectionContent = body.slice(start, end).trim();
-    const step = parseStepSection(sectionContent, matches[i].position, matches[i].title);
+    const step = parseStepSection(sectionContent, current.position, current.title);
     steps.push(step);
   }
 
@@ -254,24 +255,24 @@ function parseProperties(content: string): {
 
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
+    const line = lines[i]!;
     const propMatch = line.match(/^- (\w+):\s*(.*)$/);
 
     if (propMatch) {
-      const key = propMatch[1];
-      const value = propMatch[2].trim();
+      const key = propMatch[1]!;
+      const value = propMatch[2]!.trim();
 
       if (key === 'blast_radius' && (value === '' || value === undefined)) {
         // Parse indented sub-properties
         const blastRadius: PlaybookBlastRadius = {};
         i++;
         while (i < lines.length) {
-          const subLine = lines[i];
+          const subLine = lines[i]!;
           const subMatch = subLine.match(/^\s+(\w+):\s*(.+)$/);
           if (!subMatch) break;
 
-          const subKey = subMatch[1];
-          const subValue = subMatch[2].trim();
+          const subKey = subMatch[1]!;
+          const subValue = subMatch[2]!.trim();
 
           if (subKey === 'max_affected_rows') {
             blastRadius.maxAffectedRows = parseInt(subValue, 10);

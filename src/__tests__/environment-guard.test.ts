@@ -67,8 +67,9 @@ describe('applyEnvironmentGuard', () => {
     expect(out.scenario).toBe('target_unresolvable');
     expect(out.status).toBe('partial');
     expect(out.confidence).toBeLessThanOrEqual(0.6);
-    expect(out.findings[0].source).toBe('environment_check');
-    expect(out.findings[0].observation).toMatch(/DNS or configuration/i);
+    const finding = out.findings[0]!;
+    expect(finding.source).toBe('environment_check');
+    expect(finding.observation).toMatch(/DNS or configuration/i);
   });
 
   it('reclassifies when the name-resolution error is in a later finding, not findings[0]', () => {
@@ -96,9 +97,10 @@ describe('applyEnvironmentGuard', () => {
     expect(out.scenario).toBe('target_unresolvable');
     expect(out.status).toBe('partial');
     expect(out.confidence).toBeLessThanOrEqual(0.6);
-    expect(out.findings[0].source).toBe('environment_check');
-    expect(out.findings[0].observation).toMatch(/DNS or configuration/i);
-    expect(out.findings[0].data?.error).toBe('getaddrinfo ENOTFOUND pg-missing.invalid');
+    const finding = out.findings[0]!;
+    expect(finding.source).toBe('environment_check');
+    expect(finding.observation).toMatch(/DNS or configuration/i);
+    expect(finding.data?.error).toBe('getaddrinfo ENOTFOUND pg-missing.invalid');
   });
 
   it('downgrades unreachable verdicts when the observer environment is degraded', () => {
@@ -110,8 +112,9 @@ describe('applyEnvironmentGuard', () => {
     }), 'test-postgres');
     expect(out.status).toBe('partial');
     expect(out.confidence).toBeLessThanOrEqual(0.5);
-    expect(out.findings[0].source).toBe('environment_check');
-    expect(out.findings[0].observation).toMatch(/may be healthy/i);
+    const finding = out.findings[0]!;
+    expect(finding.source).toBe('environment_check');
+    expect(finding.observation).toMatch(/may be healthy/i);
   });
 
   it('keeps the verdict when the startup TCP probe reached the target', () => {

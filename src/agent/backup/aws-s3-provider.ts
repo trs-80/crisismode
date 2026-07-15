@@ -143,7 +143,7 @@ export class S3BackupProvider implements BackupProvider {
     const capped = items.slice(0, MAX_ITEMS_PER_LOCATION);
     for (let i = 0; i < capped.length; i++) {
       if (i + 1 < capped.length) {
-        capped[i].previousSizeBytes = capped[i + 1].sizeBytes;
+        capped[i]!.previousSizeBytes = capped[i + 1]!.sizeBytes;
       }
     }
 
@@ -247,7 +247,7 @@ export class S3BackupProvider implements BackupProvider {
     // From locations — parse s3://bucket/prefix format
     for (const loc of config.locations) {
       const match = loc.match(/^s3:\/\/([^/]+)/);
-      if (match) return match[1];
+      if (match) return match[1]!;
     }
 
     return null;

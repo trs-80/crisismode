@@ -23,11 +23,11 @@ export const pgReplicationRegistration: AgentRegistration = {
 
     const replicaConfig = target.replicas.length > 0
       ? {
-          host: target.replicas[0].host,
-          port: target.replicas[0].port,
+          host: target.replicas[0]!.host,
+          port: target.replicas[0]!.port,
           user: target.credentials.username || 'crisismode',
           password: target.credentials.password || 'crisismode',
-          database: target.replicas[0].database || primaryConfig.database,
+          database: target.replicas[0]!.database || primaryConfig.database,
         }
       : undefined;
 

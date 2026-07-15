@@ -119,8 +119,8 @@ describe('parsePerfData', () => {
   it('parses multiple space-separated items', () => {
     const items = parsePerfData('/=2643MB;5765;6456;0;7180 /tmp=1234MB;2000;3000;0;4000');
     expect(items).toHaveLength(2);
-    expect(items[0].label).toBe('/');
-    expect(items[1].label).toBe('/tmp');
+    expect(items[0]!.label).toBe('/');
+    expect(items[1]!.label).toBe('/tmp');
   });
 
   it('returns empty array for empty string', () => {
@@ -144,8 +144,8 @@ describe('parsePerfData', () => {
   it('handles single item', () => {
     const items = parsePerfData('uptime=86400s');
     expect(items).toHaveLength(1);
-    expect(items[0].label).toBe('uptime');
-    expect(items[0].value).toBe(86400);
+    expect(items[0]!.label).toBe('uptime');
+    expect(items[0]!.value).toBe(86400);
   });
 });
 
@@ -216,9 +216,10 @@ describe('nagiosToHealthResult', () => {
     expect(result.summary).toBe('DISK OK - free space: / 3326 MB (56%)');
     expect(result.confidence).toBe(0.85);
     expect(result.signals).toHaveLength(1);
-    expect(result.signals![0].source).toBe('/');
-    expect(result.signals![0].status).toBe('healthy');
-    expect(result.signals![0].detail).toContain('2643');
+    const signal = result.signals![0]!;
+    expect(signal.source).toBe('/');
+    expect(signal.status).toBe('healthy');
+    expect(signal.detail).toContain('2643');
   });
 
   it('converts CRITICAL result with threshold breach', () => {
@@ -230,7 +231,7 @@ describe('nagiosToHealthResult', () => {
 
     expect(result.status).toBe('unhealthy');
     expect(result.signals).toHaveLength(1);
-    expect(result.signals![0].status).toBe('critical');
+    expect(result.signals![0]!.status).toBe('critical');
   });
 
   it('converts WARNING result with threshold breach', () => {
@@ -242,7 +243,7 @@ describe('nagiosToHealthResult', () => {
 
     expect(result.status).toBe('recovering');
     expect(result.signals).toHaveLength(1);
-    expect(result.signals![0].status).toBe('warning');
+    expect(result.signals![0]!.status).toBe('warning');
   });
 
   it('creates a text-based signal when no perfdata', () => {
@@ -252,9 +253,10 @@ describe('nagiosToHealthResult', () => {
     expect(result.status).toBe('unhealthy');
     expect(result.confidence).toBe(0.7);
     expect(result.signals).toHaveLength(1);
-    expect(result.signals![0].source).toBe('nagios');
-    expect(result.signals![0].status).toBe('critical');
-    expect(result.signals![0].detail).toBe('CRITICAL - Host unreachable');
+    const signal = result.signals![0]!;
+    expect(signal.source).toBe('nagios');
+    expect(signal.status).toBe('critical');
+    expect(signal.detail).toBe('CRITICAL - Host unreachable');
   });
 
   it('handles multiple perfdata items with mixed statuses', () => {
@@ -265,8 +267,8 @@ describe('nagiosToHealthResult', () => {
     const result = nagiosToHealthResult(parsed);
 
     expect(result.signals).toHaveLength(2);
-    expect(result.signals![0].status).toBe('healthy'); // / is below warn
-    expect(result.signals![1].status).toBe('warning'); // /var exceeds warn but not crit
+    expect(result.signals![0]!.status).toBe('healthy'); // / is below warn
+    expect(result.signals![1]!.status).toBe('warning'); // /var exceeds warn but not crit
   });
 });
 
@@ -280,9 +282,10 @@ describe('nagiosToDiagnoseResult', () => {
 
     expect(result.healthy).toBe(false);
     expect(result.findings).toHaveLength(1); // Only / exceeds threshold
-    expect(result.findings[0].id).toBe('nagios--');
-    expect(result.findings[0].severity).toBe('warning');
-    expect(result.findings[0].evidence).toEqual({
+    const finding = result.findings[0]!;
+    expect(finding.id).toBe('nagios--');
+    expect(finding.severity).toBe('warning');
+    expect(finding.evidence).toEqual({
       value: 5900,
       uom: 'MB',
       warn: 5765,
@@ -298,7 +301,7 @@ describe('nagiosToDiagnoseResult', () => {
     const result = nagiosToDiagnoseResult(parsed);
 
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].severity).toBe('critical');
+    expect(result.findings[0]!.severity).toBe('critical');
   });
 
   it('produces empty findings for OK status', () => {
@@ -318,9 +321,10 @@ describe('nagiosToDiagnoseResult', () => {
 
     expect(result.healthy).toBe(false);
     expect(result.findings).toHaveLength(1);
-    expect(result.findings[0].id).toBe('nagios-status');
-    expect(result.findings[0].severity).toBe('critical');
-    expect(result.findings[0].title).toBe('CRITICAL - Host unreachable');
+    const finding = result.findings[0]!;
+    expect(finding.id).toBe('nagios-status');
+    expect(finding.severity).toBe('critical');
+    expect(finding.title).toBe('CRITICAL - Host unreachable');
   });
 
   it('returns healthy with no findings for OK without perfdata', () => {

@@ -116,7 +116,7 @@ describe('K8sLiveClient', () => {
   describe('node status classification', () => {
     it('reports a node with Ready=True as Ready', async () => {
       const client = createMockClient({ nodes: [makeNode('worker-1')] });
-      const [node] = await client.getNodeStatus();
+      const node = (await client.getNodeStatus())[0]!;
       expect(node.status).toBe('Ready');
       expect(node.name).toBe('worker-1');
     });
@@ -125,7 +125,7 @@ describe('K8sLiveClient', () => {
       const node = makeNode('worker-2');
       node.status.conditions = [{ type: 'Ready', status: 'False', message: 'kubelet stopped' }];
       const client = createMockClient({ nodes: [node] });
-      const [result] = await client.getNodeStatus();
+      const result = (await client.getNodeStatus())[0]!;
       expect(result.status).toBe('NotReady');
     });
 
@@ -133,7 +133,7 @@ describe('K8sLiveClient', () => {
       const node = makeNode('worker-3');
       node.spec = { unschedulable: true };
       const client = createMockClient({ nodes: [node] });
-      const [result] = await client.getNodeStatus();
+      const result = (await client.getNodeStatus())[0]!;
       expect(result.status).toBe('SchedulingDisabled');
     });
 
@@ -142,7 +142,7 @@ describe('K8sLiveClient', () => {
         labels: { 'node-role.kubernetes.io/control-plane': '', 'node-role.kubernetes.io/master': '' },
       });
       const client = createMockClient({ nodes: [node] });
-      const [result] = await client.getNodeStatus();
+      const result = (await client.getNodeStatus())[0]!;
       expect(result.roles).toContain('control-plane');
       expect(result.roles).toContain('master');
     });
@@ -150,7 +150,7 @@ describe('K8sLiveClient', () => {
     it('defaults to worker role when no role labels are present', async () => {
       const node = makeNode('bare-node', { labels: {} });
       const client = createMockClient({ nodes: [node] });
-      const [result] = await client.getNodeStatus();
+      const result = (await client.getNodeStatus())[0]!;
       expect(result.roles).toEqual(['worker']);
     });
   });
@@ -161,7 +161,7 @@ describe('K8sLiveClient', () => {
     it('detects CrashLoopBackOff from container waiting state, not pod phase', async () => {
       const pod = makePod('crash-pod', 'CrashLoopBackOff');
       const client = createMockClient({ pods: [pod] });
-      const [result] = await client.getPodsByNamespace('production');
+      const result = (await client.getPodsByNamespace('production'))[0]!;
       expect(result.status).toBe('CrashLoopBackOff');
       expect(result.restarts).toBe(47);
     });
@@ -169,21 +169,21 @@ describe('K8sLiveClient', () => {
     it('reports Pending pods as Pending', async () => {
       const pod = makePod('pending-pod', 'Pending');
       const client = createMockClient({ pods: [pod] });
-      const [result] = await client.getPodsByNamespace('production');
+      const result = (await client.getPodsByNamespace('production'))[0]!;
       expect(result.status).toBe('Pending');
     });
 
     it('reports pods with deletionTimestamp as Terminating', async () => {
       const pod = makePod('dying-pod', 'Running', { deletionTimestamp: new Date().toISOString() });
       const client = createMockClient({ pods: [pod] });
-      const [result] = await client.getPodsByNamespace('production');
+      const result = (await client.getPodsByNamespace('production'))[0]!;
       expect(result.status).toBe('Terminating');
     });
 
     it('reports Failed pods as Failed', async () => {
       const pod = makePod('failed-pod', 'Failed');
       const client = createMockClient({ pods: [pod] });
-      const [result] = await client.getPodsByNamespace('production');
+      const result = (await client.getPodsByNamespace('production'))[0]!;
       expect(result.status).toBe('Failed');
     });
 
@@ -191,7 +191,7 @@ describe('K8sLiveClient', () => {
       const twoHoursAgo = new Date(Date.now() - 7_200_000).toISOString();
       const pod = makePod('old-pod', 'Running', { creationTimestamp: twoHoursAgo });
       const client = createMockClient({ pods: [pod] });
-      const [result] = await client.getPodsByNamespace('production');
+      const result = (await client.getPodsByNamespace('production'))[0]!;
       expect(result.age).toBe('2h');
     });
   });
@@ -209,8 +209,8 @@ describe('K8sLiveClient', () => {
       const client = createMockClient({ events: [warningEvent] });
       const events = await client.getEvents('production');
       expect(events).toHaveLength(1);
-      expect(events[0].type).toBe('Warning');
-      expect(events[0].reason).toBe('NodeNotReady');
+      expect(events[0]!.type).toBe('Warning');
+      expect(events[0]!.reason).toBe('NodeNotReady');
     });
 
     it('returns cluster-wide events when no namespace is given', async () => {
@@ -234,10 +234,10 @@ describe('K8sLiveClient', () => {
           },
         }],
       });
-      const [dep] = await client.getDeploymentStatus('production');
+      const dep = (await client.getDeploymentStatus('production'))[0]!;
       expect(dep.replicas).toBe(3);
       expect(dep.readyReplicas).toBe(2);
-      expect(dep.conditions[0].status).toBe('False');
+      expect(dep.conditions[0]!.status).toBe('False');
     });
   });
 
@@ -252,7 +252,7 @@ describe('K8sLiveClient', () => {
           status: { phase: 'Bound', capacity: { storage: '10Gi' } },
         }],
       });
-      const [pvc] = await client.getPVCStatus('production');
+      const pvc = (await client.getPVCStatus('production'))[0]!;
       expect(pvc.status).toBe('Bound');
       expect(pvc.capacity).toBe('10Gi');
       expect(pvc.finalizers).toContain('kubernetes.io/pvc-protection');
@@ -266,7 +266,7 @@ describe('K8sLiveClient', () => {
           status: { phase: 'Bound', capacity: { storage: '5Gi' } },
         }],
       });
-      const [pvc] = await client.getPVCStatus('production');
+      const pvc = (await client.getPVCStatus('production'))[0]!;
       expect(pvc.status).toBe('Terminating');
     });
   });
@@ -444,7 +444,7 @@ describe('K8sLiveClient', () => {
   describe('capability provider', () => {
     it('declares live_validated maturity with all K8s admin capabilities', () => {
       const client = createMockClient();
-      const [provider] = client.listCapabilityProviders();
+      const provider = client.listCapabilityProviders()[0]!;
       expect(provider.maturity).toBe('live_validated');
       expect(provider.capabilities).toEqual(expect.arrayContaining([
         'k8s.node.cordon', 'k8s.node.drain', 'k8s.pod.delete',
@@ -577,9 +577,9 @@ describe('DeployLiveClient', () => {
     const client = new DeployLiveClient(mockConfig);
     const providers = client.listCapabilityProviders();
     expect(providers).toHaveLength(1);
-    expect(providers[0].maturity).toBe('live_validated');
-    expect(providers[0].capabilities).toContain('deploy.status.read');
-    expect(providers[0].capabilities).toContain('deploy.rollback');
+    expect(providers[0]!.maturity).toBe('live_validated');
+    expect(providers[0]!.capabilities).toContain('deploy.status.read');
+    expect(providers[0]!.capabilities).toContain('deploy.rollback');
   });
 
   it('getCurrentDeployment fetches from Vercel API', async () => {
@@ -604,7 +604,7 @@ describe('DeployLiveClient', () => {
     const client = new DeployLiveClient(mockConfig);
     const deploys = await client.listRecentDeploys(5);
     expect(deploys).toHaveLength(2);
-    expect(deploys[0].sha).not.toBe(deploys[1].sha);
+    expect(deploys[0]!.sha).not.toBe(deploys[1]!.sha);
   });
 
   it('getHealthEndpoints probes configured URLs', async () => {
@@ -616,8 +616,8 @@ describe('DeployLiveClient', () => {
     const client = new DeployLiveClient(mockConfig);
     const endpoints = await client.getHealthEndpoints();
     expect(endpoints).toHaveLength(1);
-    expect(endpoints[0].url).toBe('https://app.example.com/healthz');
-    expect(endpoints[0].status).toBe('healthy');
+    expect(endpoints[0]!.url).toBe('https://app.example.com/healthz');
+    expect(endpoints[0]!.status).toBe('healthy');
   });
 
   it('getHealthEndpoints marks failed endpoints as down', async () => {
@@ -626,8 +626,8 @@ describe('DeployLiveClient', () => {
     const client = new DeployLiveClient(mockConfig);
     const endpoints = await client.getHealthEndpoints();
     expect(endpoints).toHaveLength(1);
-    expect(endpoints[0].status).toBe('down');
-    expect(endpoints[0].errorRate).toBe(100);
+    expect(endpoints[0]!.status).toBe('down');
+    expect(endpoints[0]!.errorRate).toBe(100);
   });
 
   it('getRollbackTarget finds last successful deploy', async () => {
@@ -739,9 +739,9 @@ describe('AiProviderLiveClient', () => {
     const client = new AiProviderLiveClient(mockConfig);
     const providers = client.listCapabilityProviders();
     expect(providers).toHaveLength(2);
-    expect(providers[0].maturity).toBe('live_validated');
-    expect(providers[0].capabilities).toContain('provider.status.read');
-    expect(providers[1].capabilities).toContain('provider.circuit_breaker.trip');
+    expect(providers[0]!.maturity).toBe('live_validated');
+    expect(providers[0]!.capabilities).toContain('provider.status.read');
+    expect(providers[1]!.capabilities).toContain('provider.circuit_breaker.trip');
   });
 
   it('getProviderStatus probes each provider', async () => {
@@ -752,9 +752,9 @@ describe('AiProviderLiveClient', () => {
     const client = new AiProviderLiveClient(mockConfig);
     const statuses = await client.getProviderStatus();
     expect(statuses).toHaveLength(2);
-    expect(statuses[0].name).toBe('openai');
-    expect(statuses[0].status).toBe('healthy');
-    expect(statuses[1].name).toBe('anthropic');
+    expect(statuses[0]!.name).toBe('openai');
+    expect(statuses[0]!.status).toBe('healthy');
+    expect(statuses[1]!.name).toBe('anthropic');
   });
 
   it('marks down providers correctly', async () => {
@@ -764,8 +764,8 @@ describe('AiProviderLiveClient', () => {
 
     const client = new AiProviderLiveClient(mockConfig);
     const statuses = await client.getProviderStatus();
-    expect(statuses[0].status).toBe('down');
-    expect(statuses[1].status).toBe('healthy');
+    expect(statuses[0]!.status).toBe('down');
+    expect(statuses[1]!.status).toBe('healthy');
   });
 
   it('circuit breakers start closed', async () => {
@@ -779,8 +779,8 @@ describe('AiProviderLiveClient', () => {
     const client = new AiProviderLiveClient(mockConfig);
     const config = await client.getFallbackConfig();
     expect(config.chain).toHaveLength(2);
-    expect(config.chain[0].provider).toBe('openai');
-    expect(config.chain[0].priority).toBe(1);
+    expect(config.chain[0]!.provider).toBe('openai');
+    expect(config.chain[0]!.priority).toBe(1);
   });
 
   it('getRequestMetrics returns valid defaults', async () => {
@@ -886,9 +886,9 @@ describe('DbMigrationLiveClient', () => {
     const client = createClient();
     const providers = client.listCapabilityProviders();
     expect(providers).toHaveLength(2);
-    expect(providers[0].maturity).toBe('live_validated');
-    expect(providers[0].capabilities).toContain('db.query.read');
-    expect(providers[1].capabilities).toContain('db.migration.rollback');
+    expect(providers[0]!.maturity).toBe('live_validated');
+    expect(providers[0]!.capabilities).toContain('db.query.read');
+    expect(providers[1]!.capabilities).toContain('db.migration.rollback');
   });
 
   it('getMigrationStatus detects Prisma migrations', async () => {
@@ -949,8 +949,8 @@ describe('DbMigrationLiveClient', () => {
     const client = createClient();
     const queries = await client.getActiveQueries();
     expect(queries).toHaveLength(1);
-    expect(queries[0].pid).toBe(12001);
-    expect(queries[0].waitEvent).toBe('Lock');
+    expect(queries[0]!.pid).toBe(12001);
+    expect(queries[0]!.waitEvent).toBe('Lock');
   });
 
   it('getTableLockInfo returns blocking locks', async () => {
@@ -967,8 +967,8 @@ describe('DbMigrationLiveClient', () => {
     const client = createClient();
     const locks = await client.getTableLockInfo();
     expect(locks).toHaveLength(1);
-    expect(locks[0].relation).toBe('orders');
-    expect(locks[0].granted).toBe(true);
+    expect(locks[0]!.relation).toBe('orders');
+    expect(locks[0]!.granted).toBe(true);
   });
 
   it('getDatabaseSize queries pg_database_size', async () => {
@@ -1046,9 +1046,9 @@ describe('QueueLiveClient', () => {
     const client = new QueueLiveClient(mockConfig);
     const providers = client.listCapabilityProviders();
     expect(providers).toHaveLength(2);
-    expect(providers[0].maturity).toBe('live_validated');
-    expect(providers[0].capabilities).toContain('queue.stats.read');
-    expect(providers[1].capabilities).toContain('queue.pause');
+    expect(providers[0]!.maturity).toBe('live_validated');
+    expect(providers[0]!.capabilities).toContain('queue.stats.read');
+    expect(providers[1]!.capabilities).toContain('queue.pause');
   });
 
   it('rejects unsupported command types', async () => {
@@ -1102,9 +1102,9 @@ describe('ConfigDriftLiveClient', () => {
     const client = new ConfigDriftLiveClient(mockConfig);
     const providers = client.listCapabilityProviders();
     expect(providers).toHaveLength(2);
-    expect(providers[0].maturity).toBe('live_validated');
-    expect(providers[0].capabilities).toContain('config.env.read');
-    expect(providers[1].capabilities).toContain('config.env.restore');
+    expect(providers[0]!.maturity).toBe('live_validated');
+    expect(providers[0]!.capabilities).toContain('config.env.read');
+    expect(providers[1]!.capabilities).toContain('config.env.restore');
   });
 
   it('getEnvironmentVars reads from process.env', async () => {
@@ -1116,17 +1116,17 @@ describe('ConfigDriftLiveClient', () => {
     const vars = await client.getEnvironmentVars();
 
     expect(vars).toHaveLength(3);
-    expect(vars[0].name).toBe('DATABASE_URL');
-    expect(vars[0].masked).toBe(true);
+    expect(vars[0]!.name).toBe('DATABASE_URL');
+    expect(vars[0]!.masked).toBe(true);
     // Masked values should not expose full content
-    expect(vars[0].actual).toContain('***');
+    expect(vars[0]!.actual).toContain('***');
 
-    expect(vars[1].name).toBe('LOG_LEVEL');
-    expect(vars[1].actual).toBe('info');
-    expect(vars[1].masked).toBe(false);
+    expect(vars[1]!.name).toBe('LOG_LEVEL');
+    expect(vars[1]!.actual).toBe('info');
+    expect(vars[1]!.masked).toBe(false);
 
-    expect(vars[2].name).toBe('MISSING_VAR');
-    expect(vars[2].actual).toBeNull();
+    expect(vars[2]!.name).toBe('MISSING_VAR');
+    expect(vars[2]!.actual).toBeNull();
 
     // Cleanup
     delete process.env.DATABASE_URL;

@@ -175,7 +175,7 @@ export class WatchState {
 
   /** Get the most recent health snapshot. */
   getLastSnapshot(): HealthSnapshot | null {
-    return this.snapshots.length > 0 ? this.snapshots[this.snapshots.length - 1] : null;
+    return this.snapshots.length > 0 ? this.snapshots[this.snapshots.length - 1]! : null;
   }
 
   /** Build a health card summarising current state and trends. */
@@ -219,7 +219,7 @@ export class WatchState {
 
     if (slope < -0.01) {
       // Confidence declining — estimate when it crosses 0.5 (unhealthy threshold)
-      const lastConf = recent[recent.length - 1].confidence;
+      const lastConf = recent[recent.length - 1]!.confidence;
       const threshold = 0.5;
       if (lastConf > threshold) {
         const cyclesUntil = Math.ceil((lastConf - threshold) / Math.abs(slope));
@@ -236,8 +236,8 @@ export class WatchState {
 
     // 2. Signal count growth — more signals = more warnings
     const signalSlope = linearSlope(recent.map((s) => s.signalCount));
-    if (signalSlope > 0.1 && recent[recent.length - 1].signalCount >= 2) {
-      const currentSignals = recent[recent.length - 1].signalCount;
+    if (signalSlope > 0.1 && recent[recent.length - 1]!.signalCount >= 2) {
+      const currentSignals = recent[recent.length - 1]!.signalCount;
       const dangerThreshold = currentSignals * 2;
       const cyclesUntil = Math.ceil(dangerThreshold / signalSlope);
       forecasts.push({
@@ -311,8 +311,8 @@ export class WatchState {
       patterns.push({
         pattern: 'flapping',
         occurrences: flaps.length,
-        firstSeen: flaps[0].timestamp,
-        lastSeen: flaps[flaps.length - 1].timestamp,
+        firstSeen: flaps[0]!.timestamp,
+        lastSeen: flaps[flaps.length - 1]!.timestamp,
         description: `Health status flapping between healthy and unhealthy (${flaps.length} transitions in recent window)`,
       });
     }
@@ -336,8 +336,8 @@ export class WatchState {
       patterns.push({
         pattern: 'confidence-drift',
         occurrences: 1,
-        firstSeen: this.snapshots[0].timestamp,
-        lastSeen: this.snapshots[this.snapshots.length - 1].timestamp,
+        firstSeen: this.snapshots[0]!.timestamp,
+        lastSeen: this.snapshots[this.snapshots.length - 1]!.timestamp,
         description: `Confidence trending ${confidenceDrift < 0 ? 'down' : 'up'} (${(confidenceDrift * 100).toFixed(1)}% change)`,
       });
     }
@@ -397,7 +397,7 @@ export class WatchState {
 
     // Restore lastStatus from the most recent snapshot
     if (data.snapshots.length > 0) {
-      state.lastStatus = data.snapshots[data.snapshots.length - 1].status;
+      state.lastStatus = data.snapshots[data.snapshots.length - 1]!.status;
     }
 
     return state;
@@ -476,8 +476,8 @@ function linearSlope(values: number[]): number {
 
   for (let i = 0; i < n; i++) {
     sumX += i;
-    sumY += values[i];
-    sumXY += i * values[i];
+    sumY += values[i]!;
+    sumXY += i * values[i]!;
     sumX2 += i * i;
   }
 

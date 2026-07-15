@@ -418,8 +418,8 @@ describe('MCP server (official SDK)', () => {
       vi.mocked(registry.createForTarget).mockResolvedValue({ agent, backend, target } as never);
 
       const data = await handleScan({}) as { findings: Array<{ status: string; summary: string }> };
-      expect(data.findings[0].status).toBe('unknown');
-      expect(data.findings[0].summary).toContain('connection refused');
+      expect(data.findings[0]!.status).toBe('unknown');
+      expect(data.findings[0]!.summary).toContain('connection refused');
     });
 
     it('filters by category', async () => {
@@ -443,7 +443,7 @@ describe('MCP server (official SDK)', () => {
 
       const data = await handleScan({ category: 'postgresql' }) as { findings: Array<{ kind: string }> };
       expect(data.findings).toHaveLength(1);
-      expect(data.findings[0].kind).toBe('postgresql');
+      expect(data.findings[0]!.kind).toBe('postgresql');
     });
 
     it('computes score based on healthy/total ratio', async () => {
@@ -547,7 +547,7 @@ describe('MCP server (official SDK)', () => {
       setupConfig();
       const data = await handleStatus({}) as { services: Array<{ kind: string }>; checkedAt: string };
       expect(data.services).toHaveLength(1);
-      expect(data.services[0].kind).toBe('postgresql');
+      expect(data.services[0]!.kind).toBe('postgresql');
       expect(data.checkedAt).toBeDefined();
     });
 
@@ -558,7 +558,7 @@ describe('MCP server (official SDK)', () => {
       ] as never);
 
       const data = await handleStatus({}) as { services: Array<{ kind: string; detected?: boolean }> };
-      expect(data.services[0].kind).toBe('redis');
+      expect(data.services[0]!.kind).toBe('redis');
     });
 
     it('preserves detected flags from detection', async () => {
@@ -570,8 +570,8 @@ describe('MCP server (official SDK)', () => {
 
       const data = await handleStatus({}) as { services: Array<{ detected: boolean }> };
       expect(data.services).toHaveLength(2);
-      expect(data.services[0].detected).toBe(true);
-      expect(data.services[1].detected).toBe(false);
+      expect(data.services[0]!.detected).toBe(true);
+      expect(data.services[1]!.detected).toBe(false);
     });
   });
 });

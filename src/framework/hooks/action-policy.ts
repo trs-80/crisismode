@@ -73,7 +73,7 @@ export function createActionPolicyHook(
 
       // ── 1. Per-step action policy checks ──
       for (const step of knownSteps) {
-        const actionId = stepIdToActionId[step.stepId];
+        const actionId = stepIdToActionId[step.stepId]!;
         const template = getActionTemplate(actionId);
         if (!template) {
           violations.push(`${step.stepId}: unknown action template "${actionId}"`);
@@ -114,13 +114,13 @@ export function createActionPolicyHook(
         const steps = plan.steps;
         let seenApproval = false;
         for (let i = 0; i < steps.length; i++) {
-          const step = steps[i];
+          const step = steps[i]!;
           if (step.type === 'human_approval') {
             seenApproval = true;
             continue;
           }
           if (!(step.stepId in stepIdToActionId)) continue;
-          const actionId = stepIdToActionId[step.stepId];
+          const actionId = stepIdToActionId[step.stepId]!;
           const template = getActionTemplate(actionId);
           if (!template) continue;
           if (template.mutation_type === 'none') continue;

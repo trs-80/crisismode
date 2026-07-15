@@ -121,7 +121,7 @@ export function applyCanonicalHypothesisBackstop(
   const hasOverlap = keywords.some((k) => keywordAppears(combinedText, k));
   if (!hasOverlap) return hypotheses;
 
-  const primary = hypotheses.find((h) => h.rank === 1) ?? hypotheses[0];
+  const primary = hypotheses.find((h) => h.rank === 1) ?? hypotheses[0]!;
   const usedIds = new Set(hypotheses.map((h) => h.hypothesis_id));
   let id = `canonical-${topScenario}`;
   let suffix = 2;

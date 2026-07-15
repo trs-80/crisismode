@@ -68,7 +68,7 @@ describe('diagnoseWithEnvironmentGuard (webhook.ts)', () => {
 
     expect(result.scenario).toBe('target_unresolvable');
     expect(result.status).toBe('partial');
-    expect(result.findings[0].source).toBe('environment_check');
+    expect(result.findings[0]!.source).toBe('environment_check');
   });
 
   it('leaves healthy diagnoses untouched', async () => {

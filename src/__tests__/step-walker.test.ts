@@ -139,8 +139,8 @@ describe('collectSystemActions', () => {
     const steps: RecoveryStep[] = [makeNotification('n1'), s1, s2];
     const result = collectSystemActions(steps);
     expect(result).toHaveLength(2);
-    expect(result[0].stepId).toBe('s1');
-    expect(result[1].stepId).toBe('s2');
+    expect(result[0]!.stepId).toBe('s1');
+    expect(result[1]!.stepId).toBe('s2');
   });
 
   it('collects system actions from conditional branches', () => {
@@ -151,8 +151,8 @@ describe('collectSystemActions', () => {
     ];
     const result = collectSystemActions(steps);
     expect(result).toHaveLength(2);
-    expect(result[0].stepId).toBe('then-action');
-    expect(result[1].stepId).toBe('else-action');
+    expect(result[0]!.stepId).toBe('then-action');
+    expect(result[1]!.stepId).toBe('else-action');
   });
 
   it('does not include the conditional step itself', () => {
@@ -161,7 +161,7 @@ describe('collectSystemActions', () => {
     ];
     const result = collectSystemActions(steps);
     expect(result).toHaveLength(1);
-    expect(result[0].stepId).toBe('then');
+    expect(result[0]!.stepId).toBe('then');
   });
 
   it('skips else branch when it is skip', () => {

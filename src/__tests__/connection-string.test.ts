@@ -176,10 +176,11 @@ describe('buildTargetsFromEnvHints', () => {
 
     const targets = buildTargetsFromEnvHints(hints);
     expect(targets).toHaveLength(1);
-    expect(targets[0].name).toBe('env-database-url');
-    expect(targets[0].kind).toBe('postgresql');
-    expect(targets[0].primary).toEqual({ host: 'neon.tech', port: 5432, database: 'mydb' });
-    expect(targets[0].credentials).toEqual({ type: 'value', username: 'user', password: 'pass' });
+    const target = targets[0]!;
+    expect(target.name).toBe('env-database-url');
+    expect(target.kind).toBe('postgresql');
+    expect(target.primary).toEqual({ host: 'neon.tech', port: 5432, database: 'mydb' });
+    expect(target.credentials).toEqual({ type: 'value', username: 'user', password: 'pass' });
   });
 
   it('deduplicates targets by kind+host+port', () => {
@@ -193,7 +194,7 @@ describe('buildTargetsFromEnvHints', () => {
 
     const targets = buildTargetsFromEnvHints(hints);
     expect(targets).toHaveLength(1);
-    expect(targets[0].name).toBe('env-database-url');
+    expect(targets[0]!.name).toBe('env-database-url');
   });
 
   it('skips hints without inferredService', () => {
@@ -227,7 +228,7 @@ describe('buildTargetsFromEnvHints', () => {
 
     const targets = buildTargetsFromEnvHints(hints);
     expect(targets).toHaveLength(1);
-    expect(targets[0].credentials).toBeUndefined();
+    expect(targets[0]!.credentials).toBeUndefined();
   });
 });
 

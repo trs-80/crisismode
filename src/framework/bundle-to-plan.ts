@@ -193,7 +193,7 @@ function pickTarget(action: ProposedAction, template: ActionTemplate): string | 
   }
   // Fall back to the first declared target_kind as a generic identifier.
   if (template.target_kinds.length > 0) {
-    return template.target_kinds[0];
+    return template.target_kinds[0]!;
   }
   return null;
 }
@@ -304,7 +304,7 @@ function parseIsoDurationToSeconds(iso: string): number {
   const match = /^PT(\d+)([SMH])$/i.exec(iso);
   if (!match) return 0;
   const value = Number(match[1]);
-  switch (match[2].toUpperCase()) {
+  switch (match[2]!.toUpperCase()) {
     case 'S': return value;
     case 'M': return value * 60;
     case 'H': return value * 3600;

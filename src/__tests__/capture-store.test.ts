@@ -86,7 +86,7 @@ describe('CaptureStore', () => {
 
     const list = await store.list({ planId: 'plan-1' });
     expect(list).toHaveLength(1);
-    expect(list[0].planId).toBe('plan-1');
+    expect(list[0]!.planId).toBe('plan-1');
   });
 
   it('lists captures filtered by rollbackCapable', async () => {
@@ -95,7 +95,7 @@ describe('CaptureStore', () => {
 
     const rollbackable = await store.list({ rollbackCapable: true });
     expect(rollbackable).toHaveLength(1);
-    expect(rollbackable[0].name).toBe('a');
+    expect(rollbackable[0]!.name).toBe('a');
   });
 
   it('lists captures filtered by tag', async () => {
@@ -104,7 +104,7 @@ describe('CaptureStore', () => {
 
     const pgCaptures = await store.list({ tag: 'pg' });
     expect(pgCaptures).toHaveLength(1);
-    expect(pgCaptures[0].name).toBe('a');
+    expect(pgCaptures[0]!.name).toBe('a');
   });
 
   it('returns captures sorted by most recent first', async () => {
@@ -114,8 +114,8 @@ describe('CaptureStore', () => {
     await store.store({ name: 'second', captureType: 'sql_query', data: {} });
 
     const list = await store.list();
-    expect(list[0].name).toBe('second');
-    expect(list[1].name).toBe('first');
+    expect(list[0]!.name).toBe('second');
+    expect(list[1]!.name).toBe('first');
   });
 
   it('findLatest returns the most recent matching capture', async () => {
@@ -191,7 +191,7 @@ describe('CaptureStore', () => {
 
     const list = await store2.list();
     expect(list).toHaveLength(1);
-    expect(list[0].name).toBe('before');
+    expect(list[0]!.name).toBe('before');
   });
 });
 

@@ -127,7 +127,7 @@ describe('Predictive degradation (6.5)', () => {
       }
       const forecasts = state.forecastDegradation();
       for (let i = 1; i < forecasts.length; i++) {
-        expect(forecasts[i].confidence).toBeLessThanOrEqual(forecasts[i - 1].confidence);
+        expect(forecasts[i]!.confidence).toBeLessThanOrEqual(forecasts[i - 1]!.confidence);
       }
     });
 
@@ -151,7 +151,7 @@ describe('Predictive degradation (6.5)', () => {
         'healthy',
       ];
       for (let i = 0; i < seq.length; i++) {
-        state.recordHealth(makeHealth(seq[i]), i + 1);
+        state.recordHealth(makeHealth(seq[i]!), i + 1);
       }
       const forecasts = state.forecastDegradation();
       const degradation = forecasts.find(

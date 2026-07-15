@@ -62,8 +62,9 @@ describe('DeploySimulator', () => {
       const sim = new DeploySimulator();
       const traffic = await sim.getTrafficDistribution();
       expect(traffic.entries).toHaveLength(1);
-      expect(traffic.entries[0].percentage).toBe(100);
-      expect(traffic.entries[0].target).toBe('a1b2c3d4');
+      const entry0 = traffic.entries[0]!;
+      expect(entry0.percentage).toBe(100);
+      expect(entry0.target).toBe('a1b2c3d4');
     });
 
     it('splits traffic in rolling_back', async () => {
@@ -71,8 +72,8 @@ describe('DeploySimulator', () => {
       sim.transition('rolling_back');
       const traffic = await sim.getTrafficDistribution();
       expect(traffic.entries).toHaveLength(2);
-      expect(traffic.entries[0].percentage).toBe(10);
-      expect(traffic.entries[1].percentage).toBe(90);
+      expect(traffic.entries[0]!.percentage).toBe(10);
+      expect(traffic.entries[1]!.percentage).toBe(90);
     });
 
     it('routes 100% to good deploy in stabilized', async () => {
@@ -80,8 +81,9 @@ describe('DeploySimulator', () => {
       sim.transition('stabilized');
       const traffic = await sim.getTrafficDistribution();
       expect(traffic.entries).toHaveLength(1);
-      expect(traffic.entries[0].percentage).toBe(100);
-      expect(traffic.entries[0].target).toBe('7f8e9d0c');
+      const entry0 = traffic.entries[0]!;
+      expect(entry0.percentage).toBe(100);
+      expect(entry0.target).toBe('7f8e9d0c');
     });
   });
 
@@ -93,9 +95,9 @@ describe('DeploySimulator', () => {
       const sim = new DeploySimulator();
       const endpoints = await sim.getHealthEndpoints();
       expect(endpoints).toHaveLength(4);
-      expect(endpoints[0].status).toBe('degraded');
-      expect(endpoints[1].status).toBe('down');
-      expect(endpoints[2].status).toBe('down');
+      expect(endpoints[0]!.status).toBe('degraded');
+      expect(endpoints[1]!.status).toBe('down');
+      expect(endpoints[2]!.status).toBe('down');
     });
 
     it('has mostly healthy endpoints in rolling_back', async () => {
@@ -104,7 +106,7 @@ describe('DeploySimulator', () => {
       const endpoints = await sim.getHealthEndpoints();
       const healthy = endpoints.filter((e) => e.status === 'healthy');
       expect(healthy.length).toBe(3);
-      expect(endpoints[2].status).toBe('degraded');
+      expect(endpoints[2]!.status).toBe('degraded');
     });
 
     it('has all healthy endpoints in stabilized', async () => {
@@ -232,7 +234,7 @@ describe('DeploySimulator', () => {
       const sim = new DeploySimulator();
       const providers = sim.listCapabilityProviders();
       expect(providers).toHaveLength(1);
-      expect(providers[0].id).toBe('deploy-simulator-provider');
+      expect(providers[0]!.id).toBe('deploy-simulator-provider');
     });
   });
 

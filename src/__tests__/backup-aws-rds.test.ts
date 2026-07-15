@@ -99,17 +99,19 @@ describe('RdsSnapshotProvider', () => {
       const items = await provider.inventory(makeConfig());
 
       expect(items).toHaveLength(2);
-      expect(items[0].providerKind).toBe('aws_rds');
-      expect(items[0].source).toBe('my-db-instance');
-      expect(items[0].snapshotStatus).toBe('available');
-      expect(items[0].sizeBytes).toBe(100 * 1024 * 1024 * 1024);
-      expect(items[0].region).toBe('us-east-1');
+      const first = items[0]!;
+      const second = items[1]!;
+      expect(first.providerKind).toBe('aws_rds');
+      expect(first.source).toBe('my-db-instance');
+      expect(first.snapshotStatus).toBe('available');
+      expect(first.sizeBytes).toBe(100 * 1024 * 1024 * 1024);
+      expect(first.region).toBe('us-east-1');
       // Newest first
-      expect(items[0].label).toContain('snap-1');
-      expect(items[1].label).toContain('snap-2');
+      expect(first.label).toContain('snap-1');
+      expect(second.label).toContain('snap-2');
       // Previous size bytes filled from second snapshot
-      expect(items[0].previousSizeBytes).toBe(95 * 1024 * 1024 * 1024);
-      expect(items[1].previousSizeBytes).toBeNull();
+      expect(first.previousSizeBytes).toBe(95 * 1024 * 1024 * 1024);
+      expect(second.previousSizeBytes).toBeNull();
     });
   });
 

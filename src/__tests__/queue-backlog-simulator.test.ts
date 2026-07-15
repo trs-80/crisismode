@@ -11,17 +11,17 @@ describe('QueueSimulator', () => {
       const sim = new QueueSimulator();
       const queues = await sim.getQueueStats();
       expect(queues).toHaveLength(3);
-      expect(queues[0].name).toBe('orders');
-      expect(queues[0].depth).toBe(84_500);
-      expect(queues[2].name).toBe('analytics');
-      expect(queues[2].depth).toBe(156_000);
+      expect(queues[0]!.name).toBe('orders');
+      expect(queues[0]!.depth).toBe(84_500);
+      expect(queues[2]!.name).toBe('analytics');
+      expect(queues[2]!.depth).toBe(156_000);
     });
 
     it('returns lower depths and paused queues in draining', async () => {
       const sim = new QueueSimulator();
       sim.transition('draining');
       const queues = await sim.getQueueStats();
-      expect(queues[0].depth).toBe(32_000);
+      expect(queues[0]!.depth).toBe(32_000);
       expect(queues.every((q) => q.paused)).toBe(true);
     });
 
@@ -29,7 +29,7 @@ describe('QueueSimulator', () => {
       const sim = new QueueSimulator();
       sim.transition('cleared');
       const queues = await sim.getQueueStats();
-      expect(queues[0].depth).toBe(120);
+      expect(queues[0]!.depth).toBe(120);
       expect(queues.every((q) => !q.paused)).toBe(true);
     });
   });
@@ -155,7 +155,7 @@ describe('QueueSimulator', () => {
       const result = await sim.executeCommand({ type: 'structured_command', operation: 'resume_intake' }) as Record<string, unknown>;
       expect(result.resumed).toBe(true);
       const queues = await sim.getQueueStats();
-      expect(queues[0].depth).toBe(120);
+      expect(queues[0]!.depth).toBe(120);
     });
 
     it('scale_workers returns target count', async () => {
@@ -273,8 +273,8 @@ describe('QueueSimulator', () => {
       const sim = new QueueSimulator();
       const providers = sim.listCapabilityProviders();
       expect(providers).toHaveLength(2);
-      expect(providers[0].id).toBe('queue-simulator-read');
-      expect(providers[1].id).toBe('queue-simulator-write');
+      expect(providers[0]!.id).toBe('queue-simulator-read');
+      expect(providers[1]!.id).toBe('queue-simulator-write');
     });
   });
 

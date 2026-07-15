@@ -161,8 +161,8 @@ export class AiProviderLiveClient implements AiProviderBackend {
       r.status === 'fulfilled'
         ? r.value
         : {
-            name: this.config.providers[i].name,
-            endpoint: this.config.providers[i].endpoint,
+            name: this.config.providers[i]!.name,
+            endpoint: this.config.providers[i]!.endpoint,
             status: 'down' as const,
             latencyMs: 0,
             errorRate: 1,
@@ -191,7 +191,7 @@ export class AiProviderLiveClient implements AiProviderBackend {
 
     const percentile = (sorted: number[], p: number): number => {
       const idx = Math.ceil((p / 100) * sorted.length) - 1;
-      return sorted[Math.max(0, idx)];
+      return sorted[Math.max(0, idx)]!;
     };
 
     return {

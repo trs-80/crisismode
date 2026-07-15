@@ -37,7 +37,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
   if (opts.targetName) {
     const plugMatch = opts.targetName.match(/^PLUG-(\d+)$/i);
     if (plugMatch) {
-      await runPluginDiagnose(parseInt(plugMatch[1], 10) - 1);
+      await runPluginDiagnose(parseInt(plugMatch[1]!, 10) - 1);
       return;
     }
   }

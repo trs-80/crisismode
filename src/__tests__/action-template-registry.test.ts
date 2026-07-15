@@ -221,7 +221,7 @@ describe('templateToStep', () => {
     expect(step.requiredCapabilities).toEqual(['test.write']);
     expect(step.blastRadius.directComponents).toEqual(['test_target']);
     expect(step.statePreservation.before).toHaveLength(1);
-    expect(step.statePreservation.before[0].name).toBe('before_state');
+    expect(step.statePreservation.before[0]!.name).toBe('before_state');
     expect(step.successCriteria.description).toContain('reports success');
     expect(step.rollback?.type).toBe('manual');
   });

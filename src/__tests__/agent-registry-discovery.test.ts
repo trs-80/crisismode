@@ -66,9 +66,10 @@ describe('agent plugin discovery', () => {
 
     const projectPlugins = result.plugins.filter((p) => p.source === 'project');
     expect(projectPlugins).toHaveLength(1);
-    expect(projectPlugins[0].manifest.name).toBe('my-agent');
-    expect(projectPlugins[0].manifest.kind).toBe('agent');
-    expect(projectPlugins[0].source).toBe('project');
+    const projectPlugin = projectPlugins[0]!;
+    expect(projectPlugin.manifest.name).toBe('my-agent');
+    expect(projectPlugin.manifest.kind).toBe('agent');
+    expect(projectPlugin.source).toBe('project');
   });
 
   it('validates required manifest fields', async () => {
@@ -136,6 +137,6 @@ describe('agent plugin discovery', () => {
     );
     // Later source shadows earlier — should have exactly one
     expect(envPlugins).toHaveLength(1);
-    expect(envPlugins[0].manifest.version).toBe('2.0.0');
+    expect(envPlugins[0]!.manifest.version).toBe('2.0.0');
   });
 });

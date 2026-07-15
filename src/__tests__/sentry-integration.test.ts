@@ -144,9 +144,9 @@ describe('SentryIntegration', () => {
 
       const errors = await sentry.getRecentErrors('2026-03-17T00:00:00Z', 10);
       expect(errors).toHaveLength(3);
-      expect(errors[0].title).toContain('TypeError');
-      expect(errors[0].count).toBe(50);
-      expect(errors[2].count).toBe(150);
+      expect(errors[0]!.title).toContain('TypeError');
+      expect(errors[0]!.count).toBe(50);
+      expect(errors[2]!.count).toBe(150);
     });
 
     it('returns empty on API failure', async () => {
@@ -181,7 +181,7 @@ describe('SentryIntegration', () => {
       await sentry.connect();
 
       await sentry.getRecentErrors('2026-03-17', 10);
-      const url = fetchMock.mock.calls[1][0] as string;
+      const url = fetchMock.mock.calls[1]![0] as string;
       expect(url).toContain('project=api-service');
     });
   });

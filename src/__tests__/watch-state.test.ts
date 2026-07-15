@@ -129,7 +129,7 @@ describe('WatchState', () => {
       }
       const summary = state.getSummary();
       expect(summary.healthSnapshots.length).toBe(1000);
-      expect(summary.healthSnapshots[0].cycle).toBe(11); // oldest trimmed
+      expect(summary.healthSnapshots[0]!.cycle).toBe(11); // oldest trimmed
     });
   });
 
@@ -211,7 +211,7 @@ describe('WatchState', () => {
         'healthy', 'unhealthy', 'healthy', 'unhealthy', 'healthy', 'unhealthy',
       ];
       for (let i = 0; i < statuses.length; i++) {
-        state.recordHealth(makeHealth(statuses[i]), i + 1);
+        state.recordHealth(makeHealth(statuses[i]!), i + 1);
       }
 
       const patterns = state.detectPatterns();
@@ -228,7 +228,7 @@ describe('WatchState', () => {
         'healthy', 'recovering', 'unhealthy',
       ];
       for (let i = 0; i < statuses.length; i++) {
-        state.recordHealth(makeHealth(statuses[i]), i + 1);
+        state.recordHealth(makeHealth(statuses[i]!), i + 1);
       }
 
       const patterns = state.detectPatterns();

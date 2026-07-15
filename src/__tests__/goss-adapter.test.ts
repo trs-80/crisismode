@@ -205,9 +205,10 @@ describe('gossToHealthResult', () => {
     expect(health.status).toBe('healthy');
     expect(health.confidence).toBe(0.9);
     expect(health.signals).toHaveLength(1);
-    expect(health.signals![0].source).toBe('goss');
-    expect(health.signals![0].status).toBe('healthy');
-    expect(health.signals![0].detail).toContain('2');
+    const s0 = health.signals![0]!;
+    expect(s0.source).toBe('goss');
+    expect(s0.status).toBe('healthy');
+    expect(s0.detail).toContain('2');
   });
 
   it('failed tests — one signal per failure with critical status', () => {
@@ -234,10 +235,12 @@ describe('gossToHealthResult', () => {
 
     expect(health.status).toBe('unhealthy');
     expect(health.signals).toHaveLength(2);
-    expect(health.signals![0].source).toBe('Service:sshd');
-    expect(health.signals![0].status).toBe('critical');
-    expect(health.signals![1].source).toBe('Port:8080');
-    expect(health.signals![1].status).toBe('critical');
+    const s0 = health.signals![0]!;
+    const s1 = health.signals![1]!;
+    expect(s0.source).toBe('Service:sshd');
+    expect(s0.status).toBe('critical');
+    expect(s1.source).toBe('Port:8080');
+    expect(s1.status).toBe('critical');
   });
 
   it('skipped tests — one signal per skip with unknown status', () => {
@@ -255,8 +258,9 @@ describe('gossToHealthResult', () => {
     const health = gossToHealthResult(parsed);
 
     expect(health.signals).toHaveLength(1);
-    expect(health.signals![0].source).toBe('File:/etc/nginx/nginx.conf');
-    expect(health.signals![0].status).toBe('unknown');
+    const s0 = health.signals![0]!;
+    expect(s0.source).toBe('File:/etc/nginx/nginx.conf');
+    expect(s0.status).toBe('unknown');
   });
 
   it('mixed failures and skips — signals for both, none for passing', () => {
@@ -283,10 +287,12 @@ describe('gossToHealthResult', () => {
     const health = gossToHealthResult(parsed);
 
     expect(health.signals).toHaveLength(2);
-    expect(health.signals![0].status).toBe('critical');
-    expect(health.signals![0].source).toBe('Service:nginx');
-    expect(health.signals![1].status).toBe('unknown');
-    expect(health.signals![1].source).toBe('Package:redis');
+    const s0 = health.signals![0]!;
+    const s1 = health.signals![1]!;
+    expect(s0.status).toBe('critical');
+    expect(s0.source).toBe('Service:nginx');
+    expect(s1.status).toBe('unknown');
+    expect(s1.source).toBe('Package:redis');
   });
 
   it('no results — empty signals', () => {
@@ -342,10 +348,12 @@ describe('gossToDiagnoseResult', () => {
     expect(diag.healthy).toBe(false);
     expect(diag.findings).toHaveLength(2);
 
-    expect(diag.findings[0].id).toBe('goss-service-sshd-running');
-    expect(diag.findings[0].severity).toBe('warning');
-    expect(diag.findings[0].title).toBe('Service: sshd: running failed');
-    expect(diag.findings[0].evidence).toEqual({
+    const f0 = diag.findings[0]!;
+    const f1 = diag.findings[1]!;
+    expect(f0.id).toBe('goss-service-sshd-running');
+    expect(f0.severity).toBe('warning');
+    expect(f0.title).toBe('Service: sshd: running failed');
+    expect(f0.evidence).toEqual({
       actual: false,
       expected: [true],
       resourceType: 'Service',
@@ -353,8 +361,8 @@ describe('gossToDiagnoseResult', () => {
       property: 'running',
     });
 
-    expect(diag.findings[1].id).toBe('goss-port-443-listening');
-    expect(diag.findings[1].evidence).toEqual({
+    expect(f1.id).toBe('goss-port-443-listening');
+    expect(f1.evidence).toEqual({
       actual: false,
       expected: [true],
       resourceType: 'Port',
@@ -381,7 +389,7 @@ describe('gossToDiagnoseResult', () => {
 
     expect(diag.healthy).toBe(false);
     expect(diag.findings).toHaveLength(1);
-    expect(diag.findings[0].id).toBe('goss-package-curl-installed');
+    expect(diag.findings[0]!.id).toBe('goss-package-curl-installed');
   });
 
   it('skipped tests — no findings produced', () => {
@@ -430,8 +438,8 @@ describe('gossToDiagnoseResult', () => {
 
     expect(diag.healthy).toBe(false);
     expect(diag.findings).toHaveLength(3);
-    expect(diag.findings[0].id).toBe('goss-service-sshd-running');
-    expect(diag.findings[1].id).toBe('goss-file--var-log-app-log-exists');
-    expect(diag.findings[2].id).toBe('goss-port-5432-listening');
+    expect(diag.findings[0]!.id).toBe('goss-service-sshd-running');
+    expect(diag.findings[1]!.id).toBe('goss-file--var-log-app-log-exists');
+    expect(diag.findings[2]!.id).toBe('goss-port-5432-listening');
   });
 });

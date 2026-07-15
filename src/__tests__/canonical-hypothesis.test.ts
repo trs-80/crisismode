@@ -66,11 +66,12 @@ describe('applyCanonicalHypothesisBackstop', () => {
     const result = applyCanonicalHypothesisBackstop(hypotheses, routing, false);
 
     expect(result).toHaveLength(2);
-    expect(result[1].summary).toBe(CANONICAL_HYPOTHESIS_BY_SCENARIO['ceph-storage-degraded']);
+    const injected = result[1]!;
+    expect(injected.summary).toBe(CANONICAL_HYPOTHESIS_BY_SCENARIO['ceph-storage-degraded']);
     // The backstop reuses the AI's own evidence citations for the same
     // underlying diagnosis — it isn't inventing new evidence.
-    expect(result[1].evidence_refs).toEqual(hypotheses[0].evidence_refs);
-    expect(result[1].hypothesis_type).toBe('root_cause');
+    expect(injected.evidence_refs).toEqual(hypotheses[0]!.evidence_refs);
+    expect(injected.hypothesis_type).toBe('root_cause');
   });
 
   it('does not duplicate when a canonical-equivalent summary is already present', () => {
@@ -130,10 +131,11 @@ describe('applyCanonicalHypothesisBackstop', () => {
     const result = applyCanonicalHypothesisBackstop(hypotheses, routing, false);
 
     expect(result).toHaveLength(3);
-    expect(result[2].rank).toBe(3);
-    expect(result[2].hypothesis_id).not.toBe('h-1');
-    expect(result[2].hypothesis_id).not.toBe('h-2');
-    expect(result[2].summary).toBe('flink checkpoint failures are causing stream processing backpressure');
+    const injected = result[2]!;
+    expect(injected.rank).toBe(3);
+    expect(injected.hypothesis_id).not.toBe('h-1');
+    expect(injected.hypothesis_id).not.toBe('h-2');
+    expect(injected.summary).toBe('flink checkpoint failures are causing stream processing backpressure');
   });
 
   it('covers every canonical sentence with a scenario key that keywordsForScenario can resolve', () => {
@@ -175,7 +177,7 @@ describe('applyCanonicalHypothesisBackstop', () => {
     const result = applyCanonicalHypothesisBackstop(hypotheses, routing, false);
 
     expect(result).toHaveLength(2);
-    expect(result[1].summary).toBe('ai provider degradation is causing request failures');
+    expect(result[1]!.summary).toBe('ai provider degradation is causing request failures');
   });
 });
 

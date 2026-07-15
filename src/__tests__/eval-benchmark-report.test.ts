@@ -146,7 +146,7 @@ describe('summarizeBenchmarkResults', () => {
         },
       ],
     });
-    expect(summary.cases[0].reasons.join(' ')).toContain('evidence reference');
+    expect(summary.cases[0]!.reasons.join(' ')).toContain('evidence reference');
   });
 
   it('reports an empty reasons list for passing cases', () => {

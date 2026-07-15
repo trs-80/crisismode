@@ -201,7 +201,7 @@ function buildActionsSection(record: ForensicRecord): ReportSection {
 
   let content = '';
   for (let i = 0; i < record.stepResults.length; i++) {
-    const result = record.stepResults[i];
+    const result = record.stepResults[i]!;
     const step = result.step;
     const status = describeStepStatus(result.status);
     const duration = formatDuration(result.durationMs);

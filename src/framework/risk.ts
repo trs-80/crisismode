@@ -61,5 +61,5 @@ export function getMaxRiskIndex(steps: RecoveryStep[]): number {
  * Derive the maximum risk level from a recovery plan's steps.
  */
 export function derivePlanMaxRiskLevel(plan: RecoveryPlan): RiskLevel {
-  return RISK_ORDER[getMaxRiskIndex(plan.steps)];
+  return RISK_ORDER[getMaxRiskIndex(plan.steps)]!;
 }

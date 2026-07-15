@@ -182,7 +182,7 @@ export class CaptureStore {
   }): Promise<StoredCapture | null> {
     const matches = await this.list(filter);
     if (matches.length === 0) return null;
-    return this.get(matches[0].id);
+    return this.get(matches[0]!.id);
   }
 
   /**
@@ -269,8 +269,8 @@ export function parseDuration(duration: string): number {
   const match = duration.match(/^(\d+)\s*(ms|s|m|h|d)$/);
   if (!match) return 0;
 
-  const value = parseInt(match[1], 10);
-  const unit = match[2];
+  const value = parseInt(match[1]!, 10);
+  const unit = match[2]!;
 
   const multipliers: Record<string, number> = {
     ms: 1,

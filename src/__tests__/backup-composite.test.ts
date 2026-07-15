@@ -77,10 +77,12 @@ describe('BackupCompositeClient', () => {
       const report = await client.verifyAll(configs);
 
       expect(report.providers).toHaveLength(2);
-      expect(report.providers[0].kind).toBe('file_directory');
-      expect(report.providers[0].detected).toBe(true);
-      expect(report.providers[1].kind).toBe('aws_rds');
-      expect(report.providers[1].detected).toBe(true);
+      const provider0 = report.providers[0]!;
+      const provider1 = report.providers[1]!;
+      expect(provider0.kind).toBe('file_directory');
+      expect(provider0.detected).toBe(true);
+      expect(provider1.kind).toBe('aws_rds');
+      expect(provider1.detected).toBe(true);
       expect(fsProvider.detect).toHaveBeenCalled();
       expect(rdsProvider.detect).toHaveBeenCalled();
     });
@@ -100,7 +102,7 @@ describe('BackupCompositeClient', () => {
 
       const report = await client.verifyAll(configs);
 
-      expect(report.providers[1].detected).toBe(false);
+      expect(report.providers[1]!.detected).toBe(false);
       expect(report.uncoveredSources).toContain('rds-instance');
     });
 
@@ -115,10 +117,11 @@ describe('BackupCompositeClient', () => {
 
       const report = await client.verifyAll(configs);
 
-      expect(report.providers[0].detected).toBe(false);
+      expect(report.providers[0]!.detected).toBe(false);
       expect(report.uncoveredSources).toContain('rds-instance');
-      expect(report.rpoEvaluations[0].withinTarget).toBe(false);
-      expect(report.rpoEvaluations[0].actualAgeSeconds).toBe(Infinity);
+      const rpo0 = report.rpoEvaluations[0]!;
+      expect(rpo0.withinTarget).toBe(false);
+      expect(rpo0.actualAgeSeconds).toBe(Infinity);
     });
 
     it('computes RPO evaluations from newest backup', async () => {
@@ -136,9 +139,10 @@ describe('BackupCompositeClient', () => {
       const report = await client.verifyAll(configs);
 
       expect(report.rpoEvaluations).toHaveLength(1);
-      expect(report.rpoEvaluations[0].withinTarget).toBe(true);
-      expect(report.rpoEvaluations[0].actualAgeSeconds).toBeGreaterThan(3 * 3600);
-      expect(report.rpoEvaluations[0].actualAgeSeconds).toBeLessThan(5 * 3600);
+      const rpo0 = report.rpoEvaluations[0]!;
+      expect(rpo0.withinTarget).toBe(true);
+      expect(rpo0.actualAgeSeconds).toBeGreaterThan(3 * 3600);
+      expect(rpo0.actualAgeSeconds).toBeLessThan(5 * 3600);
     });
 
     it('uses provider-specific RTO estimation', async () => {
@@ -163,8 +167,9 @@ describe('BackupCompositeClient', () => {
       const report = await client.verifyAll(configs);
 
       expect(report.rtoEstimates).toHaveLength(1);
-      expect(report.rtoEstimates[0].estimatedSeconds).toBe(11140);
-      expect(report.rtoEstimates[0].basis).toContain('RDS');
+      const rto0 = report.rtoEstimates[0]!;
+      expect(rto0.estimatedSeconds).toBe(11140);
+      expect(rto0.basis).toContain('RDS');
     });
 
     it('runs multiple providers in parallel', async () => {

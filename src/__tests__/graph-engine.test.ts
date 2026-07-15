@@ -336,8 +336,8 @@ describe('RecoveryGraphEngine', () => {
 
     const results = await engine.executePlan(plan, diagnosis);
     expect(results).toHaveLength(2);
-    expect(results[0].status).toBe('skipped');
-    expect(results[1].status).toBe('success');
+    expect(results[0]!.status).toBe('skipped');
+    expect(results[1]!.status).toBe('success');
     expect(executeCommand).not.toHaveBeenCalled();
   });
 
@@ -464,8 +464,9 @@ describe('RecoveryGraphEngine', () => {
     const results = await engine.executePlan(plan, diagnosis);
     expect(executeCommand).toHaveBeenCalledTimes(1);
     expect(executeCommand).toHaveBeenCalledWith(structuredStep.command);
-    expect(results[0].status).toBe('success');
-    expect(results[0].providerResolution).toEqual([
+    const firstResult = results[0]!;
+    expect(firstResult.status).toBe('success');
+    expect(firstResult.providerResolution).toEqual([
       {
         capability: 'traffic.backend.detach',
         resolved: true,

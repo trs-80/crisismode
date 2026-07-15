@@ -68,7 +68,7 @@ describe('approval-handler', () => {
       );
 
       // Verify the body contains expected fields
-      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      const callBody = JSON.parse(mockFetch.mock.calls[0]![1].body);
       expect(callBody.spokeId).toBe('spoke-1');
       expect(callBody.stepId).toBe(step.stepId);
     });

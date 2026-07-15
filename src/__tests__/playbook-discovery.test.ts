@@ -83,7 +83,7 @@ describe('discoverPlaybooks', () => {
 
     const relevantWarnings = result.warnings.filter((w) => w.path.includes('broken.md'));
     expect(relevantWarnings.length).toBe(1);
-    expect(relevantWarnings[0].reason).toContain('Invalid frontmatter');
+    expect(relevantWarnings[0]!.reason).toContain('Invalid frontmatter');
   });
 
   it('ignores non-.md files', async () => {
@@ -145,6 +145,6 @@ describe('discoverPlaybooks', () => {
       (p) => p.source === 'env' && p.frontmatter.name === 'dup-playbook',
     );
     expect(envPlaybooks).toHaveLength(1);
-    expect(envPlaybooks[0].frontmatter.version).toBe('2.0.0');
+    expect(envPlaybooks[0]!.frontmatter.version).toBe('2.0.0');
   });
 });

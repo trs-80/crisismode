@@ -57,9 +57,9 @@ describe('enrichment', () => {
       ],
     };
     const out = enrichHealth(health);
-    expect(out.signals[0].explanation).toBeTruthy();
-    expect(out.signals[0].learnMoreUrl).toContain('postgresql.org');
-    expect(out.signals[1].explanation).toBe('mine');
+    expect(out.signals[0]!.explanation).toBeTruthy();
+    expect(out.signals[0]!.learnMoreUrl).toContain('postgresql.org');
+    expect(out.signals[1]!.explanation).toBe('mine');
   });
 
   it('enriches diagnosis findings', () => {
@@ -67,6 +67,6 @@ describe('enrichment', () => {
       status: 'identified', scenario: 'x', confidence: 1, diagnosticPlanNeeded: false,
       findings: [{ source: 'dns_resolvers', observation: 'o', severity: 'critical' }],
     };
-    expect(enrichDiagnosis(d).findings[0].learnMoreUrl).toMatch(/^https:\/\//);
+    expect(enrichDiagnosis(d).findings[0]!.learnMoreUrl).toMatch(/^https:\/\//);
   });
 });

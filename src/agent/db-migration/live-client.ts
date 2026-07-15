@@ -117,7 +117,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
         LIMIT 1
       `);
       if (result.rows.length === 0) return null;
-      const row = result.rows[0];
+      const row = result.rows[0]!;
       return {
         version: row.version,
         name: row.name,
@@ -139,7 +139,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
         LIMIT 1
       `);
       if (result.rows.length === 0) return null;
-      const row = result.rows[0];
+      const row = result.rows[0]!;
       return {
         version: row.hash,
         name: row.hash,
@@ -168,7 +168,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
     `);
 
     if (result.rows.length > 0) {
-      const row = result.rows[0];
+      const row = result.rows[0]!;
       const isStuck = row.duration_sec > this.longQueryThresholdSec;
       return {
         version: `ddl-pid-${row.pid}`,
@@ -210,7 +210,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
       return { active: 0, idle: 0, waiting: 0, maxConnections: 100, utilizationPct: 0 };
     }
 
-    const row = result.rows[0];
+    const row = result.rows[0]!;
     const total = row.active + row.idle;
     return {
       active: row.active,
@@ -282,7 +282,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
         )::bigint AS tablespace_free
     `);
 
-    const row = result.rows[0];
+    const row = result.rows[0]!;
     return {
       totalBytes: parseInt(row.total_bytes, 10),
       tablespaceFree: parseInt(row.tablespace_free, 10),
@@ -337,7 +337,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
           if (migration.status === 'running' || migration.status === 'failed') {
             const pidMatch = migration.version.match(/pid-(\d+)/);
             if (pidMatch) {
-              await this.pool.query('SELECT pg_cancel_backend($1)', [parseInt(pidMatch[1], 10)]);
+              await this.pool.query('SELECT pg_cancel_backend($1)', [parseInt(pidMatch[1]!, 10)]);
             }
           }
           return { rolledBack: true, version: migration.version };
@@ -390,7 +390,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
         if (result.rows.length === 0) {
           return compareCheckValue(0, check.expect.operator, check.expect.value);
         }
-        const actual = Object.values(result.rows[0])[0];
+        const actual = Object.values(result.rows[0]!)[0];
         return compareCheckValue(actual, check.expect.operator, check.expect.value);
       } catch {
         return false;
@@ -435,7 +435,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
 
   async discoverVersion(): Promise<string> {
     const result = await this.pool.query<{ server_version: string }>('SHOW server_version');
-    return result.rows[0].server_version;
+    return result.rows[0]!.server_version;
   }
 
   async close(): Promise<void> {

@@ -102,7 +102,7 @@ function buildNextSteps(
   const steps: string[] = [];
 
   if (critical.length > 0) {
-    const first = critical[0];
+    const first = critical[0]!;
     steps.push(`Investigate: \`crisismode diagnose ${first.id}\``);
     if (critical.length > 1) {
       steps.push(`${critical.length - 1} more unhealthy — diagnose each before attempting recovery`);

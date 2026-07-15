@@ -22,8 +22,8 @@ describe('healthToSignals', () => {
       { source: 'pg_connection', status: 'critical', detail: 'PostgreSQL is unreachable: ECONNREFUSED' },
     ]));
     expect(out).toHaveLength(1);
-    expect(out[0].type).toBe('connection');
-    expect(out[0].severity).toBe('critical');
+    expect(out[0]!.type).toBe('connection');
+    expect(out[0]!.severity).toBe('critical');
   });
 
   it('maps timeouts, lag, and memory details to matching types', () => {
@@ -48,7 +48,7 @@ describe('healthToSignals', () => {
       { source: 'pg_probe', status: 'critical', detail: 'connection timed out after 5s' },
     ]));
     expect(out).toHaveLength(1);
-    expect(out[0].type).toBe('timeout');
+    expect(out[0]!.type).toBe('timeout');
   });
 
   it('does not map bare port numbers like 5432 to error_rate (falls back to custom instead)', () => {
@@ -57,7 +57,7 @@ describe('healthToSignals', () => {
     ]));
     expect(out.filter((s) => s.type === 'error_rate')).toHaveLength(0);
     expect(out).toHaveLength(1);
-    expect(out[0].type).toBe('custom');
+    expect(out[0]!.type).toBe('custom');
   });
 
   it('does not map "fully" to resource_exhaustion (word boundary on "full"), falls back to custom', () => {
@@ -65,7 +65,7 @@ describe('healthToSignals', () => {
       { source: 'pg_replication', status: 'critical', detail: 'replica fully synced but read-only' },
     ]));
     expect(out).toHaveLength(1);
-    expect(out[0].type).toBe('custom');
+    expect(out[0]!.type).toBe('custom');
   });
 
   it('drops healthy signals', () => {
@@ -79,10 +79,10 @@ describe('healthToSignals', () => {
       { source: 'weird_probe', status: 'critical', detail: 'something odd happened' },
     ]));
     expect(out).toHaveLength(1);
-    expect(out[0].type).toBe('custom');
-    expect(out[0].source).toBe('weird_probe');
-    expect(out[0].detail).toBe('something odd happened');
-    expect(out[0].severity).toBe('critical');
+    expect(out[0]!.type).toBe('custom');
+    expect(out[0]!.source).toBe('weird_probe');
+    expect(out[0]!.detail).toBe('something odd happened');
+    expect(out[0]!.severity).toBe('critical');
   });
 
   it('maps plural 5xx forms like "503s" to error_rate without matching longer tokens like "15030"', () => {
@@ -91,8 +91,8 @@ describe('healthToSignals', () => {
       { source: 'http_probe', status: 'warning', detail: 'error budget at 500s and climbing' },
       { source: 'netstat', status: 'warning', detail: 'process listening on port 15030' },
     ]));
-    expect(out[0].type).toBe('error_rate');
-    expect(out[1].type).toBe('error_rate');
+    expect(out[0]!.type).toBe('error_rate');
+    expect(out[1]!.type).toBe('error_rate');
     expect(out.filter((s) => s.source === 'netstat' && s.type === 'error_rate')).toHaveLength(0);
   });
 });

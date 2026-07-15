@@ -133,7 +133,7 @@ describe('PgReplicationAgent', () => {
       const origQuery = simulator.queryReplicationStatus.bind(simulator);
       simulator.queryReplicationStatus = async () => {
         const results = await origQuery();
-        results[2].client_addr = "10.0.1.52'; DROP TABLE users; --";
+        results[2]!.client_addr = "10.0.1.52'; DROP TABLE users; --";
         return results;
       };
 
@@ -149,8 +149,9 @@ describe('PgReplicationAgent', () => {
       const origQuery = simulator.queryReplicationStatus.bind(simulator);
       simulator.queryReplicationStatus = async () => {
         const results = await origQuery();
-        results[2].client_addr = '10.89.0.5/32';
-        results[2].lag_seconds = 342;
+        const r2 = results[2]!;
+        r2.client_addr = '10.89.0.5/32';
+        r2.lag_seconds = 342;
         return results;
       };
 

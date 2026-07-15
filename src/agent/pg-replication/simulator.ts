@@ -279,7 +279,7 @@ export class PgSimulator implements PgBackend {
 
   private countStaleIdleInTx(stmt: string): number {
     const thresholdMatch = /INTERVAL '(\d+) seconds?'/i.exec(stmt);
-    const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : 0;
+    const threshold = thresholdMatch ? parseInt(thresholdMatch[1]!, 10) : 0;
     return this.idleInTxSessions.filter((s) => s.ageSeconds >= threshold).length;
   }
 
@@ -299,7 +299,7 @@ export class PgSimulator implements PgBackend {
       }
       if (stmt.includes('pg_terminate_backend') && stmt.includes('idle in transaction')) {
         const thresholdMatch = /INTERVAL '(\d+) seconds?'/i.exec(stmt);
-        const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : 0;
+        const threshold = thresholdMatch ? parseInt(thresholdMatch[1]!, 10) : 0;
         const terminated = this.idleInTxSessions.filter((s) => s.ageSeconds >= threshold);
         this.idleInTxSessions = this.idleInTxSessions.filter((s) => s.ageSeconds < threshold);
         return { simulated: true, statement: stmt, terminatedCount: terminated.length, remaining: this.idleInTxSessions.length };

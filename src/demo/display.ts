@@ -197,8 +197,7 @@ export function displayPlanTable(plan: RecoveryPlan): void {
   );
   console.log(chalk.dim('     ' + '─'.repeat(68)));
 
-  for (let i = 0; i < plan.steps.length; i++) {
-    const s = plan.steps[i];
+  for (const [i, s] of plan.steps.entries()) {
     const num = `${i + 1}`.padEnd(4);
     const type = s.type.padEnd(24);
     const risk =

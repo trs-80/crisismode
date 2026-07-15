@@ -59,8 +59,8 @@ describe('AI Diagnosis Toolkit', () => {
       expect(result.scenario).toBe('replication_lag_cascade');
       expect(result.confidence).toBe(0.92);
       expect(result.findings).toHaveLength(1);
-      expect(result.findings[0].severity).toBe('critical');
-      expect(result.findings[0].data?.root_cause).toBe('Heavy write load causing WAL generation to outpace replay');
+      expect(result.findings[0]!.severity).toBe('critical');
+      expect(result.findings[0]!.data?.root_cause).toBe('Heavy write load causing WAL generation to outpace replay');
     });
 
     it('handles markdown-wrapped JSON', () => {
@@ -113,14 +113,14 @@ describe('Version-Aware Agent Selection', () => {
   it('rejects version outside constraint (9.5 not in >=14.0 <18.0)', async () => {
     const config: SiteConfig = {
       ...baseConfig,
-      targets: [{ ...baseConfig.targets[0], version: '9.5' }],
+      targets: [{ ...baseConfig.targets[0]!, version: '9.5' }],
     };
     const registry = new AgentRegistry(config);
     await expect(registry.createForTarget('pg-16')).rejects.toThrow('No agent supports postgresql 9.5');
   });
 
   it('matches any agent when version is omitted (backward-compatible)', async () => {
-    const { version, ...targetWithoutVersion } = baseConfig.targets[0];
+    const { version, ...targetWithoutVersion } = baseConfig.targets[0]!;
     const config: SiteConfig = {
       ...baseConfig,
       targets: [targetWithoutVersion],
@@ -133,7 +133,7 @@ describe('Version-Aware Agent Selection', () => {
   it('error message lists available agents and version ranges', async () => {
     const config: SiteConfig = {
       ...baseConfig,
-      targets: [{ ...baseConfig.targets[0], version: '9.5' }],
+      targets: [{ ...baseConfig.targets[0]!, version: '9.5' }],
     };
     const registry = new AgentRegistry(config);
     try {
@@ -254,20 +254,20 @@ describe('Credential validation', () => {
   it('warns when env username var is missing', () => {
     const warnings = validateCredentials({ type: 'env', username: 'MISSING_USER' });
     expect(warnings).toHaveLength(1);
-    expect(warnings[0].envVar).toBe('MISSING_USER');
-    expect(warnings[0].field).toBe('username');
+    expect(warnings[0]!.envVar).toBe('MISSING_USER');
+    expect(warnings[0]!.field).toBe('username');
   });
 
   it('warns when env password var is missing', () => {
     const warnings = validateCredentials({ type: 'env', password: 'MISSING_PASS' });
     expect(warnings).toHaveLength(1);
-    expect(warnings[0].envVar).toBe('MISSING_PASS');
+    expect(warnings[0]!.envVar).toBe('MISSING_PASS');
   });
 
   it('warns when env token var is missing', () => {
     const warnings = validateCredentials({ type: 'env', key: 'MISSING_TOKEN' });
     expect(warnings).toHaveLength(1);
-    expect(warnings[0].field).toBe('token');
+    expect(warnings[0]!.field).toBe('token');
   });
 
   it('returns no warnings for undefined credentials', () => {
@@ -355,7 +355,7 @@ describe('AI Plan Explainer (fallback)', () => {
       expect(explanation.source).toBe('fallback');
       expect(explanation.summary).toContain('replication_lag_cascade');
       expect(explanation.stepExplanations).toHaveLength(2);
-      expect(explanation.stepExplanations[0].stepId).toBe('diag-1');
+      expect(explanation.stepExplanations[0]!.stepId).toBe('diag-1');
       expect(explanation.risks.length).toBeGreaterThan(0);
     } finally {
       if (origKey) process.env.ANTHROPIC_API_KEY = origKey;

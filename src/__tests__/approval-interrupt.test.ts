@@ -136,17 +136,19 @@ describe('Approval interrupt/resume', () => {
     // The graph should have paused at the approval interrupt.
     // Only the notification before approval should have completed.
     expect(results.length).toBe(1);
-    expect(results[0].stepId).toBe('step-notify');
+    expect(results[0]!.stepId).toBe('step-notify');
 
     // Resume with approval
     const resumedResults = await engine.resume('approved');
 
     // After resume, all steps should be complete
     expect(resumedResults.length).toBe(3);
-    expect(resumedResults[1].stepId).toBe('step-approve');
-    expect(resumedResults[1].status).toBe('success');
-    expect(resumedResults[2].stepId).toBe('step-final');
-    expect(resumedResults[2].status).toBe('success');
+    const approveResult = resumedResults[1]!;
+    expect(approveResult.stepId).toBe('step-approve');
+    expect(approveResult.status).toBe('success');
+    const finalResult = resumedResults[2]!;
+    expect(finalResult.stepId).toBe('step-final');
+    expect(finalResult.status).toBe('success');
   });
 
   it('halts execution when approval is rejected after resume', async () => {

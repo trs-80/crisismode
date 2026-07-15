@@ -66,7 +66,7 @@ describe('Config loader', () => {
     expect(result.source).toBe('file');
     expect(result.config.apiVersion).toBe('crisismode/v1');
     expect(result.config.targets).toHaveLength(2);
-    expect(result.config.targets[0].name).toBe('test-pg');
+    expect(result.config.targets[0]!.name).toBe('test-pg');
   });
 
   it('rejects config with wrong apiVersion', () => {
@@ -105,7 +105,7 @@ describe('Config loader', () => {
     try {
       const result = loadConfig();
       expect(result.source).toBe('env-fallback');
-      expect(result.config.targets[0].kind).toBe('postgresql');
+      expect(result.config.targets[0]!.kind).toBe('postgresql');
       const pg = result.config.targets[0] as { primary: { host: string; port: number } };
       expect(pg.primary.host).toBe('10.0.0.1');
       expect(pg.primary.port).toBe(5555);
@@ -150,11 +150,13 @@ describe('Target resolution', () => {
   it('resolves all targets from config', () => {
     const resolved = resolveTargets(validConfig);
     expect(resolved).toHaveLength(2);
-    expect(resolved[0].name).toBe('test-pg');
-    expect(resolved[0].kind).toBe('postgresql');
-    expect(resolved[0].credentials.username).toBe('admin');
-    expect(resolved[1].name).toBe('test-redis');
-    expect(resolved[1].replicas).toEqual([]);
+    const first = resolved[0]!;
+    const second = resolved[1]!;
+    expect(first.name).toBe('test-pg');
+    expect(first.kind).toBe('postgresql');
+    expect(first.credentials.username).toBe('admin');
+    expect(second.name).toBe('test-redis');
+    expect(second.replicas).toEqual([]);
   });
 });
 
@@ -170,7 +172,7 @@ describe('Agent registry', () => {
   it('creates the first agent when only one target exists', async () => {
     const singleTarget: SiteConfig = {
       ...validConfig,
-      targets: [validConfig.targets[0]],
+      targets: [validConfig.targets[0]!],
     };
     const registry = new AgentRegistry(singleTarget);
     const instance = await registry.createFirst();
@@ -251,7 +253,7 @@ describe('Agent registry', () => {
     const configWithPin: SiteConfig = {
       ...validConfig,
       targets: [
-        { ...validConfig.targets[0], agent: 'postgresql-replication-recovery' },
+        { ...validConfig.targets[0]!, agent: 'postgresql-replication-recovery' },
       ],
     };
     const registry = new AgentRegistry(configWithPin);

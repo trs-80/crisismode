@@ -267,7 +267,7 @@ export function buildRollbackGraph(
   }
 
   for (let i = 0; i < nodeCount; i++) {
-    const stepResult = stepsToRollback[i];
+    const stepResult = stepsToRollback[i]!;
     const step = stepResult.step as SystemActionStep;
     const rollback = step.rollback!;
     const nodeName = `rollback_${i}`;
