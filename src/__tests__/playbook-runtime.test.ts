@@ -58,7 +58,7 @@ describe('playbookToPlan', () => {
     });
 
     const plan = playbookToPlan(playbook);
-    const step = plan.steps[0];
+    const step = plan.steps[0]!;
 
     expect(step.type).toBe('diagnosis_action');
     expect(step.stepId).toBe('test-playbook-step-1');
@@ -85,14 +85,14 @@ describe('playbookToPlan', () => {
     });
 
     const plan = playbookToPlan(playbook);
-    const step = plan.steps[0];
+    const step = plan.steps[0]!;
 
     expect(step.type).toBe('system_action');
     if (step.type === 'system_action') {
       expect(step.riskLevel).toBe('elevated');
       expect(step.blastRadius.maxImpact).toContain('60');
       expect(step.preConditions).toHaveLength(1);
-      expect(step.preConditions![0].description).toBe('Service is running');
+      expect(step.preConditions![0]!.description).toBe('Service is running');
       expect(step.successCriteria.description).toBe('Service restarted');
     }
   });
@@ -111,12 +111,12 @@ describe('playbookToPlan', () => {
     });
 
     const plan = playbookToPlan(playbook);
-    const step = plan.steps[0];
+    const step = plan.steps[0]!;
 
     expect(step.type).toBe('human_notification');
     if (step.type === 'human_notification') {
-      expect(step.recipients[0].role).toBe('oncall');
-      expect(step.recipients[0].urgency).toBe('high');
+      expect(step.recipients[0]!.role).toBe('oncall');
+      expect(step.recipients[0]!.urgency).toBe('high');
       expect(step.message.summary).toBe('Database lag resolved');
       expect(step.channel).toBe('pagerduty');
     }
@@ -136,11 +136,11 @@ describe('playbookToPlan', () => {
     });
 
     const plan = playbookToPlan(playbook);
-    const step = plan.steps[0];
+    const step = plan.steps[0]!;
 
     expect(step.type).toBe('human_approval');
     if (step.type === 'human_approval') {
-      expect(step.approvers[0].role).toBe('oncall');
+      expect(step.approvers[0]!.role).toBe('oncall');
       expect(step.timeout).toBe('10m');
       expect(step.timeoutAction).toBe('escalate');
     }
@@ -158,13 +158,13 @@ describe('playbookToPlan', () => {
     });
 
     const plan = playbookToPlan(playbook);
-    const step = plan.steps[0];
+    const step = plan.steps[0]!;
 
     expect(step.type).toBe('checkpoint');
     if (step.type === 'checkpoint') {
       expect(step.stateCaptures).toHaveLength(1);
-      expect(step.stateCaptures[0].name).toBe('checkpoint-3');
-      expect(step.stateCaptures[0].captureType).toBe('command_output');
+      expect(step.stateCaptures[0]!.name).toBe('checkpoint-3');
+      expect(step.stateCaptures[0]!.captureType).toBe('command_output');
     }
   });
 
@@ -180,7 +180,7 @@ describe('playbookToPlan', () => {
     });
 
     const plan = playbookToPlan(playbook);
-    const step = plan.steps[0];
+    const step = plan.steps[0]!;
 
     expect(step.type).toBe('replanning_checkpoint');
     if (step.type === 'replanning_checkpoint') {
@@ -202,7 +202,7 @@ describe('playbookToPlan', () => {
     });
 
     const plan = playbookToPlan(playbook);
-    const step = plan.steps[0];
+    const step = plan.steps[0]!;
 
     expect(step.type).toBe('conditional');
     if (step.type === 'conditional') {
@@ -228,7 +228,7 @@ describe('playbookToPlan', () => {
     });
 
     const plan = playbookToPlan(playbook);
-    const step = plan.steps[0];
+    const step = plan.steps[0]!;
 
     if (step.type === 'diagnosis_action') {
       expect(step.command).toEqual({ type: 'sql', statement: 'SELECT 1' });

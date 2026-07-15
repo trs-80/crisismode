@@ -174,7 +174,7 @@ export class ConfigDriftLiveClient implements ConfigDriftBackend {
       for (const line of lines) {
         if (line.match(/^[a-f0-9]+ /)) {
           const parts = line.split(' ');
-          currentCommit = parts[0];
+          currentCommit = parts[0]!;
           currentAuthor = parts.slice(1).join(' ');
         } else if (line.trim()) {
           changes.push({
@@ -240,7 +240,7 @@ export class ConfigDriftLiveClient implements ConfigDriftBackend {
       ]);
       const dateMatch = stdout.match(/notAfter=(.+)/);
       if (dateMatch) {
-        const expiry = new Date(dateMatch[1]);
+        const expiry = new Date(dateMatch[1]!);
         return {
           name,
           provider: 'cert-manager',

@@ -149,7 +149,7 @@ export class RedisMemoryAgent implements RecoveryAgent {
       {
         source: 'redis_slowlog',
         observation: slowlog.length > 0
-          ? `${slowlog.length} slow queries detected. Worst: ${slowlog[0]?.command} (${(slowlog[0]?.durationMicros / 1000).toFixed(0)}ms).`
+          ? `${slowlog.length} slow queries detected. Worst: ${slowlog[0]!.command} (${(slowlog[0]!.durationMicros / 1000).toFixed(0)}ms).`
           : 'No slow queries in recent slowlog.',
         severity: slowlog.length > 5 ? 'critical' : slowlog.length > 0 ? 'warning' : 'info',
         data: { slowlog },

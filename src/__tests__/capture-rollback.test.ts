@@ -77,10 +77,11 @@ describe('generateCaptureRollbackCommands', () => {
 
     const commands = await generateCaptureRollbackCommands(stepResult, store);
     expect(commands).toHaveLength(1);
-    expect(commands[0].restorationType).toBe('sql_restore');
-    expect(commands[0].command.type).toBe('sql');
-    expect(commands[0].command.statement).toContain("SET wal_level = 'replica'");
-    expect(commands[0].captureId).toBeTruthy();
+    const command = commands[0]!;
+    expect(command.restorationType).toBe('sql_restore');
+    expect(command.command.type).toBe('sql');
+    expect(command.command.statement).toContain("SET wal_level = 'replica'");
+    expect(command.captureId).toBeTruthy();
   });
 
   it('generates SQL restore from current_setting capture', async () => {
@@ -101,7 +102,7 @@ describe('generateCaptureRollbackCommands', () => {
 
     const commands = await generateCaptureRollbackCommands(stepResult, store);
     expect(commands).toHaveLength(1);
-    expect(commands[0].command.statement).toContain("SET max_connections = '100'");
+    expect(commands[0]!.command.statement).toContain("SET max_connections = '100'");
   });
 
   it('generates comment-based restore for SELECT queries', async () => {
@@ -122,7 +123,7 @@ describe('generateCaptureRollbackCommands', () => {
 
     const commands = await generateCaptureRollbackCommands(stepResult, store);
     expect(commands).toHaveLength(1);
-    expect(commands[0].command.statement).toContain('-- Restore point');
+    expect(commands[0]!.command.statement).toContain('-- Restore point');
   });
 
   it('generates API restore command from api_snapshot', async () => {
@@ -143,10 +144,11 @@ describe('generateCaptureRollbackCommands', () => {
 
     const commands = await generateCaptureRollbackCommands(stepResult, store);
     expect(commands).toHaveLength(1);
-    expect(commands[0].restorationType).toBe('api_restore');
-    expect(commands[0].command.type).toBe('api_call');
-    expect(commands[0].command.operation).toBe('restore');
-    expect(commands[0].command.parameters!.endpoint).toBe('/api/config');
+    const command = commands[0]!;
+    expect(command.restorationType).toBe('api_restore');
+    expect(command.command.type).toBe('api_call');
+    expect(command.command.operation).toBe('restore');
+    expect(command.command.parameters!.endpoint).toBe('/api/config');
   });
 
   it('generates file restore command from file_snapshot', async () => {
@@ -168,10 +170,11 @@ describe('generateCaptureRollbackCommands', () => {
 
     const commands = await generateCaptureRollbackCommands(stepResult, store);
     expect(commands).toHaveLength(1);
-    expect(commands[0].restorationType).toBe('file_restore');
-    expect(commands[0].command.type).toBe('structured_command');
-    expect(commands[0].command.operation).toBe('restore_files');
-    expect(commands[0].command.parameters!.snapshots).toEqual({
+    const command = commands[0]!;
+    expect(command.restorationType).toBe('file_restore');
+    expect(command.command.type).toBe('structured_command');
+    expect(command.command.operation).toBe('restore_files');
+    expect(command.command.parameters!.snapshots).toEqual({
       '/etc/app/config.yaml': 'key: value\n',
     });
   });
@@ -275,6 +278,6 @@ describe('generateCaptureRollbackCommands', () => {
     const commands = await generateCaptureRollbackCommands(stepResult, store);
     expect(commands).toHaveLength(1);
     // Should escape single quotes
-    expect(commands[0].command.statement).toContain("''custom''");
+    expect(commands[0]!.command.statement).toContain("''custom''");
   });
 });

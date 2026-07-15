@@ -78,11 +78,11 @@ export function parseGraphiteLine(line: string): SensuMetricPoint | null {
   const parts = trimmed.split(/\s+/);
   if (parts.length < 2) return null;
 
-  const name = parts[0];
-  const value = parseFloat(parts[1]);
+  const name = parts[0]!;
+  const value = parseFloat(parts[1]!);
   if (isNaN(value)) return null;
 
-  const timestamp = parts.length >= 3 ? parseInt(parts[2], 10) : null;
+  const timestamp = parts.length >= 3 ? parseInt(parts[2]!, 10) : null;
 
   return {
     name,
@@ -105,20 +105,21 @@ export function parseInfluxDBLine(line: string): SensuMetricPoint | null {
   const spaceParts = trimmed.split(/\s+/);
   if (spaceParts.length < 2) return null;
 
-  const measurementAndTags = spaceParts[0];
-  const fieldsStr = spaceParts[1];
-  const timestampStr = spaceParts.length >= 3 ? spaceParts[2] : null;
+  const measurementAndTags = spaceParts[0]!;
+  const fieldsStr = spaceParts[1]!;
+  const timestampStr = spaceParts.length >= 3 ? spaceParts[2]! : null;
 
   // Parse measurement and tags
   const commaParts = measurementAndTags.split(',');
   const measurement = commaParts[0];
   const tags: Array<{ name: string; value: string }> = [];
   for (let i = 1; i < commaParts.length; i++) {
-    const eqIdx = commaParts[i].indexOf('=');
+    const part = commaParts[i]!;
+    const eqIdx = part.indexOf('=');
     if (eqIdx > 0) {
       tags.push({
-        name: commaParts[i].slice(0, eqIdx),
-        value: commaParts[i].slice(eqIdx + 1),
+        name: part.slice(0, eqIdx),
+        value: part.slice(eqIdx + 1),
       });
     }
   }
@@ -161,18 +162,19 @@ export function parseOpenTSDBLine(line: string): SensuMetricPoint | null {
   const parts = trimmed.split(/\s+/);
   if (parts.length < 3) return null;
 
-  const name = parts[0];
-  const timestamp = parseInt(parts[1], 10);
-  const value = parseFloat(parts[2]);
+  const name = parts[0]!;
+  const timestamp = parseInt(parts[1]!, 10);
+  const value = parseFloat(parts[2]!);
   if (isNaN(value)) return null;
 
   const tags: Array<{ name: string; value: string }> = [];
   for (let i = 3; i < parts.length; i++) {
-    const eqIdx = parts[i].indexOf('=');
+    const part = parts[i]!;
+    const eqIdx = part.indexOf('=');
     if (eqIdx > 0) {
       tags.push({
-        name: parts[i].slice(0, eqIdx),
-        value: parts[i].slice(eqIdx + 1),
+        name: part.slice(0, eqIdx),
+        value: part.slice(eqIdx + 1),
       });
     }
   }
@@ -233,10 +235,10 @@ export function parsePrometheusLine(line: string): SensuMetricPoint | null {
   const valueParts = rest.split(/\s+/);
   if (valueParts.length === 0) return null;
 
-  const value = parseFloat(valueParts[0]);
+  const value = parseFloat(valueParts[0]!);
   if (isNaN(value)) return null;
 
-  const timestamp = valueParts.length >= 2 ? parseInt(valueParts[1], 10) : null;
+  const timestamp = valueParts.length >= 2 ? parseInt(valueParts[1]!, 10) : null;
 
   return {
     name,

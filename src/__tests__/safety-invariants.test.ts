@@ -313,7 +313,7 @@ describe('safety invariants', () => {
           (a, b) => {
             // If a > b, then riskExceeds(RISK_ORDER[a], RISK_ORDER[b]) must be true
             if (a > b) {
-              expect(riskExceeds(RISK_ORDER[a], RISK_ORDER[b])).toBe(true);
+              expect(riskExceeds(RISK_ORDER[a]!, RISK_ORDER[b]!)).toBe(true);
             }
             // The max risk index of a combined set should be >= each individual index
             expect(Math.max(a, b)).toBeGreaterThanOrEqual(a);

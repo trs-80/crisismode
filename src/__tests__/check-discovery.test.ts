@@ -79,7 +79,7 @@ describe('check-discovery', () => {
 
       const envPlugins = result.plugins.filter((p) => p.source === 'env');
       expect(envPlugins.length).toBe(1);
-      expect(envPlugins[0].manifest.name).toBe('valid-check');
+      expect(envPlugins[0]!.manifest.name).toBe('valid-check');
 
       // The directory without manifest should generate a warning
       const relevantWarnings = result.warnings.filter((w) => w.path.includes('no-manifest'));
@@ -115,7 +115,7 @@ describe('check-discovery', () => {
       );
       // Should have exactly one, the later one (version 2.0.0)
       expect(envPlugins.length).toBe(1);
-      expect(envPlugins[0].manifest.version).toBe('2.0.0');
+      expect(envPlugins[0]!.manifest.version).toBe('2.0.0');
     });
 
     it('returns empty results when no plugin directories exist', async () => {

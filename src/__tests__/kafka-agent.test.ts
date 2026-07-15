@@ -174,7 +174,7 @@ describe('KafkaRecoveryAgent — broker_down scenario', () => {
       const health = await agent.assessHealth(context);
 
       expect(health.status).toBe('unhealthy');
-      expect(health.signals[0].detail).toContain('2/3');
+      expect(health.signals[0]!.detail).toContain('2/3');
     });
   });
 

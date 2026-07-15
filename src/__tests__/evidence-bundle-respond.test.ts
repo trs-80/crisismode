@@ -88,7 +88,7 @@ describe('respondToEvidenceBundle — no AI', () => {
     expect(response.state).toBe('abstained');
     // An abstention must still say what evidence it examined — both on the
     // stub hypothesis and at the top level.
-    expect(response.hypotheses_ranked[0].evidence_refs).toEqual(['db.pool.metrics']);
+    expect(response.hypotheses_ranked[0]!.evidence_refs).toEqual(['db.pool.metrics']);
     expect(response.evidence_refs).toEqual([
       {
         evidence_id: 'db.pool.metrics',
@@ -109,8 +109,9 @@ describe('respondToEvidenceBundle — no AI', () => {
     // Abstained responses emit a single canonical "root cause unknown"
     // stub hypothesis so the deterministic judge has something to score.
     expect(response.hypotheses_ranked).toHaveLength(1);
-    expect(response.hypotheses_ranked[0].confidence).toBe('unknown');
-    expect(response.hypotheses_ranked[0].summary).toContain('root cause remains unknown');
+    const topHypothesis = response.hypotheses_ranked[0]!;
+    expect(topHypothesis.confidence).toBe('unknown');
+    expect(topHypothesis.summary).toContain('root cause remains unknown');
     expect(response.proposed_actions).toEqual([]);
   });
 
@@ -222,7 +223,7 @@ describe('respondToEvidenceBundle — mocked AI', () => {
     expect(response.primary_hypothesis_id).toBe('h-1');
     expect(response.hypotheses_ranked).toHaveLength(1);
     expect(response.proposed_actions).toHaveLength(1);
-    expect(response.proposed_actions[0].action_id).toBe('inspect_database_pool');
+    expect(response.proposed_actions[0]!.action_id).toBe('inspect_database_pool');
   });
 
   it('filters proposed_actions that exceed max_action_class', async () => {
@@ -321,7 +322,7 @@ describe('respondToEvidenceBundle — mocked AI', () => {
     });
 
     const { response } = await respondToEvidenceBundle(policyAllowsMutation, commonOptions());
-    expect(response.proposed_actions[0].requires_human_approval).toBe(true);
+    expect(response.proposed_actions[0]!.requires_human_approval).toBe(true);
   });
 
   it('drops invalid evidence_refs', async () => {
@@ -344,7 +345,7 @@ describe('respondToEvidenceBundle — mocked AI', () => {
       commonOptions(),
     );
     expect(response.evidence_refs).toHaveLength(1);
-    expect(response.evidence_refs[0].evidence_id).toBe('db.pool.metrics');
+    expect(response.evidence_refs[0]!.evidence_id).toBe('db.pool.metrics');
     expect(invalidEvidenceRefs).toContain('made.up.id');
   });
 
@@ -409,7 +410,7 @@ describe('respondToEvidenceBundle — mocked AI', () => {
 
     const { response } = await respondToEvidenceBundle(BUNDLE, commonOptions());
     expect(response.primary_hypothesis_id).toBe('h-B');
-    expect(response.hypotheses_ranked[0].rank).toBe(1);
+    expect(response.hypotheses_ranked[0]!.rank).toBe(1);
   });
 
   it('backstops the canonical phrasing when the AI drifts to evidence-specific wording for the routed family', async () => {
@@ -442,12 +443,13 @@ describe('respondToEvidenceBundle — mocked AI', () => {
 
     const { response } = await respondToEvidenceBundle(BUNDLE, commonOptions());
     expect(response.hypotheses_ranked).toHaveLength(2);
-    expect(response.hypotheses_ranked[1].summary).toBe(
+    const backstopped = response.hypotheses_ranked[1]!;
+    expect(backstopped.summary).toBe(
       'database connection pool exhaustion is causing checkout failures',
     );
     // The backstop cites the same evidence the AI already grounded its
     // diagnosis in — it doesn't invent a new claim or new evidence.
-    expect(response.hypotheses_ranked[1].evidence_refs).toEqual(['db.pool.metrics']);
+    expect(backstopped.evidence_refs).toEqual(['db.pool.metrics']);
   });
 
   it('does not backstop when the response abstained', async () => {

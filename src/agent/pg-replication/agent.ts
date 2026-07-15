@@ -78,7 +78,8 @@ function validateIPv4(addr: string): string {
     throw new Error(`Invalid IPv4 address: ${addr}`);
   }
 
-  const [, host, prefixLength] = match;
+  const host = match[1]!;
+  const prefixLength = match[2];
   if (isIP(host) !== 4) {
     throw new Error(`Invalid IPv4 address: ${addr}`);
   }
@@ -1751,6 +1752,6 @@ export class PgReplicationAgent implements RecoveryAgent {
 
   private findWorstReplica(replicas: ReplicaStatus[]): ReplicaStatus | undefined {
     if (replicas.length === 0) return undefined;
-    return replicas.reduce((worst, r) => (r.lag_seconds > worst.lag_seconds ? r : worst), replicas[0]);
+    return replicas.reduce((worst, r) => (r.lag_seconds > worst.lag_seconds ? r : worst), replicas[0]!);
   }
 }

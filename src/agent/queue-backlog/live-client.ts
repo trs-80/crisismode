@@ -158,7 +158,7 @@ export class QueueLiveClient implements QueueBackend {
       let oldestMessageAge = 0;
       const oldestIds = await redis.zrange(this.key(name, 'waiting-children'), 0, 0);
       if (oldestIds.length > 0) {
-        const jobData = await redis.hgetall(this.key(name, oldestIds[0]));
+        const jobData = await redis.hgetall(this.key(name, oldestIds[0]!));
         if (jobData.timestamp) {
           oldestMessageAge = Math.round((Date.now() - parseInt(jobData.timestamp, 10)) / 1000);
         }
@@ -242,7 +242,7 @@ export class QueueLiveClient implements QueueBackend {
       // Get oldest failed job
       const oldestFailed = await redis.zrange(this.key(name, 'failed'), 0, 0);
       if (oldestFailed.length > 0) {
-        const jobData = await redis.hgetall(this.key(name, oldestFailed[0]));
+        const jobData = await redis.hgetall(this.key(name, oldestFailed[0]!));
         if (jobData.finishedOn) {
           const age = Math.round((Date.now() - parseInt(jobData.finishedOn, 10)) / 1000);
           oldestAge = Math.max(oldestAge, age);

@@ -196,7 +196,7 @@ describe('generateIncidentReport', () => {
 
     expect(report.sections).toHaveLength(9);
     for (let i = 0; i < expectedTitles.length; i++) {
-      expect(report.sections[i].title).toBe(expectedTitles[i]);
+      expect(report.sections[i]!.title).toBe(expectedTitles[i]);
     }
   });
 

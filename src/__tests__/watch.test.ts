@@ -492,13 +492,13 @@ describe('runWatch', () => {
     await runWatch({ maxCycles: 2, intervalMs: 10 });
 
     expect(vi.mocked(generateDiagnosisReport)).toHaveBeenCalledTimes(1);
-    const reportedDiagnosis = vi.mocked(generateDiagnosisReport).mock.calls[0][0] as {
+    const reportedDiagnosis = vi.mocked(generateDiagnosisReport).mock.calls[0]![0] as {
       scenario: string;
       status: string;
       findings: Array<{ source: string }>;
     };
     expect(reportedDiagnosis.scenario).toBe('target_unresolvable');
-    expect(reportedDiagnosis.findings[0].source).toBe('environment_check');
+    expect(reportedDiagnosis.findings[0]!.source).toBe('environment_check');
   });
 
   it('handles multiple transitions in sequence', async () => {

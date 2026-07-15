@@ -23,7 +23,7 @@ export function parseEnvExampleKeys(content: string): string[] {
   for (const line of content.split('\n')) {
     if (/^\s*#/.test(line)) continue;
     const match = KEY_LINE.exec(line);
-    if (match) keys.push(match[1]);
+    if (match) keys.push(match[1]!);
   }
   return keys;
 }

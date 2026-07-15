@@ -82,9 +82,10 @@ describe('ConfigDriftSimulator', () => {
       sim.transition('correcting');
       const diffs = await sim.getConfigDiff();
       expect(diffs).toHaveLength(1);
-      expect(diffs[0].source).toBe('file');
+      const fileDiff = diffs[0]!;
+      expect(fileDiff.source).toBe('file');
       // In correcting state, the file diff has matching expected and actual
-      expect(diffs[0].expected).toBe(diffs[0].actual);
+      expect(fileDiff.expected).toBe(fileDiff.actual);
     });
 
     it('returns 0 diffs in aligned', async () => {
@@ -103,7 +104,7 @@ describe('ConfigDriftSimulator', () => {
       const sim = new ConfigDriftSimulator();
       const changes = await sim.getRecentConfigChanges();
       expect(changes).toHaveLength(3);
-      expect(changes[0].changedBy).toBe('deploy-pipeline-v2.3.1');
+      expect(changes[0]!.changedBy).toBe('deploy-pipeline-v2.3.1');
     });
   });
 
@@ -277,8 +278,8 @@ describe('ConfigDriftSimulator', () => {
       const sim = new ConfigDriftSimulator();
       const providers = sim.listCapabilityProviders();
       expect(providers).toHaveLength(2);
-      expect(providers[0].id).toBe('config-drift-simulator-read');
-      expect(providers[1].id).toBe('config-drift-simulator-write');
+      expect(providers[0]!.id).toBe('config-drift-simulator-read');
+      expect(providers[1]!.id).toBe('config-drift-simulator-write');
     });
   });
 

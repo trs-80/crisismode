@@ -147,9 +147,9 @@ describe('formatSlackNotification', () => {
     const actionsBlock = result.blocks.find((b) => b.type === 'actions');
     expect(actionsBlock).toBeDefined();
     expect(actionsBlock!.elements!.length).toBe(3);
-    expect(actionsBlock!.elements![0].action_id).toBe('crisismode_approve');
-    expect(actionsBlock!.elements![1].action_id).toBe('crisismode_reject');
-    expect(actionsBlock!.elements![2].action_id).toBe('crisismode_details');
+    expect(actionsBlock!.elements![0]!.action_id).toBe('crisismode_approve');
+    expect(actionsBlock!.elements![1]!.action_id).toBe('crisismode_reject');
+    expect(actionsBlock!.elements![2]!.action_id).toBe('crisismode_details');
   });
 
   it('includes health card context when provided', () => {

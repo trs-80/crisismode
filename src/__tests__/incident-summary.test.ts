@@ -78,7 +78,7 @@ describe('buildIncidentSummary', () => {
     const summary = buildIncidentSummary(result);
 
     expect(summary.critical).toHaveLength(1);
-    expect(summary.critical[0].id).toBe('PG-001');
+    expect(summary.critical[0]!.id).toBe('PG-001');
     expect(summary.healthy).toHaveLength(1);
     expect(summary.headline).toContain('1 service unhealthy');
     expect(summary.nextSteps[0]).toContain('crisismode diagnose PG-001');

@@ -172,7 +172,7 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
       clusters: [],
       uncorrelated: evidence.map((e) => e.agentKind),
       narrative: evidence.length === 1
-        ? `Single agent (${evidence[0].agentKind}) — no cross-system correlation possible.`
+        ? `Single agent (${evidence[0]!.agentKind}) — no cross-system correlation possible.`
         : 'No evidence provided for synthesis.',
       source: 'rules',
       synthesizedAt: new Date().toISOString(),
@@ -268,9 +268,10 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
   // De-duplicate: if an agent appears in multiple clusters, keep highest confidence
   const bestClusterPerAgent = new Map<string, number>();
   for (let i = 0; i < clusters.length; i++) {
-    for (const agent of clusters[i].agents) {
+    const cluster = clusters[i]!;
+    for (const agent of cluster.agents) {
       const existing = bestClusterPerAgent.get(agent);
-      if (existing === undefined || clusters[i].confidence > clusters[existing].confidence) {
+      if (existing === undefined || cluster.confidence > clusters[existing]!.confidence) {
         bestClusterPerAgent.set(agent, i);
       }
     }
@@ -447,8 +448,8 @@ function hasTemporalCorrelation(evidence: AgentEvidence[]): boolean {
     if (e.snapshots) {
       // Find the most recent transition to unhealthy
       for (let i = e.snapshots.length - 1; i >= 0; i--) {
-        if (e.snapshots[i].status === 'unhealthy') {
-          unhealthyTimes.push(new Date(e.snapshots[i].timestamp).getTime());
+        if (e.snapshots[i]!.status === 'unhealthy') {
+          unhealthyTimes.push(new Date(e.snapshots[i]!.timestamp).getTime());
           break;
         }
       }
@@ -461,7 +462,7 @@ function hasTemporalCorrelation(evidence: AgentEvidence[]): boolean {
 
   const sorted = unhealthyTimes.sort((a, b) => a - b);
   const windowMs = 5 * 60 * 1000; // 5 minutes
-  return (sorted[sorted.length - 1] - sorted[0]) <= windowMs;
+  return (sorted[sorted.length - 1]! - sorted[0]!) <= windowMs;
 }
 
 function buildNarrative(
@@ -475,7 +476,7 @@ function buildNarrative(
   const parts: string[] = [];
 
   if (clusters.length > 0) {
-    const top = clusters[0];
+    const top = clusters[0]!;
     parts.push(`Primary root cause (${(top.confidence * 100).toFixed(0)}% confidence): ${top.rootCause}.`);
     parts.push(`Investigate in this order: ${top.investigationOrder.join(' → ')}.`);
 

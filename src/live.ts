@@ -148,7 +148,7 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
     console.log('  │                                              │');
     console.log(`  │  Primary:  ${target.primary.host}:${target.primary.port}`);
     if (target.replicas.length > 0) {
-      console.log(`  │  Replica:  ${target.replicas[0].host}:${target.replicas[0].port}`);
+      console.log(`  │  Replica:  ${target.replicas[0]!.host}:${target.replicas[0]!.port}`);
     }
     if (target.primary.database) {
       console.log(`  │  Database: ${target.primary.database}`);

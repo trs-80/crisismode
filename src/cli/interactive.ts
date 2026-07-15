@@ -59,13 +59,12 @@ export async function runInteractive(): Promise<void> {
   // Pick target
   let targetName: string;
   if (config.targets.length === 1) {
-    targetName = config.targets[0].name;
-    printInfo(`Auto-selected target: ${targetName} (${config.targets[0].kind})`);
+    targetName = config.targets[0]!.name;
+    printInfo(`Auto-selected target: ${targetName} (${config.targets[0]!.kind})`);
   } else {
     console.log('');
     printInfo('Available targets:');
-    for (let i = 0; i < config.targets.length; i++) {
-      const t = config.targets[i];
+    for (const [i, t] of config.targets.entries()) {
       const addr = t.primary ? `${t.primary.host}:${t.primary.port}` : t.aws?.region ?? 'aws';
       console.log(`  ${i + 1}. ${t.name} (${t.kind}) — ${addr}`);
     }
@@ -79,7 +78,7 @@ export async function runInteractive(): Promise<void> {
     if (idx < 0 || idx >= config.targets.length) {
       throw new Error('Invalid selection');
     }
-    targetName = config.targets[idx].name;
+    targetName = config.targets[idx]!.name;
   }
 
   console.log('');

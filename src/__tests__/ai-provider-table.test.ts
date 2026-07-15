@@ -11,7 +11,7 @@ describe('AI provider probe table', () => {
       MISTRAL_API_KEY: 'test-mistral',
     } as NodeJS.ProcessEnv);
     expect(configs.map((c) => c.name)).toEqual(['anthropic', 'mistral']);
-    expect(configs[0].priority).toBeLessThan(configs[1].priority);
+    expect(configs[0]!.priority).toBeLessThan(configs[1]!.priority);
     expect(configs.every((c) => c.enabled)).toBe(true);
   });
 
@@ -20,7 +20,7 @@ describe('AI provider probe table', () => {
   });
 
   it('configures anthropic with x-api-key, no prefix, and a version header', () => {
-    const [anthropic] = buildProviderConfigs({ ANTHROPIC_API_KEY: 'k' } as NodeJS.ProcessEnv);
+    const anthropic = buildProviderConfigs({ ANTHROPIC_API_KEY: 'k' } as NodeJS.ProcessEnv)[0]!;
     expect(anthropic.authHeader).toBe('x-api-key');
     expect(anthropic.authPrefix).toBe('');
     expect(anthropic.extraHeaders?.['anthropic-version']).toBeTruthy();

@@ -76,21 +76,25 @@ Let the team know.
 
     expect(result.steps).toHaveLength(3);
 
-    expect(result.steps[0].position).toBe(1);
-    expect(result.steps[0].title).toBe('Check replication status');
-    expect(result.steps[0].type).toBe('diagnosis_action');
-    expect(result.steps[0].target).toBe('replica');
+    const step1 = result.steps[0]!;
+    const step2 = result.steps[1]!;
+    const step3 = result.steps[2]!;
 
-    expect(result.steps[1].position).toBe(2);
-    expect(result.steps[1].title).toBe('Restart replication');
-    expect(result.steps[1].type).toBe('system_action');
-    expect(result.steps[1].risk).toBe('elevated');
+    expect(step1.position).toBe(1);
+    expect(step1.title).toBe('Check replication status');
+    expect(step1.type).toBe('diagnosis_action');
+    expect(step1.target).toBe('replica');
 
-    expect(result.steps[2].position).toBe(3);
-    expect(result.steps[2].title).toBe('Notify team');
-    expect(result.steps[2].type).toBe('human_notification');
-    expect(result.steps[2].channel).toBe('slack');
-    expect(result.steps[2].message).toBe('Replication recovered');
+    expect(step2.position).toBe(2);
+    expect(step2.title).toBe('Restart replication');
+    expect(step2.type).toBe('system_action');
+    expect(step2.risk).toBe('elevated');
+
+    expect(step3.position).toBe(3);
+    expect(step3.title).toBe('Notify team');
+    expect(step3.type).toBe('human_notification');
+    expect(step3.channel).toBe('slack');
+    expect(step3.message).toBe('Replication recovered');
   });
 
   it('extracts fenced code blocks from steps', () => {
@@ -111,9 +115,11 @@ SELECT client_addr, replay_lag FROM pg_stat_replication;
 
     const result = parsePlaybook(markdown);
 
-    expect(result.steps[0].codeBlocks).toHaveLength(1);
-    expect(result.steps[0].codeBlocks[0].lang).toBe('sql');
-    expect(result.steps[0].codeBlocks[0].content).toBe(
+    const step = result.steps[0]!;
+    expect(step.codeBlocks).toHaveLength(1);
+    const codeBlock = step.codeBlocks[0]!;
+    expect(codeBlock.lang).toBe('sql');
+    expect(codeBlock.content).toBe(
       'SELECT client_addr, replay_lag FROM pg_stat_replication;',
     );
   });
@@ -139,7 +145,7 @@ Execute a risky operation.
 
     const result = parsePlaybook(markdown);
 
-    expect(result.steps[0].blastRadius).toEqual({
+    expect(result.steps[0]!.blastRadius).toEqual({
       maxDowntimeSeconds: 30,
       maxAffectedRows: 1000,
       requiresMaintenanceWindow: true,
@@ -247,8 +253,8 @@ describe('validatePlaybookFrontmatter', () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].field).toBe('severity');
-    expect(result.errors[0].message).toContain('routine');
+    expect(result.errors[0]!.field).toBe('severity');
+    expect(result.errors[0]!.message).toContain('routine');
   });
 
   it('reports errors for all missing required fields', () => {

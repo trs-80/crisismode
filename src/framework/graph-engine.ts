@@ -95,7 +95,7 @@ export class RecoveryGraphEngine {
     const stepCount = plan.steps.length;
 
     for (let i = 0; i < stepCount; i++) {
-      const step = plan.steps[i];
+      const step = plan.steps[i]!;
       const nodeName = `step_${i}`;
       const nodeCallbacks = this.callbacks;
 

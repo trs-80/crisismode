@@ -105,7 +105,7 @@ export class BackupCompositeClient implements BackupBackend {
       };
 
       // RPO — based on newest backup
-      const newest = items[0]; // already sorted newest-first by provider
+      const newest = items[0]!; // already sorted newest-first by provider
       const ageSeconds = (Date.now() - new Date(newest.createdAt).getTime()) / 1000;
       const targetRpo = config.rpoSeconds ?? DEFAULT_RPO_SECONDS;
       const rpo: RpoEvaluation = {

@@ -120,10 +120,10 @@ export class DeployLiveClient implements DeployBackend {
       if (fallback.deployments.length === 0) {
         throw new Error('No deployments found for project');
       }
-      return this.toDeploymentInfo(fallback.deployments[0]);
+      return this.toDeploymentInfo(fallback.deployments[0]!);
     }
 
-    return this.toDeploymentInfo(data.deployments[0]);
+    return this.toDeploymentInfo(data.deployments[0]!);
   }
 
   async listRecentDeploys(limit: number): Promise<DeploymentInfo[]> {
@@ -182,8 +182,8 @@ export class DeployLiveClient implements DeployBackend {
     // Find the most recent successful deployment that isn't the current one
     const current = deploys[0];
     for (let i = 1; i < deploys.length; i++) {
-      if (deploys[i].status === 'succeeded' && deploys[i].sha !== current?.sha) {
-        return deploys[i];
+      if (deploys[i]!.status === 'succeeded' && deploys[i]!.sha !== current?.sha) {
+        return deploys[i]!;
       }
     }
     return null;

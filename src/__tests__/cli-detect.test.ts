@@ -30,9 +30,10 @@ describe('detectServices', () => {
       { kind: 'test-service', port },
     ]);
     expect(results).toHaveLength(1);
-    expect(results[0].detected).toBe(true);
-    expect(results[0].kind).toBe('test-service');
-    expect(results[0].port).toBe(port);
+    const result = results[0]!;
+    expect(result.detected).toBe(true);
+    expect(result.kind).toBe('test-service');
+    expect(result.port).toBe(port);
   });
 
   it('reports false for closed ports', async () => {
@@ -42,7 +43,7 @@ describe('detectServices', () => {
       { kind: 'no-service', port: closedPort },
     ]);
     expect(results).toHaveLength(1);
-    expect(results[0].detected).toBe(false);
+    expect(results[0]!.detected).toBe(false);
   });
 
   it('probes multiple ports in parallel', async () => {

@@ -73,19 +73,19 @@ describe('check-registry', () => {
     it('matches by name substring', () => {
       const results = matchEntries(entries, 'disk');
       expect(results).toHaveLength(1);
-      expect(results[0].name).toBe('check-disk-usage');
+      expect(results[0]!.name).toBe('check-disk-usage');
     });
 
     it('matches by description substring', () => {
       const results = matchEntries(entries, 'endpoint');
       expect(results).toHaveLength(1);
-      expect(results[0].name).toBe('check-http-endpoint');
+      expect(results[0]!.name).toBe('check-http-endpoint');
     });
 
     it('matches by targetKind', () => {
       const results = matchEntries(entries, 'application');
       expect(results).toHaveLength(1);
-      expect(results[0].name).toBe('check-http-endpoint');
+      expect(results[0]!.name).toBe('check-http-endpoint');
     });
 
     it('is case-insensitive', () => {

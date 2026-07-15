@@ -40,7 +40,7 @@ describe('PgReplicationAgent — connection_pool_exhaustion', () => {
       expect(result.status).toBe('identified');
       expect(result.scenario).toBe('connection_pool_exhaustion');
       expect(result.findings.length).toBeGreaterThan(0);
-      expect(result.findings[0].data).toHaveProperty('connectionUsage');
+      expect(result.findings[0]!.data).toHaveProperty('connectionUsage');
     });
 
     it('does not return connection_pool_exhaustion under normal connection load (regression)', async () => {
@@ -234,8 +234,8 @@ describe('PgLiveClient — connection usage', () => {
     expect(usage!.max).toBe(25);
     expect(usage!.total).toBe(24);
     expect(usage!.byState['idle in transaction']).toBe(20);
-    expect(usage!.idleInTransactionOldest[0].pid).toBe(1001);
-    expect(usage!.idleInTransactionOldest[0].ageSeconds).toBe(120);
+    expect(usage!.idleInTransactionOldest[0]!.pid).toBe(1001);
+    expect(usage!.idleInTransactionOldest[0]!.ageSeconds).toBe(120);
   });
 
   it('returns null when the query fails rather than throwing', async () => {

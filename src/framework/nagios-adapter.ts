@@ -78,10 +78,10 @@ export function parsePerfDataItem(raw: string): NagiosPerfDataItem | null {
   if (parts.length === 0) return null;
 
   // Parse the value and UOM from the first part
-  const valueMatch = parts[0].match(/^(-?[\d.]+)\s*([a-zA-Z%]*)/);
+  const valueMatch = parts[0]!.match(/^(-?[\d.]+)\s*([a-zA-Z%]*)/);
   if (!valueMatch) return null;
 
-  const value = parseFloat(valueMatch[1]);
+  const value = parseFloat(valueMatch[1]!);
   if (isNaN(value)) return null;
 
   const uom = valueMatch[2] || '';
@@ -149,7 +149,7 @@ export function parseNagiosOutput(stdout: string, exitCode: number): NagiosParse
   // Handle multi-line output: Nagios allows additional lines after the first
   // Only the first line is the status line; subsequent lines are "long output"
   const lines = statusText.split('\n');
-  statusText = lines[0].trim();
+  statusText = lines[0]!.trim();
 
   const perfData = parsePerfData(perfDataStr);
 

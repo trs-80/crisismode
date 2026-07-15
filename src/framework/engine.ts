@@ -93,7 +93,7 @@ export class LegacyExecutionEngine {
     }
 
     for (let i = 0; i < plan.steps.length; i++) {
-      const step = plan.steps[i];
+      const step = plan.steps[i]!;
       this.executionState.currentStepIndex = i;
       this.callbacks.onStepStart?.(step, i);
 
@@ -246,7 +246,7 @@ export class LegacyExecutionEngine {
     });
 
     const requiredFailed = captureResults.some(
-      (r, i) => r.status === 'failed' && step.stateCaptures[i].capturePolicy === 'required',
+      (r, i) => r.status === 'failed' && step.stateCaptures[i]!.capturePolicy === 'required',
     );
 
     return makeStepResult(step, requiredFailed ? 'failed' : 'success', startedAt, startTime, {
@@ -308,7 +308,7 @@ export class LegacyExecutionEngine {
     });
 
     const requiredBeforeFailed = beforeCaptures.some(
-      (r, i) => r.status === 'failed' && step.statePreservation.before[i].capturePolicy === 'required',
+      (r, i) => r.status === 'failed' && step.statePreservation.before[i]!.capturePolicy === 'required',
     );
     if (requiredBeforeFailed) {
       return fail('Required before capture failed', {

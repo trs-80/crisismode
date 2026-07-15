@@ -159,7 +159,7 @@ describe('SlackIntegration', () => {
 
       // Verify the API call was made with blocks
       const postCall = fetchMock.mock.calls[1];
-      const body = JSON.parse(postCall[1]!.body as string);
+      const body = JSON.parse(postCall![1]!.body as string);
       expect(body.channel).toBe('#alerts');
       expect(body.blocks).toBeDefined();
       expect(body.blocks.length).toBeGreaterThan(0);
@@ -202,7 +202,7 @@ describe('SlackIntegration', () => {
       const result = await slack.postMessage('Test message');
       expect(result.ok).toBe(true);
 
-      const body = JSON.parse(fetchMock.mock.calls[1][1]!.body as string);
+      const body = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
       expect(body.text).toBe('Test message');
     });
 
@@ -220,7 +220,7 @@ describe('SlackIntegration', () => {
       await slack.connect();
 
       await slack.postMessage('Override test', '#other-channel');
-      const body = JSON.parse(fetchMock.mock.calls[1][1]!.body as string);
+      const body = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
       expect(body.channel).toBe('#other-channel');
     });
   });
@@ -243,7 +243,7 @@ describe('SlackIntegration', () => {
       expect(result.ok).toBe(true);
       expect(result.ts).toBe('123.456');
 
-      const body = JSON.parse(fetchMock.mock.calls[1][1]!.body as string);
+      const body = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
       expect(body.ts).toBe('123.456');
       expect(body.text).toBe('Updated text');
     });
@@ -315,7 +315,7 @@ describe('SlackIntegration', () => {
       const result = await slack.handleApproval(decision);
       expect(result.ok).toBe(true);
 
-      const body = JSON.parse(fetchMock.mock.calls[1][1]!.body as string);
+      const body = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
       expect(body.text).toContain('approved');
     });
 
@@ -336,7 +336,7 @@ describe('SlackIntegration', () => {
       const result = await slack.handleApproval(decision);
       expect(result.ok).toBe(true);
 
-      const body = JSON.parse(fetchMock.mock.calls[1][1]!.body as string);
+      const body = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
       expect(body.text).toContain('rejected');
     });
   });
@@ -351,7 +351,7 @@ describe('SlackIntegration', () => {
       });
       await slack.connect();
 
-      const headers = fetchMock.mock.calls[0][1]!.headers as Record<string, string>;
+      const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
       expect(headers.Authorization).toBe('Bearer xoxb-secret-token');
     });
 

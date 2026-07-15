@@ -141,7 +141,7 @@ describe('adapterResponseToPlan — class 2/3 mutating actions', () => {
     expect(sysStep.riskLevel).toBe('elevated');
     expect(sysStep.requiredCapabilities).toEqual(['db.replica.disconnect']);
     expect(sysStep.statePreservation.before.length).toBeGreaterThan(0);
-    expect(sysStep.statePreservation.before[0].name).toBe('replication_status_before');
+    expect(sysStep.statePreservation.before[0]!.name).toBe('replication_status_before');
     expect(sysStep.successCriteria.description).toContain('WAL sender');
     expect(sysStep.rollback?.type).toBe('manual');
     expect(sysStep.rollback?.description).toContain('replica rebuild');

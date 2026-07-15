@@ -139,7 +139,7 @@ const URP_DATA: ScenarioData = {
 
 const BROKER_DOWN_DATA: ScenarioData = {
   brokers: {
-    degraded: [ALL_BROKERS[0], ALL_BROKERS[1], BROKER_DOWN_BROKER_2_DEAD],
+    degraded: [ALL_BROKERS[0]!, ALL_BROKERS[1]!, BROKER_DOWN_BROKER_2_DEAD],
     recovering: [...ALL_BROKERS],
     recovered: [...ALL_BROKERS],
   },
@@ -197,8 +197,8 @@ const BROKER_DOWN_DATA: ScenarioData = {
   brokerConfigs: { ...URP_DATA.brokerConfigs },
   liveness: {
     degraded: {
-      0: HEALTHY_LIVENESS[0],
-      1: HEALTHY_LIVENESS[1],
+      0: HEALTHY_LIVENESS[0]!,
+      1: HEALTHY_LIVENESS[1]!,
       2: { brokerId: 2, reachable: false, lastSeen: ts(10), diskUsagePercent: 0, cpuLoadPercent: 0, networkErrorRate: 1.0 },
     },
     recovering: { ...HEALTHY_LIVENESS },

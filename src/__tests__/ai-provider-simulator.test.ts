@@ -19,18 +19,20 @@ describe('AiProviderSimulator', () => {
     it('marks openai as degraded in provider_degraded state', async () => {
       const sim = new AiProviderSimulator();
       const providers = await sim.getProviderStatus();
-      expect(providers[0].name).toBe('openai');
-      expect(providers[0].status).toBe('degraded');
-      expect(providers[1].status).toBe('healthy');
-      expect(providers[2].status).toBe('healthy');
+      const p0 = providers[0]!;
+      expect(p0.name).toBe('openai');
+      expect(p0.status).toBe('degraded');
+      expect(providers[1]!.status).toBe('healthy');
+      expect(providers[2]!.status).toBe('healthy');
     });
 
     it('marks openai as down in failover_active state', async () => {
       const sim = new AiProviderSimulator();
       sim.transition('failover_active');
       const providers = await sim.getProviderStatus();
-      expect(providers[0].status).toBe('down');
-      expect(providers[0].errorRate).toBe(0.95);
+      const p0 = providers[0]!;
+      expect(p0.status).toBe('down');
+      expect(p0.errorRate).toBe(0.95);
     });
 
     it('marks all providers healthy in stabilized state', async () => {
@@ -76,16 +78,17 @@ describe('AiProviderSimulator', () => {
     it('reports half_open for openai in provider_degraded', async () => {
       const sim = new AiProviderSimulator();
       const states = await sim.getCircuitBreakerState();
-      expect(states[0].state).toBe('half_open');
-      expect(states[1].state).toBe('closed');
+      expect(states[0]!.state).toBe('half_open');
+      expect(states[1]!.state).toBe('closed');
     });
 
     it('reports open for openai in failover_active', async () => {
       const sim = new AiProviderSimulator();
       sim.transition('failover_active');
       const states = await sim.getCircuitBreakerState();
-      expect(states[0].state).toBe('open');
-      expect(states[0].failureCount).toBe(128);
+      const s0 = states[0]!;
+      expect(s0.state).toBe('open');
+      expect(s0.failureCount).toBe(128);
     });
 
     it('reports all closed in stabilized', async () => {
@@ -111,8 +114,8 @@ describe('AiProviderSimulator', () => {
       const sim = new AiProviderSimulator();
       sim.transition('failover_active');
       const config = await sim.getFallbackConfig();
-      expect(config.chain[0].enabled).toBe(false);
-      expect(config.chain[1].enabled).toBe(true);
+      expect(config.chain[0]!.enabled).toBe(false);
+      expect(config.chain[1]!.enabled).toBe(true);
     });
 
     it('re-enables all in stabilized', async () => {
@@ -146,7 +149,7 @@ describe('AiProviderSimulator', () => {
       expect(result.tripped).toBe(true);
       // Verify state changed
       const providers = await sim.getProviderStatus();
-      expect(providers[0].status).toBe('down');
+      expect(providers[0]!.status).toBe('down');
     });
 
     it('activate_fallback_chain transitions to failover_active', async () => {
@@ -175,7 +178,7 @@ describe('AiProviderSimulator', () => {
       const result = await sim.executeCommand({ type: 'api_call', operation: 'restore_primary' }) as Record<string, unknown>;
       expect(result.restored).toBe(true);
       const providers = await sim.getProviderStatus();
-      expect(providers[0].status).toBe('healthy');
+      expect(providers[0]!.status).toBe('healthy');
     });
 
     it('unknown operation returns simulated: true', async () => {
@@ -282,8 +285,8 @@ describe('AiProviderSimulator', () => {
       const sim = new AiProviderSimulator();
       const providers = sim.listCapabilityProviders();
       expect(providers).toHaveLength(2);
-      expect(providers[0].id).toBe('ai-provider-simulator-read');
-      expect(providers[1].id).toBe('ai-provider-simulator-write');
+      expect(providers[0]!.id).toBe('ai-provider-simulator-read');
+      expect(providers[1]!.id).toBe('ai-provider-simulator-write');
     });
   });
 

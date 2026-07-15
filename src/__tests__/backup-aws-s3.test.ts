@@ -84,13 +84,14 @@ describe('S3BackupProvider', () => {
       const items = await provider.inventory(makeConfig());
 
       expect(items).toHaveLength(2); // readme.txt filtered out
-      expect(items[0].providerKind).toBe('aws_s3');
-      expect(items[0].location).toContain('s3://my-backup-bucket/');
-      expect(items[0].storageClass).toBe('STANDARD');
+      const first = items[0]!;
+      expect(first.providerKind).toBe('aws_s3');
+      expect(first.location).toContain('s3://my-backup-bucket/');
+      expect(first.storageClass).toBe('STANDARD');
       // Newest first, previousSizeBytes filled
-      expect(items[0].sizeBytes).toBe(2.5e9);
-      expect(items[0].previousSizeBytes).toBe(2.4e9);
-      expect(items[1].previousSizeBytes).toBeNull();
+      expect(first.sizeBytes).toBe(2.5e9);
+      expect(first.previousSizeBytes).toBe(2.4e9);
+      expect(items[1]!.previousSizeBytes).toBeNull();
     });
 
     it('respects filePattern filter', async () => {
@@ -110,7 +111,7 @@ describe('S3BackupProvider', () => {
       }));
 
       expect(items).toHaveLength(1);
-      expect(items[0].label).toContain('app_db');
+      expect(items[0]!.label).toContain('app_db');
     });
   });
 

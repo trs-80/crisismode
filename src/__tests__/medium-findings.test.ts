@@ -155,7 +155,7 @@ describe('AwsDynamoDbRecoveryAgent.plan — healthy short-circuit', () => {
     const diagnosis = await agent.diagnose(context);
     const plan = await agent.plan(context, diagnosis);
 
-    expect(plan.impact.affectedSystems[0].identifier).toBe('orders-production');
+    expect(plan.impact.affectedSystems[0]!.identifier).toBe('orders-production');
   });
 });
 
@@ -172,7 +172,7 @@ describe('AwsRdsRecoveryAgent.plan — instance fallback', () => {
     const diagnosis = await agent.diagnose(context);
     const plan = await agent.plan(context, diagnosis);
 
-    expect(plan.impact.affectedSystems[0].identifier).toBe('prod-db-01');
-    expect(plan.impact.affectedSystems[0].identifier).not.toBe('unknown-instance');
+    expect(plan.impact.affectedSystems[0]!.identifier).toBe('prod-db-01');
+    expect(plan.impact.affectedSystems[0]!.identifier).not.toBe('unknown-instance');
   });
 });

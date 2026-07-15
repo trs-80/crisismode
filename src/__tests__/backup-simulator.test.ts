@@ -36,7 +36,7 @@ describe('BackupSimulator', () => {
       expect(report.providers.every((p) => p.detected)).toBe(true);
       for (const provider of report.providers) {
         expect(provider.verifications).toHaveLength(1);
-        const v = provider.verifications[0];
+        const v = provider.verifications[0]!;
         expect(v.passed).toBe(false);
 
         const recencyCheck = v.checks.find((c) => c.name === CHECK_NAMES.RECENCY);
@@ -54,7 +54,7 @@ describe('BackupSimulator', () => {
       const report = await sim.verifyAll(makeConfigs());
 
       for (const provider of report.providers) {
-        const v = provider.verifications[0];
+        const v = provider.verifications[0]!;
         expect(v.passed).toBe(false);
 
         const sizeCheck = v.checks.find((c) => c.name === CHECK_NAMES.SIZE_TREND);
@@ -72,7 +72,7 @@ describe('BackupSimulator', () => {
       const report = await sim.verifyAll(makeConfigs());
 
       for (const provider of report.providers) {
-        const v = provider.verifications[0];
+        const v = provider.verifications[0]!;
         expect(v.passed).toBe(false);
 
         const integrityCheck = v.checks.find((c) => c.name === CHECK_NAMES.INTEGRITY);
@@ -89,15 +89,17 @@ describe('BackupSimulator', () => {
       const report = await sim.verifyAll(configs);
 
       // First provider is detected and healthy
-      expect(report.providers[0].detected).toBe(true);
-      expect(report.providers[0].verifications[0].passed).toBe(true);
+      const first = report.providers[0]!;
+      expect(first.detected).toBe(true);
+      expect(first.verifications[0]!.passed).toBe(true);
 
       // Second provider has no backups
-      expect(report.providers[1].detected).toBe(false);
-      expect(report.providers[1].items).toHaveLength(0);
+      const second = report.providers[1]!;
+      expect(second.detected).toBe(false);
+      expect(second.items).toHaveLength(0);
 
-      expect(report.uncoveredSources).toContain(configs[1].source);
-      expect(report.uncoveredSources).not.toContain(configs[0].source);
+      expect(report.uncoveredSources).toContain(configs[1]!.source);
+      expect(report.uncoveredSources).not.toContain(configs[0]!.source);
     });
 
     it('rto_at_risk: backups pass verification but have large RTO estimates', async () => {
@@ -107,7 +109,7 @@ describe('BackupSimulator', () => {
 
       // All verifications pass
       for (const provider of report.providers) {
-        expect(provider.verifications[0].passed).toBe(true);
+        expect(provider.verifications[0]!.passed).toBe(true);
       }
 
       // RTO estimates exist and are substantial
@@ -122,7 +124,7 @@ describe('BackupSimulator', () => {
 
       for (const provider of report.providers) {
         expect(provider.detected).toBe(true);
-        const v = provider.verifications[0];
+        const v = provider.verifications[0]!;
         expect(v.passed).toBe(false);
 
         const statusCheck = v.checks.find((c) => c.name === 'snapshot_status');
@@ -138,7 +140,7 @@ describe('BackupSimulator', () => {
 
       for (const provider of report.providers) {
         expect(provider.detected).toBe(true);
-        const v = provider.verifications[0];
+        const v = provider.verifications[0]!;
         expect(v.passed).toBe(false);
 
         const storageCheck = v.checks.find((c) => c.name === 'storage_class');
@@ -158,7 +160,7 @@ describe('BackupSimulator', () => {
 
       for (const provider of report.providers) {
         expect(provider.detected).toBe(true);
-        const v = provider.verifications[0];
+        const v = provider.verifications[0]!;
         expect(v.passed).toBe(false);
 
         const versioningCheck = v.checks.find((c) => c.name === 'versioning');
@@ -174,8 +176,9 @@ describe('BackupSimulator', () => {
 
       expect(report.providers.every((p) => p.detected)).toBe(true);
       for (const provider of report.providers) {
-        expect(provider.verifications[0].passed).toBe(true);
-        expect(provider.verifications[0].checks.every((c) => c.passed)).toBe(true);
+        const v = provider.verifications[0]!;
+        expect(v.passed).toBe(true);
+        expect(v.checks.every((c) => c.passed)).toBe(true);
       }
       expect(report.rpoEvaluations.every((r) => r.withinTarget)).toBe(true);
       expect(report.uncoveredSources).toHaveLength(0);
@@ -189,7 +192,7 @@ describe('BackupSimulator', () => {
       ];
       const report = await sim.verifyAll(configs);
 
-      expect(report.rpoEvaluations[0].targetRpoSeconds).toBe(3600);
+      expect(report.rpoEvaluations[0]!.targetRpoSeconds).toBe(3600);
     });
 
     it('uses default RPO when not configured', async () => {
@@ -200,7 +203,7 @@ describe('BackupSimulator', () => {
       ];
       const report = await sim.verifyAll(configs);
 
-      expect(report.rpoEvaluations[0].targetRpoSeconds).toBe(DEFAULT_RPO_SECONDS);
+      expect(report.rpoEvaluations[0]!.targetRpoSeconds).toBe(DEFAULT_RPO_SECONDS);
     });
   });
 
@@ -335,9 +338,9 @@ describe('BackupSimulator', () => {
       const sim = new BackupSimulator();
       const providers = sim.listCapabilityProviders();
       expect(providers).toHaveLength(1);
-      expect(providers[0].id).toBe('backup-simulator-read');
-      expect(providers[0].capabilities).toContain('backup.inventory.list');
-      expect(providers[0].capabilities).toContain('backup.verify.integrity');
+      expect(providers[0]!.id).toBe('backup-simulator-read');
+      expect(providers[0]!.capabilities).toContain('backup.inventory.list');
+      expect(providers[0]!.capabilities).toContain('backup.verify.integrity');
     });
   });
 

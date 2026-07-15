@@ -40,7 +40,7 @@ describe('PgReplicationAgent — wal_replay_paused', () => {
       expect(result.status).toBe('identified');
       expect(result.scenario).toBe('wal_replay_paused');
       expect(result.findings.length).toBeGreaterThan(0);
-      expect(result.findings[0].data).toHaveProperty('replicas');
+      expect(result.findings[0]!.data).toHaveProperty('replicas');
     });
 
     it('does not return wal_replay_paused when replay is not paused (regression)', async () => {

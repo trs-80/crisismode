@@ -96,7 +96,7 @@ export class BackupLiveClient implements BackupBackend {
       const provider: ProviderReport = { kind: config.kind, source: config.source, detected: true, items: allItems, verifications };
 
       // RPO evaluation — based on newest backup
-      const newest = allItems[0]; // already sorted newest-first
+      const newest = allItems[0]!; // already sorted newest-first
       const ageSeconds = (Date.now() - new Date(newest.createdAt).getTime()) / 1000;
       const targetRpo = config.rpoSeconds ?? DEFAULT_RPO_SECONDS;
       const rpo: RpoEvaluation = {
@@ -154,7 +154,7 @@ export class BackupLiveClient implements BackupBackend {
         fileStats.sort((a, b) => b.stat.mtime.getTime() - a.stat.mtime.getTime());
 
         for (let i = 0; i < fileStats.length; i++) {
-          const f = fileStats[i];
+          const f = fileStats[i]!;
           items.push({
             providerKind: config.kind,
             label: `${config.kind} backup: ${f.name}`,
@@ -162,7 +162,7 @@ export class BackupLiveClient implements BackupBackend {
             source: config.source,
             createdAt: f.stat.mtime.toISOString(),
             sizeBytes: f.stat.size,
-            previousSizeBytes: i + 1 < fileStats.length ? fileStats[i + 1].stat.size : null,
+            previousSizeBytes: i + 1 < fileStats.length ? fileStats[i + 1]!.stat.size : null,
           });
         }
       } catch {

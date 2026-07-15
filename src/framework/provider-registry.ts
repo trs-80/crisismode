@@ -146,7 +146,7 @@ function resolveCapabilityProvider(
   return {
     capability: capabilityId,
     resolved: true,
-    providerId: targetCompatibleProviders[0].id,
+    providerId: targetCompatibleProviders[0]!.id,
   };
 }
 

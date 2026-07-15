@@ -81,7 +81,7 @@ export class DnsLiveClient implements DnsBackend {
     return probes.map((result, i) => {
       if (result.status === 'fulfilled') return result.value;
       return {
-        nameserver: config.nameservers[i],
+        nameserver: config.nameservers[i]!,
         reachable: false,
         latencyMs: -1,
         status: 'error' as const,
@@ -101,14 +101,14 @@ export class DnsLiveClient implements DnsBackend {
       );
 
       for (let i = 0; i < perResolver.length; i++) {
-        const result = perResolver[i];
+        const result = perResolver[i]!;
         if (result.status === 'fulfilled') {
           results.push(result.value);
         } else {
           const code = result.reason instanceof Error ? (result.reason as NodeJS.ErrnoException).code ?? '' : '';
           results.push({
             hostname,
-            resolver: config.nameservers[i],
+            resolver: config.nameservers[i]!,
             answers: [],
             latencyMs: -1,
             nxdomain: code === 'ENOTFOUND' || code === 'ENODATA',
@@ -284,14 +284,14 @@ export class DnsLiveClient implements DnsBackend {
       if (trimmed.startsWith('#') || trimmed === '') continue;
 
       const nsMatch = trimmed.match(/^nameserver\s+(\S+)/);
-      if (nsMatch && isIP(nsMatch[1])) {
-        nameservers.push(nsMatch[1]);
+      if (nsMatch && isIP(nsMatch[1]!)) {
+        nameservers.push(nsMatch[1]!);
         continue;
       }
 
       const searchMatch = trimmed.match(/^(?:search|domain)\s+(.+)/);
       if (searchMatch) {
-        searchDomains.push(...searchMatch[1].trim().split(/\s+/));
+        searchDomains.push(...searchMatch[1]!.trim().split(/\s+/));
       }
     }
 
@@ -305,17 +305,17 @@ export class DnsLiveClient implements DnsBackend {
 
     for (const line of stdout.split('\n')) {
       const nsMatch = line.match(/nameserver\[\d+\]\s*:\s*(\S+)/);
-      if (nsMatch && isIP(nsMatch[1])) {
-        if (!nameservers.includes(nsMatch[1])) {
-          nameservers.push(nsMatch[1]);
+      if (nsMatch && isIP(nsMatch[1]!)) {
+        if (!nameservers.includes(nsMatch[1]!)) {
+          nameservers.push(nsMatch[1]!);
         }
         continue;
       }
 
       const domainMatch = line.match(/search domain\[\d+\]\s*:\s*(\S+)/);
       if (domainMatch) {
-        if (!searchDomains.includes(domainMatch[1])) {
-          searchDomains.push(domainMatch[1]);
+        if (!searchDomains.includes(domainMatch[1]!)) {
+          searchDomains.push(domainMatch[1]!);
         }
       }
     }

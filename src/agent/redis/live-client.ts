@@ -126,7 +126,7 @@ export class RedisLiveClient implements RedisBackend {
     for (const [key, value] of Object.entries(sections)) {
       if (key.startsWith('db')) {
         const keysMatch = value.match(/keys=(\d+)/);
-        if (keysMatch) total += parseInt(keysMatch[1], 10);
+        if (keysMatch) total += parseInt(keysMatch[1]!, 10);
       }
     }
 
@@ -172,7 +172,7 @@ export class RedisLiveClient implements RedisBackend {
       // Format: <id> <ip:port@cport> <flags> <master> <ping-sent> <pong-recv> <config-epoch> <link-state> <slot> <slot> ...
       const parts = trimmed.split(' ');
       if (parts.length < 8) continue;
-      const flags = parts[2].split(',');
+      const flags = parts[2]!.split(',');
       const isMaster = flags.includes('master');
       // Validate rather than blind-cast: an unexpected CLUSTER NODES format must
       // not surface as a value outside the declared union. Treat anything other
@@ -181,8 +181,8 @@ export class RedisLiveClient implements RedisBackend {
         parts[7] === 'connected' ? 'connected' : 'disconnected';
       const slots = parts.slice(8).join(' ');
       nodes.push({
-        id: parts[0],
-        address: parts[1],
+        id: parts[0]!,
+        address: parts[1]!,
         role: isMaster ? 'master' : 'slave',
         flags,
         linkState,
@@ -389,7 +389,7 @@ export interface ParsedClient {
 export function parseIdleFilter(filter: string | undefined): number | null {
   if (!filter) return null;
   const match = filter.match(/^idle>(\d+)$/);
-  return match ? parseInt(match[1], 10) : null;
+  return match ? parseInt(match[1]!, 10) : null;
 }
 
 /** Parse Redis's `CLIENT LIST` reply (one space-separated key=value line per client). */

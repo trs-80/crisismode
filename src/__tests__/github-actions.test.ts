@@ -96,9 +96,9 @@ describe('GitHubActionsIntegration', () => {
 
       // Verify correct API calls
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      const [listUrl] = fetchMock.mock.calls[0];
+      const [listUrl] = fetchMock.mock.calls[0]!;
       expect(listUrl).toContain('/issues/123/comments');
-      const [createUrl] = fetchMock.mock.calls[1];
+      const [createUrl] = fetchMock.mock.calls[1]!;
       expect(createUrl).toContain('/issues/123/comments');
     });
 
@@ -120,7 +120,7 @@ describe('GitHubActionsIntegration', () => {
       expect(result.id).toBe(99);
 
       // Should use PATCH for update
-      const [updateUrl, updateOpts] = fetchMock.mock.calls[1];
+      const [updateUrl, updateOpts] = fetchMock.mock.calls[1]!;
       expect(updateUrl).toContain('/issues/comments/99');
       expect(updateOpts!.method).toBe('PATCH');
     });
@@ -170,7 +170,7 @@ describe('GitHubActionsIntegration', () => {
       expect(result.ok).toBe(true);
       expect(result.id).toBe(55);
 
-      const [url] = fetchMock.mock.calls[0];
+      const [url] = fetchMock.mock.calls[0]!;
       expect(url).toContain('/commits/abc123/comments');
     });
 
@@ -208,7 +208,7 @@ describe('GitHubActionsIntegration', () => {
       expect(result.ok).toBe(true);
       expect(result.id).toBe(7);
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
+      const body = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
       expect(body.title).toContain('CrisisMode');
       expect(body.labels).toContain('crisismode');
       expect(body.labels).toContain('health:unhealthy');
@@ -271,7 +271,7 @@ describe('GitHubActionsIntegration', () => {
 
       await gh.commentOnPR(1, makeCtx());
 
-      const headers = fetchMock.mock.calls[0][1]!.headers as Record<string, string>;
+      const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
       expect(headers.Authorization).toBe('Bearer ghp-secret');
       expect(headers.Accept).toBe('application/vnd.github+json');
       expect(headers['X-GitHub-Api-Version']).toBe('2022-11-28');
@@ -292,7 +292,7 @@ describe('GitHubActionsIntegration', () => {
 
       await gh.commentOnPR(1, makeCtx());
 
-      const body = JSON.parse(fetchMock.mock.calls[1][1]!.body as string);
+      const body = JSON.parse(fetchMock.mock.calls[1]![1]!.body as string);
       expect(body.body).toContain('crisismode-diagnosis-comment');
       expect(body.body).toContain('Health Assessment');
     });
@@ -312,7 +312,7 @@ describe('GitHubActionsIntegration', () => {
 
       await gh.commentOnPR(1, makeCtx());
 
-      const headers = fetchMock.mock.calls[0][1]!.headers as Record<string, string>;
+      const headers = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
       expect(headers.Authorization).toBe('Bearer ghp-from-env');
     });
   });

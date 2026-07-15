@@ -78,8 +78,8 @@ describe('Rollback', () => {
       // Only step-1 and step-2 qualify (successful + have rollback)
       // Returned in reverse: step-2 first, then step-1
       expect(rollbackSteps).toHaveLength(2);
-      expect(rollbackSteps[0].stepId).toBe('step-2');
-      expect(rollbackSteps[1].stepId).toBe('step-1');
+      expect(rollbackSteps[0]!.stepId).toBe('step-2');
+      expect(rollbackSteps[1]!.stepId).toBe('step-1');
     });
 
     it('returns empty array when no steps have rollback directives', () => {
@@ -118,10 +118,12 @@ describe('Rollback', () => {
       const { results, logs } = await executeRollback(completedSteps, backend, new MemorySaver());
 
       expect(results).toHaveLength(2);
-      expect(results[0].stepId).toBe('rollback-step-2');
-      expect(results[0].status).toBe('rolled_back');
-      expect(results[1].stepId).toBe('rollback-step-1');
-      expect(results[1].status).toBe('rolled_back');
+      const r0 = results[0]!;
+      const r1 = results[1]!;
+      expect(r0.stepId).toBe('rollback-step-2');
+      expect(r0.status).toBe('rolled_back');
+      expect(r1.stepId).toBe('rollback-step-1');
+      expect(r1.status).toBe('rolled_back');
 
       // Commands should execute in reverse order
       expect(executedCommands).toEqual(['UNDO_WAL_FLUSH', 'RECONNECT_REPLICA']);
@@ -157,9 +159,11 @@ describe('Rollback', () => {
 
       // First rollback (step-2) fails, second (step-1) succeeds
       expect(results).toHaveLength(2);
-      expect(results[0].status).toBe('failed');
-      expect(results[0].error).toContain('Connection refused');
-      expect(results[1].status).toBe('rolled_back');
+      const r0 = results[0]!;
+      const r1 = results[1]!;
+      expect(r0.status).toBe('failed');
+      expect(r0.error).toContain('Connection refused');
+      expect(r1.status).toBe('rolled_back');
     });
 
     it('returns empty results when no rollback directives exist', async () => {
@@ -175,7 +179,7 @@ describe('Rollback', () => {
 
       const { results, logs } = await executeRollback(completedSteps, backend);
       expect(results).toHaveLength(0);
-      expect(logs[0].message).toContain('No steps with rollback');
+      expect(logs[0]!.message).toContain('No steps with rollback');
     });
 
     it('handles manual rollback directives', async () => {
@@ -194,7 +198,7 @@ describe('Rollback', () => {
 
       const { results, logs } = await executeRollback(completedSteps, backend, new MemorySaver());
       expect(results).toHaveLength(1);
-      expect(results[0].status).toBe('rolled_back');
+      expect(results[0]!.status).toBe('rolled_back');
       // Should not have called executeCommand for manual rollback
       expect(backend.executeCommand).not.toHaveBeenCalled();
 
@@ -215,9 +219,10 @@ describe('Rollback', () => {
 
       const entries = recorder.readPersistedEntries();
       expect(entries).toHaveLength(2);
-      expect(entries[0].type).toBe('step_start');
-      expect(entries[0].stepId).toBe('step-1');
-      expect(entries[1].type).toBe('step_complete');
+      const e0 = entries[0]!;
+      expect(e0.type).toBe('step_start');
+      expect(e0.stepId).toBe('step-1');
+      expect(entries[1]!.type).toBe('step_complete');
     });
 
     it('persists step results to JSONL file', () => {
@@ -235,8 +240,9 @@ describe('Rollback', () => {
 
       const entries = recorder.readPersistedEntries();
       expect(entries).toHaveLength(1);
-      expect(entries[0].type).toBe('step_result');
-      expect(entries[0].status).toBe('success');
+      const e0 = entries[0]!;
+      expect(e0.type).toBe('step_result');
+      expect(e0.status).toBe('success');
     });
   });
 });

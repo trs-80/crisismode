@@ -233,7 +233,7 @@ export class RdsSnapshotProvider implements BackupProvider {
 
         const capped = snaps.slice(0, MAX_SNAPSHOTS_PER_INSTANCE);
         for (let i = 0; i < capped.length; i++) {
-          const snap = capped[i];
+          const snap = capped[i]!;
           const sizeBytes = (snap.AllocatedStorage ?? 0) * 1024 * 1024 * 1024;
           const prevSnap = i + 1 < capped.length ? capped[i + 1] : null;
           const previousSizeBytes = prevSnap
@@ -300,7 +300,7 @@ export class RdsSnapshotProvider implements BackupProvider {
 
         const capped = snaps.slice(0, MAX_SNAPSHOTS_PER_INSTANCE);
         for (let i = 0; i < capped.length; i++) {
-          const snap = capped[i];
+          const snap = capped[i]!;
           const sizeBytes = (snap.AllocatedStorage ?? 0) * 1024 * 1024 * 1024;
           const prevSnap = i + 1 < capped.length ? capped[i + 1] : null;
           const previousSizeBytes = prevSnap

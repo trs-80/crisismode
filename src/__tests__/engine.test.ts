@@ -489,8 +489,8 @@ describe('ExecutionEngine', () => {
 
     const results = await engine.executePlan(plan, diagnosis);
     expect(results).toHaveLength(2);
-    expect(results[0].status).toBe('skipped');
-    expect(results[1].status).toBe('success');
+    expect(results[0]!.status).toBe('skipped');
+    expect(results[1]!.status).toBe('success');
     expect(executeCommand).not.toHaveBeenCalled();
   });
 
@@ -588,8 +588,8 @@ describe('ExecutionEngine', () => {
     const results = await engine.executePlan(plan, diagnosis);
     expect(executeCommand).toHaveBeenCalledTimes(1);
     expect(executeCommand).toHaveBeenCalledWith(structuredStep.command);
-    expect(results[0].status).toBe('success');
-    expect(results[0].providerResolution).toEqual([
+    expect(results[0]!.status).toBe('success');
+    expect(results[0]!.providerResolution).toEqual([
       {
         capability: 'traffic.backend.detach',
         resolved: true,
@@ -678,9 +678,9 @@ describe('ExecutionEngine', () => {
 
     const results = await engine.executePlan(plan, diagnosis);
     expect(executeCommand).not.toHaveBeenCalled();
-    expect(results[0].status).toBe('failed');
-    expect(results[0].error).toContain('Provider resolution failed');
-    expect(results[0].providerResolution).toEqual([
+    expect(results[0]!.status).toBe('failed');
+    expect(results[0]!.error).toContain('Provider resolution failed');
+    expect(results[0]!.providerResolution).toEqual([
       {
         capability: 'traffic.backend.detach',
         resolved: false,
@@ -769,9 +769,9 @@ describe('ExecutionEngine', () => {
 
     const results = await engine.executePlan(plan, diagnosis);
     expect(executeCommand).not.toHaveBeenCalled();
-    expect(results[0].status).toBe('success');
-    expect(results[0].output).toEqual({ dryRun: true });
-    expect(results[0].providerResolution).toEqual([
+    expect(results[0]!.status).toBe('success');
+    expect(results[0]!.output).toEqual({ dryRun: true });
+    expect(results[0]!.providerResolution).toEqual([
       {
         capability: 'traffic.backend.detach',
         resolved: false,

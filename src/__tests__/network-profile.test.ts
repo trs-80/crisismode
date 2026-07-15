@@ -45,7 +45,7 @@ describe('network-profile', () => {
       });
 
       expect(profile.hub.probes.length).toBe(1);
-      expect(profile.hub.probes[0].target).toBe('hub');
+      expect(profile.hub.probes[0]!.target).toBe('hub');
     });
 
     it('probes custom targets when provided', async () => {
@@ -56,7 +56,7 @@ describe('network-profile', () => {
       });
 
       expect(profile.targets.probes.length).toBe(1);
-      expect(profile.targets.probes[0].target).toBe('test-target');
+      expect(profile.targets.probes[0]!.target).toBe('test-target');
     });
 
     it('reports hub as unknown when no endpoint given', async () => {

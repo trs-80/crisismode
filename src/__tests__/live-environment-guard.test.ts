@@ -198,6 +198,6 @@ describe('runRecovery (live.ts) environment guard wiring', () => {
 
     expect(diagnosisLine).toBeDefined();
     expect(diagnosisLine!.diagnosis.scenario).toBe('target_unresolvable');
-    expect(diagnosisLine!.diagnosis.findings[0].source).toBe('environment_check');
+    expect(diagnosisLine!.diagnosis.findings[0]!.source).toBe('environment_check');
   });
 });

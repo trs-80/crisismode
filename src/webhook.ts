@@ -119,7 +119,7 @@ async function handleAlerts(payload: AlertManagerPayload): Promise<{
   }
 
   if (results.length === 1) {
-    return results[0];
+    return results[0]!;
   }
 
   const totalSteps = results.reduce((sum, result) => sum + result.steps, 0);

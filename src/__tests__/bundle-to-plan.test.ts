@@ -136,12 +136,13 @@ describe('adapterResponseToPlan', () => {
     expect(rejected).toEqual([]);
     expect(warnings).not.toContain('No executable steps produced from bundle');
     expect(plan.steps).toHaveLength(1);
-    expect(plan.steps[0].type).toBe('diagnosis_action');
-    if (plan.steps[0].type !== 'diagnosis_action') return;
-    expect(plan.steps[0].target).toBe('pg-primary');
-    expect(plan.steps[0].executionContext).toBe('database_read');
-    expect(plan.steps[0].description).toContain('incident_session=session-plan-1');
-    expect(plan.steps[0].description).toContain('evidence=db.pool.metrics');
+    const step = plan.steps[0]!;
+    expect(step.type).toBe('diagnosis_action');
+    if (step.type !== 'diagnosis_action') return;
+    expect(step.target).toBe('pg-primary');
+    expect(step.executionContext).toBe('database_read');
+    expect(step.description).toContain('incident_session=session-plan-1');
+    expect(step.description).toContain('evidence=db.pool.metrics');
   });
 
   it('injects a human_approval gate before mutating (class-1) actions', () => {
@@ -161,13 +162,15 @@ describe('adapterResponseToPlan', () => {
     });
     const { plan } = adapterResponseToPlan(BUNDLE, response, planOpts);
     expect(plan.steps).toHaveLength(2);
-    expect(plan.steps[0].type).toBe('human_approval');
-    if (plan.steps[0].type !== 'human_approval') return;
-    expect(plan.steps[0].presentation.proposedActions).toEqual(['capture_state_snapshot']);
-    expect(plan.steps[0].presentation.contextReferences).toEqual(['db.pool.metrics']);
-    expect(plan.steps[1].type).toBe('system_action');
-    if (plan.steps[1].type !== 'system_action') return;
-    expect(plan.steps[1].requiredCapabilities).toEqual(['state.snapshot.capture']);
+    const gate = plan.steps[0]!;
+    const action = plan.steps[1]!;
+    expect(gate.type).toBe('human_approval');
+    if (gate.type !== 'human_approval') return;
+    expect(gate.presentation.proposedActions).toEqual(['capture_state_snapshot']);
+    expect(gate.presentation.contextReferences).toEqual(['db.pool.metrics']);
+    expect(action.type).toBe('system_action');
+    if (action.type !== 'system_action') return;
+    expect(action.requiredCapabilities).toEqual(['state.snapshot.capture']);
   });
 
   it('rejects unknown action_ids', () => {
@@ -212,9 +215,10 @@ describe('adapterResponseToPlan', () => {
     });
     const { plan } = adapterResponseToPlan(BUNDLE, response, planOpts);
     expect(plan.steps).toHaveLength(1);
-    if (plan.steps[0].type !== 'diagnosis_action') return;
+    const step = plan.steps[0]!;
+    if (step.type !== 'diagnosis_action') return;
     // Should fall back to the first target_kind from the template
-    expect(plan.steps[0].target).toBe('postgresql');
+    expect(step.target).toBe('postgresql');
   });
 
   it('stamps bundle provenance on every step description', () => {
@@ -233,7 +237,8 @@ describe('adapterResponseToPlan', () => {
       ],
     });
     const { plan } = adapterResponseToPlan(BUNDLE, response, planOpts);
-    const desc = plan.steps[0].type === 'diagnosis_action' ? plan.steps[0].description : '';
+    const step = plan.steps[0]!;
+    const desc = step.type === 'diagnosis_action' ? step.description : '';
     expect(desc).toContain('case=db-pool-saturation');
     expect(desc).toContain('evidence=ev-1,ev-2');
   });

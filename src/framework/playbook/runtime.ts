@@ -8,7 +8,7 @@ import type { ParsedPlaybook, PlaybookCodeBlock, PlaybookStep } from './types.js
 
 function buildCommandFromCodeBlocks(codeBlocks: PlaybookCodeBlock[]): Command | null {
   if (codeBlocks.length === 0) return null;
-  const block = codeBlocks[0];
+  const block = codeBlocks[0]!;
   if (block.lang === 'sql') {
     return { type: 'sql', statement: block.content };
   }
