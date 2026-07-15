@@ -13,16 +13,15 @@
 import { assembleContext } from '../../framework/context.js';
 import { diagnoseWithEnvironmentGuard } from '../../framework/environment-guard.js';
 import { buildOperatorSummary } from '../../framework/operator-summary.js';
-import { loadConfig, parseCliFlags } from '../../config/loader.js';
+import { parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
-import { detectServices } from '../detect.js';
-import { mergeLocalTargets } from '../local-agents.js';
+import { createAgentForTarget, loadConfigWithLocalTargets } from '../runtime.js';
 import { generateDiagnosisReport } from '../../framework/incident-report.js';
 import { WatchState } from '../../framework/watch-state.js';
 import type { HealthCard, RecurringPattern } from '../../framework/watch-state.js';
 import {
   printBanner, printHealthStatus, printInfo, printSuccess,
-  printWarning, printError, printDetection,
+  printWarning, printError,
 } from '../output.js';
 import { noConfig, formatError } from '../errors.js';
 import type { AgentContext } from '../../types/agent-context.js';
@@ -43,34 +42,10 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
   const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
 
   // Load config or detect
-  let config;
-  let source: string;
-  try {
-    const result = loadConfig(opts.configPath !== undefined ? { configPath: opts.configPath } : {});
-    config = result.config;
-    source = result.source === 'file' ? result.filePath ?? 'crisismode.yaml' : 'env-var fallback';
-  } catch {
-    printInfo('No configuration found, scanning localhost...');
-    const services = await detectServices();
-    printDetection(services);
-
-    const detected = services.filter((s) => s.detected);
-    config = buildConfigFromDetection(detected);
-    source = 'auto-detected';
-  }
-
-  // Inject local health agents (DNS, disk) so they work without explicit config
-  config = { ...config, targets: mergeLocalTargets(config.targets) };
-
-  printInfo(`Config: ${source}`);
-  console.log('');
+  const { config } = await loadConfigWithLocalTargets(opts);
 
   const registry = new AgentRegistry(config);
-  const { agent, backend, target } = opts.targetName
-    ? await registry.createForTarget(opts.targetName)
-    : await registry.createFirst();
-
-  await AgentRegistry.discoverVersion({ agent, backend, target });
+  const { agent, backend, target } = await createAgentForTarget(registry, opts.targetName);
 
   const intervalSec = (intervalMs / 1000).toFixed(0);
   printInfo(`Shadow mode active — observing ${target.name} every ${intervalSec}s`);
@@ -239,17 +214,3 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildConfigFromDetection(detected: Array<{ kind: string; host: string; port: number }>) {
-  return {
-    apiVersion: 'crisismode/v1' as const,
-    kind: 'SiteConfig' as const,
-    metadata: { name: 'auto-detected', environment: 'development' as const },
-    targets: detected.map((s) => ({
-      name: `detected-${s.kind}`,
-      kind: s.kind,
-      primary: { host: s.host, port: s.port },
-      replicas: [] as Array<{ host: string; port: number }>,
-      credentials: { type: 'value' as const, username: '', password: '' },
-    })),
-  };
-}

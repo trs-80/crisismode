@@ -22,6 +22,7 @@ import { ExecutionEngine, type ExecutionMode, type EngineCallbacks } from './fra
 import { HubClient } from './framework/hub-client.js';
 import { loadConfig, parseCliFlags } from './config/loader.js';
 import { AgentRegistry } from './config/agent-registry.js';
+import { formatConfigSource } from './cli/runtime.js';
 import { resolveCredentials } from './config/credentials.js';
 import { getFiringAlerts, validateAlertPayload, type AlertManagerAlert, type AlertManagerPayload } from './webhook-utils.js';
 import type { AgentContext } from './types/agent-context.js';
@@ -379,7 +380,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('  CrisisMode Spoke — Webhook Receiver');
   console.log('');
-  console.log(`  Config:   ${source === 'file' ? filePath : 'env-var fallback'}`);
+  console.log(`  Config:   ${formatConfigSource({ source, filePath })}`);
   console.log(`  Targets:  ${config.targets.map((t) => `${t.name} (${t.kind})`).join(', ')}`);
   console.log(`  Mode:     ${MODE === 'execute' ? '🔴 EXECUTE (mutations enabled)' : '🟡 DRY-RUN (read-only)'}`);
   console.log(`  Port:     ${PORT}`);

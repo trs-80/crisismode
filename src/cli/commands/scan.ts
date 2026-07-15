@@ -28,6 +28,7 @@ import {
 } from '../incident-summary.js';
 import { generatePlainEnglishSummary } from '../ai-summary.js';
 import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
+import { buildConfigFromDetection } from '../runtime.js';
 import { synthesizeByRules } from '../../framework/root-cause-synthesis.js';
 import type { AgentEvidence } from '../../framework/root-cause-synthesis.js';
 import { healthToSignals } from '../../framework/health-to-signals.js';
@@ -428,21 +429,6 @@ function loadConfigWithDetectionSafe(configPath?: string) {
   } catch {
     return { config: null, source: 'none' as const };
   }
-}
-
-function buildConfigFromDetection(detected: Array<{ kind: string; host: string; port: number }>) {
-  return {
-    apiVersion: 'crisismode/v1' as const,
-    kind: 'SiteConfig' as const,
-    metadata: { name: 'auto-detected', environment: 'development' as const },
-    targets: detected.map((s) => ({
-      name: `detected-${s.kind}`,
-      kind: s.kind,
-      primary: { host: s.host, port: s.port },
-      replicas: [] as Array<{ host: string; port: number }>,
-      credentials: { type: 'value' as const, username: '', password: '' },
-    })),
-  };
 }
 
 function timeoutPromise<T>(ms: number, fallback: T): Promise<T> {

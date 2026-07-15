@@ -8,7 +8,7 @@
 
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-import { detectServices, type DetectedService } from './detect.js';
+import { detectServices } from './detect.js';
 import {
   printBanner, printDetection, printInfo, printSuccess,
   printWarning, printHealthStatus, printDiagnosis, printPlan,
@@ -17,6 +17,7 @@ import {
 import { noConfig } from './errors.js';
 import { loadConfig } from '../config/loader.js';
 import { AgentRegistry } from '../config/agent-registry.js';
+import { buildConfigFromDetection, createAgentForTarget, formatConfigSource } from './runtime.js';
 import { assembleContext } from '../framework/context.js';
 import { diagnoseWithEnvironmentGuard } from '../framework/environment-guard.js';
 import { buildOperatorSummary } from '../framework/operator-summary.js';
@@ -33,7 +34,7 @@ export async function runInteractive(): Promise<void> {
   try {
     const result = loadConfig();
     config = result.config;
-    printInfo(`Config loaded: ${result.source === 'file' ? result.filePath : 'env-var fallback'}`);
+    printInfo(`Config loaded: ${formatConfigSource(result)}`);
   } catch {
     // No config — will use detection
   }
@@ -83,8 +84,7 @@ export async function runInteractive(): Promise<void> {
 
   console.log('');
 
-  const { agent, backend, target } = await registry.createForTarget(targetName);
-  await AgentRegistry.discoverVersion({ agent, backend, target });
+  const { agent, backend, target } = await createAgentForTarget(registry, targetName);
 
   try {
     // Build trigger
@@ -159,19 +159,4 @@ export async function runInteractive(): Promise<void> {
   } finally {
     await backend.close();
   }
-}
-
-function buildConfigFromDetection(detected: DetectedService[]): SiteConfig {
-  return {
-    apiVersion: 'crisismode/v1',
-    kind: 'SiteConfig',
-    metadata: { name: 'auto-detected', environment: 'development' },
-    targets: detected.map((s) => ({
-      name: `detected-${s.kind}`,
-      kind: s.kind,
-      primary: { host: s.host, port: s.port },
-      replicas: [],
-      credentials: { type: 'value' as const, username: '', password: '' },
-    })),
-  };
 }

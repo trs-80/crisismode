@@ -25,12 +25,13 @@ import { explainPlan } from './framework/ai-explainer.js';
 import { loadConfig, parseCliFlags } from './config/loader.js';
 import { validateCredentials } from './config/credentials.js';
 import { AgentRegistry } from './config/agent-registry.js';
+import { createAgentForTarget } from './cli/runtime.js';
 import type { AgentContext } from './types/agent-context.js';
 import type { HumanApprovalStep } from './types/step-types.js';
 import type { PgLiveClient } from './agent/pg-replication/live-client.js';
 import * as display from './demo/display.js';
 import {
-  getOutputMode, printHealthStatus, printDiagnosis, printPlan,
+  getOutputMode, jsonOut as jsonOutRecord, printHealthStatus, printDiagnosis, printPlan,
   printPlanExplanation, printResults, printOperatorSummary,
 } from './cli/output.js';
 
@@ -39,7 +40,7 @@ const FORENSIC_OUTPUT_PATH = 'output/forensic-record-live.json';
 /** Emit a JSON line when in machine output mode. */
 function jsonOut(type: string, data: unknown): void {
   if (getOutputMode() === 'machine') {
-    console.log(JSON.stringify({ type, ...data as Record<string, unknown> }));
+    jsonOutRecord(type, data);
   }
 }
 
@@ -119,13 +120,8 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
 
   const registry = new AgentRegistry(config);
 
-  // Resolve the target to run against
-  const { agent, backend, target } = targetName
-    ? await registry.createForTarget(targetName)
-    : await registry.createFirst();
-
-  // Attempt to discover target version if not specified in config
-  await AgentRegistry.discoverVersion({ agent, backend, target });
+  // Resolve the target to run against (and discover its version if unset)
+  const { agent, backend, target } = await createAgentForTarget(registry, targetName);
 
   // Confirm before execute mode — prevent accidental mutations
   if (execMode === 'execute') {

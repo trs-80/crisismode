@@ -20,6 +20,7 @@ import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { SentryEnrichment } from '../integrations/sentry.js';
 import { defaultAiModel } from './ai-model.js';
+import { callClaude } from './ai-client.js';
 
 const DEFAULT_MODEL = defaultAiModel();
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -114,35 +115,16 @@ async function callAi(
 
   const userMessage = sanitizeInput(parts.join('\n\n'));
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const text = await callClaude({
+    system: SYSTEM_PROMPT,
+    user: userMessage,
+    model: DEFAULT_MODEL,
+    maxTokens: 1024,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    apiKey,
+  });
 
-  try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic({ apiKey });
-
-    const response = await client.messages.create(
-      {
-        model: DEFAULT_MODEL,
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: userMessage }],
-        system: SYSTEM_PROMPT,
-      },
-      { signal: controller.signal },
-    );
-
-    clearTimeout(timeoutId);
-
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => 'text' in block ? block.text : '')
-      .join('');
-
-    return { response: text.trim(), source: 'ai' };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw err;
-  }
+  return { response: text.trim(), source: 'ai' };
 }
 
 function buildFallback(request: UniversalDiagnosisRequest): UniversalDiagnosisResult {

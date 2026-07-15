@@ -2,23 +2,27 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { AgentManifest } from '../../types/manifest.js';
+import {
+  MANIFEST_API_VERSION,
+  RECOVERY_AGENT_COMPATIBILITY_MODE,
+  defaultManifestMetadata,
+} from '../../framework/manifest-defaults.js';
 
 export const dbMigrationManifest: AgentManifest = {
-  apiVersion: 'v0.2.1',
+  apiVersion: MANIFEST_API_VERSION,
   kind: 'AgentManifest',
   metadata: {
     name: 'db-migration-recovery',
     version: '1.0.0',
     description:
       'Recovers managed databases from broken migrations, connection pool exhaustion, and DB saturation caused by stuck DDL operations.',
-    authors: ['SRE Team <sre@example.com>'],
-    license: 'Apache-2.0',
+    ...defaultManifestMetadata(),
     tags: ['database', 'migration', 'connections', 'saturation'],
     plugin: {
       id: 'db.migration',
       kind: 'domain_pack',
       maturity: 'simulator_only',
-      compatibilityMode: 'recovery_agent',
+      compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
     },
   },
   spec: {

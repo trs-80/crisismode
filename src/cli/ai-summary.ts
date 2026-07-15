@@ -19,6 +19,7 @@ import { getNetworkProfile } from '../framework/network-profile.js';
 import type { IncidentSummary } from './incident-summary.js';
 import type { RecentChange } from './output.js';
 import { defaultAiModel } from '../framework/ai-model.js';
+import { callClaude } from '../framework/ai-client.js';
 
 const MODEL = defaultAiModel();
 const TIMEOUT_MS = 8_000;
@@ -91,35 +92,16 @@ async function callAi(
 
   const userMessage = sanitizeInput(parts.join('\n'));
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const text = await callClaude({
+    system: SYSTEM_PROMPT,
+    user: userMessage,
+    model: MODEL,
+    maxTokens: MAX_TOKENS,
+    timeoutMs: TIMEOUT_MS,
+    apiKey,
+  });
 
-  try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic({ apiKey });
-
-    const response = await client.messages.create(
-      {
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        messages: [{ role: 'user', content: userMessage }],
-        system: SYSTEM_PROMPT,
-      },
-      { signal: controller.signal },
-    );
-
-    clearTimeout(timeoutId);
-
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => 'text' in block ? block.text : '')
-      .join('');
-
-    return { text: text.trim(), source: 'ai' };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw err;
-  }
+  return { text: text.trim(), source: 'ai' };
 }
 
 /**

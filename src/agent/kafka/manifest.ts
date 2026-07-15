@@ -2,23 +2,27 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { AgentManifest } from '../../types/manifest.js';
+import {
+  MANIFEST_API_VERSION,
+  RECOVERY_AGENT_COMPATIBILITY_MODE,
+  defaultManifestMetadata,
+} from '../../framework/manifest-defaults.js';
 
 export const kafkaRecoveryManifest: AgentManifest = {
-  apiVersion: 'v0.2.1',
+  apiVersion: MANIFEST_API_VERSION,
   kind: 'AgentManifest',
   metadata: {
     name: 'kafka-recovery',
     version: '1.0.0',
     description:
       'Recovers Kafka clusters from under-replicated partitions, leader imbalance, consumer lag cascades, and ISR shrink.',
-    authors: ['SRE Team <sre@example.com>'],
-    license: 'Apache-2.0',
+    ...defaultManifestMetadata(),
     tags: ['kafka', 'broker', 'messaging', 'stateful'],
     plugin: {
       id: 'kafka.domain-pack',
       kind: 'domain_pack',
       maturity: 'simulator_only',
-      compatibilityMode: 'recovery_agent',
+      compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
     },
   },
   spec: {

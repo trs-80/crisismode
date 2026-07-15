@@ -21,6 +21,7 @@ import type { RecurringPattern, HealthSnapshot } from './watch-state.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import { defaultAiModel } from './ai-model.js';
+import { callClaude } from './ai-client.js';
 
 // ── Types ──
 
@@ -375,63 +376,44 @@ async function callSynthesisAi(
 
   const userMessage = sanitizeInput(parts.join('\n'));
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20_000);
+  const text = await callClaude({
+    system: SYNTHESIS_SYSTEM_PROMPT,
+    user: userMessage,
+    model: defaultAiModel(),
+    maxTokens: 1024,
+    timeoutMs: 20_000,
+    apiKey,
+  });
 
-  try {
-    const Anthropic = (await import('@anthropic-ai/sdk')).default;
-    const client = new Anthropic({ apiKey });
+  const parsed = JSON.parse(text.trim()) as {
+    clusters?: Array<{
+      rootCause: string;
+      confidence: number;
+      agents: string[];
+      reasoning: string;
+      investigationOrder?: string[];
+    }>;
+    uncorrelated?: string[];
+    narrative?: string;
+  };
 
-    const response = await client.messages.create(
-      {
-        model: defaultAiModel(),
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: userMessage }],
-        system: SYNTHESIS_SYSTEM_PROMPT,
-      },
-      { signal: controller.signal },
-    );
+  const clusters: CorrelationCluster[] = (parsed.clusters ?? []).map((c, i) => ({
+    id: `cluster-${i}`,
+    rootCause: c.rootCause,
+    confidence: Math.round(Math.min(Math.max(c.confidence, 0), 1) * 100) / 100,
+    agents: c.agents,
+    reasoning: c.reasoning,
+    temporalCorrelation: false,
+    investigationOrder: c.investigationOrder ?? c.agents,
+  }));
 
-    clearTimeout(timeoutId);
-
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => ('text' in block ? block.text : ''))
-      .join('');
-
-    const parsed = JSON.parse(text.trim()) as {
-      clusters?: Array<{
-        rootCause: string;
-        confidence: number;
-        agents: string[];
-        reasoning: string;
-        investigationOrder?: string[];
-      }>;
-      uncorrelated?: string[];
-      narrative?: string;
-    };
-
-    const clusters: CorrelationCluster[] = (parsed.clusters ?? []).map((c, i) => ({
-      id: `cluster-${i}`,
-      rootCause: c.rootCause,
-      confidence: Math.round(Math.min(Math.max(c.confidence, 0), 1) * 100) / 100,
-      agents: c.agents,
-      reasoning: c.reasoning,
-      temporalCorrelation: false,
-      investigationOrder: c.investigationOrder ?? c.agents,
-    }));
-
-    return {
-      clusters,
-      uncorrelated: parsed.uncorrelated ?? [],
-      narrative: parsed.narrative ?? 'AI synthesis completed.',
-      source: 'ai',
-      synthesizedAt: new Date().toISOString(),
-    };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw err;
-  }
+  return {
+    clusters,
+    uncorrelated: parsed.uncorrelated ?? [],
+    narrative: parsed.narrative ?? 'AI synthesis completed.',
+    source: 'ai',
+    synthesizedAt: new Date().toISOString(),
+  };
 }
 
 // ── Helpers ──

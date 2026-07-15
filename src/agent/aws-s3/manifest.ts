@@ -2,23 +2,27 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { AgentManifest } from '../../types/manifest.js';
+import {
+  MANIFEST_API_VERSION,
+  RECOVERY_AGENT_COMPATIBILITY_MODE,
+  defaultManifestMetadata,
+} from '../../framework/manifest-defaults.js';
 
 export const awsS3RecoveryManifest: AgentManifest = {
-  apiVersion: 'v0.2.1',
+  apiVersion: MANIFEST_API_VERSION,
   kind: 'AgentManifest',
   metadata: {
     name: 'aws-s3-recovery',
     version: '1.0.0',
     description:
       'Recovers AWS S3 buckets from backup misconfigurations including disabled versioning and missing lifecycle rules.',
-    authors: ['SRE Team <sre@example.com>'],
-    license: 'Apache-2.0',
+    ...defaultManifestMetadata(),
     tags: ['aws', 's3', 'backup', 'versioning', 'lifecycle'],
     plugin: {
       id: 'aws-s3.domain-pack',
       kind: 'domain_pack',
       maturity: 'simulator_only',
-      compatibilityMode: 'recovery_agent',
+      compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
     },
   },
   spec: {

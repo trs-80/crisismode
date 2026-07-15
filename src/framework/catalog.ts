@@ -6,8 +6,6 @@ import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { RiskLevel } from '../types/common.js';
 import { RECOVERY_PLAN_API_VERSION } from './plan-helpers.js';
 
-const RISK_ORDER: RiskLevel[] = ['routine', 'elevated', 'high', 'critical'];
-
 export function getCatalogEntry(): CatalogEntry {
   return {
     apiVersion: RECOVERY_PLAN_API_VERSION,

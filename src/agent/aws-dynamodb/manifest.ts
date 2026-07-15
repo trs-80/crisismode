@@ -2,22 +2,26 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { AgentManifest } from '../../types/manifest.js';
+import {
+  MANIFEST_API_VERSION,
+  RECOVERY_AGENT_COMPATIBILITY_MODE,
+  defaultManifestMetadata,
+} from '../../framework/manifest-defaults.js';
 
 export const awsDynamoDbRecoveryManifest: AgentManifest = {
-  apiVersion: 'v0.2.1',
+  apiVersion: MANIFEST_API_VERSION,
   kind: 'AgentManifest',
   metadata: {
     name: 'aws-dynamodb-recovery',
     version: '1.0.0',
     description: 'Recovers AWS DynamoDB tables from backup misconfigurations including disabled point-in-time recovery (PITR).',
-    authors: ['SRE Team <sre@example.com>'],
-    license: 'Apache-2.0',
+    ...defaultManifestMetadata(),
     tags: ['aws', 'dynamodb', 'backup', 'pitr', 'point-in-time-recovery'],
     plugin: {
       id: 'aws-dynamodb.domain-pack',
       kind: 'domain_pack',
       maturity: 'simulator_only',
-      compatibilityMode: 'recovery_agent',
+      compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
     },
   },
   spec: {
