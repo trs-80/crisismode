@@ -27,9 +27,9 @@ export interface ParsedConnection {
   kind: string;
   host: string;
   port: number;
-  username?: string;
-  password?: string;
-  database?: string;
+  username?: string | undefined;
+  password?: string | undefined;
+  database?: string | undefined;
 }
 
 export interface StackProfile {
@@ -65,7 +65,7 @@ export interface EnvHint {
   name: string;
   present: boolean;
   kind: string;
-  inferredService?: string;
+  inferredService?: string | undefined;
 }
 
 export interface PlatformInfo {
@@ -232,14 +232,14 @@ export function buildTargetsFromEnvHints(hints: EnvHint[]): TargetConfig[] {
     const target: TargetConfig = {
       name: `env-${hint.name.toLowerCase().replace(/_/g, '-')}`,
       kind: parsed.kind,
-      primary: { host: parsed.host, port: parsed.port, database: parsed.database },
+      primary: { host: parsed.host, port: parsed.port, ...(parsed.database !== undefined ? { database: parsed.database } : {}) },
     };
 
     if (parsed.username || parsed.password) {
       target.credentials = {
         type: 'value' as const,
-        username: parsed.username,
-        password: parsed.password,
+        ...(parsed.username !== undefined ? { username: parsed.username } : {}),
+        ...(parsed.password !== undefined ? { password: parsed.password } : {}),
       };
     }
 
@@ -273,10 +273,10 @@ export async function deriveGatedTargets(
       const target: TargetConfig = {
         name: 'derived-managed-database',
         kind: 'managed-database',
-        primary: { host: parsed.host, port: parsed.port, database: parsed.database },
+        primary: { host: parsed.host, port: parsed.port, ...(parsed.database !== undefined ? { database: parsed.database } : {}) },
       };
       if (parsed.username || parsed.password) {
-        target.credentials = { type: 'value' as const, username: parsed.username, password: parsed.password };
+        target.credentials = { type: 'value' as const, ...(parsed.username !== undefined ? { username: parsed.username } : {}), ...(parsed.password !== undefined ? { password: parsed.password } : {}) };
       }
       targets.push(target);
       notes[target.name] = `from ${pgEnvName} + ${migrationDep}`;
@@ -297,7 +297,7 @@ export async function deriveGatedTargets(
         queue: { tls: raw.startsWith('rediss:') },
       };
       if (parsed.username || parsed.password) {
-        target.credentials = { type: 'value' as const, username: parsed.username, password: parsed.password };
+        target.credentials = { type: 'value' as const, ...(parsed.username !== undefined ? { username: parsed.username } : {}), ...(parsed.password !== undefined ? { password: parsed.password } : {}) };
       }
       targets.push(target);
       notes[target.name] = `from ${redisEnvName} + ${queueDep}`;

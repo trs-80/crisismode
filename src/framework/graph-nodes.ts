@@ -39,7 +39,7 @@ function makeLogEntry(
   message: string,
   data?: Record<string, unknown>,
 ): ForensicLogEntry {
-  return { timestamp: makeTimestamp(), type, stepId, message, data };
+  return { timestamp: makeTimestamp(), type, stepId, message, ...(data !== undefined ? { data } : {}) };
 }
 
 /**
@@ -136,8 +136,8 @@ export function makeCheckpointNode(step: RecoveryStep & { type: 'checkpoint' }, 
         captureResults: captureResults.map((r) => ({
           name: r.name,
           status: r.status,
-          reason: r.reason,
-          data: r.data,
+          ...(r.reason !== undefined ? { reason: r.reason } : {}),
+          ...(r.data !== undefined ? { data: r.data } : {}),
         })),
       })],
       captures,

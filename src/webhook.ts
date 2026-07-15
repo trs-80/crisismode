@@ -53,7 +53,7 @@ const activeRecoveries = new Set<string>();
 
 function initModule(options?: WebhookServerOptions): void {
   MODE = options?.execute ? 'execute' : 'dry-run';
-  const result = loadConfig({ configPath: options?.configPath });
+  const result = loadConfig(options?.configPath !== undefined ? { configPath: options.configPath } : {});
   config = result.config;
   source = result.source;
   filePath = result.filePath;
@@ -398,5 +398,5 @@ const isDirectExecution = process.argv[1]?.endsWith('webhook.ts') || process.arg
 if (isDirectExecution) {
   const execMode = process.argv.includes('--execute');
   const { configPath } = parseCliFlags(process.argv);
-  startWebhookServer({ configPath, execute: execMode });
+  startWebhookServer({ ...(configPath !== undefined ? { configPath } : {}), execute: execMode });
 }

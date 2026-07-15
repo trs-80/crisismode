@@ -10,16 +10,16 @@
 import { runRecovery } from '../../live.js';
 
 export interface RecoverOptions {
-  configPath?: string;
-  targetName?: string;
+  configPath?: string | undefined;
+  targetName?: string | undefined;
   execute: boolean;
   healthOnly: boolean;
 }
 
 export async function runRecover(opts: RecoverOptions): Promise<void> {
   await runRecovery({
-    configPath: opts.configPath,
-    targetName: opts.targetName,
+    ...(opts.configPath !== undefined ? { configPath: opts.configPath } : {}),
+    ...(opts.targetName !== undefined ? { targetName: opts.targetName } : {}),
     execute: opts.execute,
     healthOnly: opts.healthOnly,
   });

@@ -26,8 +26,8 @@ import type { AgentContext } from '../../types/agent-context.js';
 import type { CheckDiagnoseResult } from '../../framework/check-plugin.js';
 
 export interface DiagnoseOptions {
-  configPath?: string;
-  targetName?: string;
+  configPath?: string | undefined;
+  targetName?: string | undefined;
 }
 
 export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
@@ -46,7 +46,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
   let config;
   let source: string;
   try {
-    const result = loadConfig({ configPath: opts.configPath });
+    const result = loadConfig(opts.configPath !== undefined ? { configPath: opts.configPath } : {});
     config = result.config;
     source = result.source === 'file' ? result.filePath ?? 'crisismode.yaml' : 'env-var fallback';
   } catch {
@@ -76,8 +76,9 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
       port: t.primary!.port,
       label: t.name,
     }));
+  const hubEndpoint = 'hub' in config ? config.hub?.endpoint : undefined;
   const networkPromise = probeNetwork({
-    hubEndpoint: 'hub' in config ? config.hub?.endpoint : undefined,
+    ...(hubEndpoint !== undefined ? { hubEndpoint } : {}),
     targets: targetProbes,
   });
 

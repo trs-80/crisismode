@@ -106,14 +106,16 @@ function convertStep(playbook: ParsedPlaybook, step: PlaybookStep): RecoveryStep
               cascadeRisk: 'none',
             },
         timeout: step.timeout ?? '300s',
-        preConditions: step.precondition
-          ? [
-              {
-                description: step.precondition,
-                check: { type: 'expression', expect: { operator: 'eq', value: true } },
-              },
-            ]
-          : undefined,
+        ...(step.precondition
+          ? {
+              preConditions: [
+                {
+                  description: step.precondition,
+                  check: { type: 'expression', expect: { operator: 'eq', value: true } },
+                },
+              ],
+            }
+          : {}),
       };
 
     case 'human_approval':
@@ -132,9 +134,9 @@ function convertStep(playbook: ParsedPlaybook, step: PlaybookStep): RecoveryStep
         },
         timeout: step.timeout ?? '15m',
         timeoutAction: (step.escalation ? 'escalate' : 'abort') as TimeoutAction,
-        escalateTo: step.escalation
-          ? { role: step.escalation, message: `Approval timeout for: ${step.title}` }
-          : undefined,
+        ...(step.escalation
+          ? { escalateTo: { role: step.escalation, message: `Approval timeout for: ${step.title}` } }
+          : {}),
       };
 
     case 'replanning_checkpoint':

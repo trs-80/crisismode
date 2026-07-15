@@ -42,9 +42,9 @@ export class ForensicRecorder {
       name: capture.name,
       captureType: capture.captureType,
       status: capture.status,
-      reason: capture.reason,
       timestamp: capture.timestamp,
-      data: capture.data,
+      ...(capture.reason !== undefined ? { reason: capture.reason } : {}),
+      ...(capture.data !== undefined ? { data: capture.data } : {}),
     });
   }
 

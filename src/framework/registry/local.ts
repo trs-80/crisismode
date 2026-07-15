@@ -161,20 +161,22 @@ async function readManifest(pluginDir: string): Promise<AgentPluginManifest> {
     version: m.version as string,
     description: m.description as string,
     kind: m.kind as 'agent' | 'playbook',
-    entryPoint: typeof m.entryPoint === 'string' ? m.entryPoint : undefined,
     targetKinds: m.targetKinds as string[],
-    riskProfile: riskProfile
+    ...(typeof m.entryPoint === 'string' ? { entryPoint: m.entryPoint } : {}),
+    ...(riskProfile
       ? {
-          maxRiskLevel: riskProfile.maxRiskLevel as RP['maxRiskLevel'],
-          dataLossPossible: riskProfile.dataLossPossible === true,
+          riskProfile: {
+            maxRiskLevel: riskProfile.maxRiskLevel as RP['maxRiskLevel'],
+            dataLossPossible: riskProfile.dataLossPossible === true,
+          },
         }
-      : undefined,
-    author: typeof m.author === 'string' ? m.author : undefined,
-    license: typeof m.license === 'string' ? m.license : undefined,
-    repository: typeof m.repository === 'string' ? m.repository : undefined,
+      : {}),
+    ...(typeof m.author === 'string' ? { author: m.author } : {}),
+    ...(typeof m.license === 'string' ? { license: m.license } : {}),
+    ...(typeof m.repository === 'string' ? { repository: m.repository } : {}),
     crisismode: {
       minVersion: cm.minVersion as string,
-      sdkVersion: typeof cm.sdkVersion === 'string' ? cm.sdkVersion : undefined,
+      ...(typeof cm.sdkVersion === 'string' ? { sdkVersion: cm.sdkVersion } : {}),
     },
   };
 }

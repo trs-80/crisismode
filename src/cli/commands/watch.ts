@@ -29,9 +29,9 @@ import type { AgentContext } from '../../types/agent-context.js';
 import type { HealthStatus } from '../../types/health.js';
 
 export interface WatchOptions {
-  configPath?: string;
-  targetName?: string;
-  intervalMs?: number;
+  configPath?: string | undefined;
+  targetName?: string | undefined;
+  intervalMs?: number | undefined;
   maxCycles?: number;
 }
 
@@ -46,7 +46,7 @@ export async function runWatch(opts: WatchOptions): Promise<void> {
   let config;
   let source: string;
   try {
-    const result = loadConfig({ configPath: opts.configPath });
+    const result = loadConfig(opts.configPath !== undefined ? { configPath: opts.configPath } : {});
     config = result.config;
     source = result.source === 'file' ? result.filePath ?? 'crisismode.yaml' : 'env-var fallback';
   } catch {

@@ -129,24 +129,24 @@ export interface SiteConfig {
 // ── Resolved targets (credentials hydrated to actual values) ──
 
 export interface ResolvedCredentials {
-  username?: string;
-  password?: string;
-  token?: string;
+  username?: string | undefined;
+  password?: string | undefined;
+  token?: string | undefined;
 }
 
 export interface ResolvedTarget {
   name: string;
   kind: string;
-  agent?: string;
+  agent?: string | undefined;
   /** Target system version — from config or auto-discovered. */
-  version?: string;
+  version?: string | undefined;
   primary: HostConfig;
   replicas: HostConfig[];
   credentials: ResolvedCredentials;
   /** AWS-specific config — passed through from TargetConfig. */
-  aws?: AwsTargetConfig;
+  aws?: AwsTargetConfig | undefined;
   /** BullMQ options for message-queue targets. */
-  queue?: QueueTargetOptions;
+  queue?: QueueTargetOptions | undefined;
   /** Drift-check options for application-config targets. */
-  configDrift?: ConfigDriftTargetOptions;
+  configDrift?: ConfigDriftTargetOptions | undefined;
 }

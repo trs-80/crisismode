@@ -183,7 +183,7 @@ describe('runRecovery (live.ts) environment guard wiring', () => {
       agent, backend, target: makeMockTarget(),
     } as never);
 
-    await runRecovery({ targetName: undefined, execute: false, healthOnly: false });
+    await runRecovery({ execute: false, healthOnly: false });
 
     const jsonLines = consoleOutput
       .filter((line) => line.trim().startsWith('{'))

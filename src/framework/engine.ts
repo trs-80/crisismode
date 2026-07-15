@@ -253,8 +253,8 @@ export class LegacyExecutionEngine {
       captureResults: captureResults.map((r) => ({
         name: r.name,
         status: r.status,
-        reason: r.reason,
-        data: r.data,
+        ...(r.reason !== undefined ? { reason: r.reason } : {}),
+        ...(r.data !== undefined ? { data: r.data } : {}),
       })),
     });
   }
@@ -401,7 +401,7 @@ export class LegacyExecutionEngine {
     return makeStepResult(step, successPassed ? 'success' : 'failed', startedAt, startTime, {
       output,
       providerResolution: providerResolution.capabilities,
-      error: successPassed ? undefined : `Success criteria failed: ${step.successCriteria.description}`,
+      ...(successPassed ? {} : { error: `Success criteria failed: ${step.successCriteria.description}` }),
     });
   }
 

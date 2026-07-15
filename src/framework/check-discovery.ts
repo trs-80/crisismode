@@ -181,6 +181,8 @@ async function readManifest(pluginDir: string): Promise<CheckPluginManifest> {
       : m.format === 'sensu' ? 'sensu' as const
         : undefined;
 
+  const docs = parseDocs(m.docs);
+
   return {
     name: m.name as string,
     description: (m.description as string) ?? '',
@@ -188,15 +190,17 @@ async function readManifest(pluginDir: string): Promise<CheckPluginManifest> {
     targetKinds: m.targetKinds as string[],
     verbs: m.verbs as CheckPluginManifest['verbs'],
     executable: m.executable as string,
-    format,
-    sensuMetricFormat: typeof m.sensuMetricFormat === 'string'
-      ? m.sensuMetricFormat as CheckPluginManifest['sensuMetricFormat']
-      : undefined,
-    maxRiskLevel: m.maxRiskLevel as CheckPluginManifest['maxRiskLevel'],
-    timeoutMs: typeof m.timeoutMs === 'number' ? m.timeoutMs : undefined,
-    author: typeof m.author === 'string' ? m.author : undefined,
-    license: typeof m.license === 'string' ? m.license : undefined,
-    docs: parseDocs(m.docs),
+    ...(format !== undefined ? { format } : {}),
+    ...(typeof m.sensuMetricFormat === 'string'
+      ? { sensuMetricFormat: m.sensuMetricFormat as NonNullable<CheckPluginManifest['sensuMetricFormat']> }
+      : {}),
+    ...(m.maxRiskLevel !== undefined
+      ? { maxRiskLevel: m.maxRiskLevel as NonNullable<CheckPluginManifest['maxRiskLevel']> }
+      : {}),
+    ...(typeof m.timeoutMs === 'number' ? { timeoutMs: m.timeoutMs } : {}),
+    ...(typeof m.author === 'string' ? { author: m.author } : {}),
+    ...(typeof m.license === 'string' ? { license: m.license } : {}),
+    ...(docs !== undefined ? { docs } : {}),
   };
 }
 
@@ -204,8 +208,8 @@ function parseDocs(docs: unknown): { explanation?: string; learnMoreUrl?: string
   if (typeof docs !== 'object' || docs === null || Array.isArray(docs)) return undefined;
   const d = docs as Record<string, unknown>;
   return {
-    explanation: typeof d.explanation === 'string' ? d.explanation : undefined,
-    learnMoreUrl: typeof d.learnMoreUrl === 'string' ? d.learnMoreUrl : undefined,
+    ...(typeof d.explanation === 'string' ? { explanation: d.explanation } : {}),
+    ...(typeof d.learnMoreUrl === 'string' ? { learnMoreUrl: d.learnMoreUrl } : {}),
   };
 }
 

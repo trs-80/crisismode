@@ -33,7 +33,7 @@ export interface ReplicationSlot {
 export interface IdleInTransactionSession {
   pid: number;
   ageSeconds: number;
-  applicationName?: string;
+  applicationName?: string | undefined;
 }
 
 export interface ConnectionUsage {

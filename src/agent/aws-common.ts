@@ -34,8 +34,8 @@ export async function tryImportAws<T>(pkg: string): Promise<T | null> {
  * credentials are missing, expired, or the SDK is not installed.
  */
 export async function resolveAwsCredentials(opts?: {
-  region?: string;
-  profile?: string;
+  region?: string | undefined;
+  profile?: string | undefined;
 }): Promise<AwsCredentialResult> {
   const invalid: AwsCredentialResult = { valid: false, accountId: '', region: '' };
 
@@ -65,10 +65,10 @@ export async function resolveAwsCredentials(opts?: {
  */
 export function resolveAwsTarget(target: ResolvedTarget): {
   region: string;
-  bucket?: string;
-  table?: string;
-  instanceId?: string;
-  profile?: string;
+  bucket?: string | undefined;
+  table?: string | undefined;
+  instanceId?: string | undefined;
+  profile?: string | undefined;
 } {
   if (target.aws) return target.aws;
   // Fallback: convention-based mapping from primary fields

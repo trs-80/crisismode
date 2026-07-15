@@ -171,8 +171,8 @@ export function flattenProviderResolutions(
       stepId: resolution.stepId,
       capability: capability.capability,
       resolved: capability.resolved,
-      providerId: capability.providerId,
-      reason: capability.reason,
+      ...(capability.providerId !== undefined ? { providerId: capability.providerId } : {}),
+      ...(capability.reason !== undefined ? { reason: capability.reason } : {}),
     })),
   );
 }

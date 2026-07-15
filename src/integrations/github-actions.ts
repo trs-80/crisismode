@@ -24,9 +24,9 @@ export interface GitHubActionsConfig {
 
 export interface CommentResult {
   ok: boolean;
-  id?: number;
-  url?: string;
-  error?: string;
+  id?: number | undefined;
+  url?: string | undefined;
+  error?: string | undefined;
 }
 
 export interface DiagnoseActionInputs {
@@ -226,7 +226,7 @@ export class GitHubActionsIntegration {
     return fetch(url, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      ...(body ? { body: JSON.stringify(body) } : {}),
     });
   }
 }

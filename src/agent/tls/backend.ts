@@ -10,8 +10,8 @@ import type { ExecutionBackend } from '../../framework/backend.js';
 
 /** Certificate details from a TLS endpoint */
 export interface CertificateInfo {
-  subject: { CN: string; O?: string; OU?: string };
-  issuer: { CN: string; O?: string };
+  subject: { CN: string; O?: string | undefined; OU?: string | undefined };
+  issuer: { CN: string; O?: string | undefined };
   validFrom: string;
   validTo: string;
   daysUntilExpiry: number;

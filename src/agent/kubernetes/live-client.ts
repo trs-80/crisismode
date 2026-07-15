@@ -25,9 +25,9 @@ import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export interface K8sConnectionConfig {
   /** Path to kubeconfig file. If omitted, loads from default location. */
-  kubeconfig?: string;
+  kubeconfig?: string | undefined;
   /** Kubeconfig context to use. If omitted, uses the current context. */
-  context?: string;
+  context?: string | undefined;
   /** Use in-cluster ServiceAccount auth instead of kubeconfig. */
   inCluster?: boolean;
   /** Connection timeout in milliseconds. */
@@ -251,8 +251,8 @@ export class K8sLiveClient implements K8sBackend {
             apiVersion: 'policy/v1',
             kind: 'Eviction',
             metadata: {
-              name: pod.metadata?.name,
-              namespace: pod.metadata?.namespace,
+              ...(pod.metadata?.name !== undefined ? { name: pod.metadata.name } : {}),
+              ...(pod.metadata?.namespace !== undefined ? { namespace: pod.metadata.namespace } : {}),
             },
           };
 

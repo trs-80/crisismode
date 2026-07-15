@@ -107,7 +107,7 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
   const targetName = options.targetName;
 
   // Load config (file or env-var fallback)
-  const { config, source, filePath } = loadConfig({ configPath });
+  const { config, source, filePath } = loadConfig(configPath !== undefined ? { configPath } : {});
 
   // Validate credential env vars at load time
   for (const target of config.targets) {
@@ -469,7 +469,12 @@ function runLive(): Promise<void> {
   const execMode = process.argv.includes('--execute');
   const healthOnly = process.argv.includes('--health-only');
   const { configPath, targetName } = parseCliFlags(process.argv);
-  return runRecovery({ configPath, targetName, execute: execMode, healthOnly });
+  return runRecovery({
+    ...(configPath !== undefined ? { configPath } : {}),
+    ...(targetName !== undefined ? { targetName } : {}),
+    execute: execMode,
+    healthOnly,
+  });
 }
 
 // Direct execution entry point (backward compat for `pnpm run live`).

@@ -15,7 +15,7 @@ function makeTarget(kind: string, aws: ResolvedTarget['aws']): ResolvedTarget {
     primary: { host: 'simulator', port: 0 },
     replicas: [],
     credentials: {},
-    aws,
+    ...(aws !== undefined ? { aws } : {}),
   };
 }
 
