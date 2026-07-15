@@ -22,7 +22,7 @@ import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export interface DiskLiveConfig {
   /** Mount points to monitor (default: ['/', '/var/log', '/boot', '/tmp']) */
-  mountPoints?: string[];
+  mountPoints?: string[] | undefined;
   /** Maximum depth for large file scanning (default: 2) */
   scanDepth?: number;
 }

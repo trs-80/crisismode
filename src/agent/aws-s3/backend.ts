@@ -17,7 +17,7 @@ export interface LifecycleRule {
   status: 'Enabled' | 'Disabled';
   prefix: string;
   transitions: { days: number; storageClass: string }[];
-  expiration?: { days: number };
+  expiration?: { days: number } | undefined;
 }
 
 export interface BucketConfig {

@@ -40,7 +40,7 @@ function makeSystemActionResult(
       cascadeRisk: 'low',
     },
     timeout: 'PT30S',
-    rollback,
+    ...(rollback !== undefined ? { rollback } : {}),
   };
 
   return {

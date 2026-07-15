@@ -17,7 +17,7 @@ import { compareCheckValue } from '../../framework/check-helpers.js';
 export interface RedisConnectionConfig {
   host: string;
   port: number;
-  password?: string;
+  password?: string | undefined;
   connectTimeoutMs?: number;
 }
 

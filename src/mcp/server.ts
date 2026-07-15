@@ -44,7 +44,7 @@ export async function handleScan(params: Record<string, unknown>): Promise<unkno
 
   let config;
   try {
-    const result = loadConfig({ configPath });
+    const result = loadConfig(configPath !== undefined ? { configPath } : {});
     config = result.config;
   } catch {
     const services = await detectServices();
@@ -124,7 +124,7 @@ export async function handleDiagnose(params: Record<string, unknown>): Promise<u
   const configPath = params.configPath as string | undefined;
   const targetName = params.target as string | undefined;
 
-  const result = loadConfig({ configPath });
+  const result = loadConfig(configPath !== undefined ? { configPath } : {});
   const registry = new AgentRegistry(result.config);
 
   const { agent, backend, target } = targetName
@@ -188,7 +188,7 @@ export async function handleStatus(params: Record<string, unknown>): Promise<unk
 
   let services;
   try {
-    const result = loadConfig({ configPath });
+    const result = loadConfig(configPath !== undefined ? { configPath } : {});
     services = result.config.targets.map((t) => ({
       name: t.name,
       kind: t.kind,

@@ -102,7 +102,10 @@ async function runInstall(opts: RegistryOptions): Promise<void> {
   }
 
   try {
-    const result = await installCheck(entry, { local: opts.local, force: opts.force });
+    const result = await installCheck(entry, {
+      ...(opts.local !== undefined ? { local: opts.local } : {}),
+      ...(opts.force !== undefined ? { force: opts.force } : {}),
+    });
     printSuccess(`Installed ${result.name}@${entry.version} -> ${result.installedTo}`);
     printInfo('Run: crisismode scan');
   } catch (err) {

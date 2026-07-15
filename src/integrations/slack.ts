@@ -33,13 +33,13 @@ export interface SlackPostResult {
   ok: boolean;
   channel: string;
   ts: string;
-  error?: string;
+  error?: string | undefined;
 }
 
 export interface SlackUpdateResult {
   ok: boolean;
   ts: string;
-  error?: string;
+  error?: string | undefined;
 }
 
 export interface SlackActionPayload {

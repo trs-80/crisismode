@@ -65,7 +65,7 @@ export class RecoveryGraphEngine {
     this.backend = backend;
     this.mode = mode;
     this.checkpointer = options.checkpointer ?? new MemorySaver();
-    this.approvalHandler = options.approvalHandler;
+    if (options.approvalHandler !== undefined) this.approvalHandler = options.approvalHandler;
     this.threadId = options.threadId ?? `recovery-${Date.now()}`;
   }
 
@@ -88,7 +88,7 @@ export class RecoveryGraphEngine {
       agent: this.agent,
       mode: this.mode,
       coveredRiskLevels: this.coveredRiskLevels,
-      approvalHandler: this.approvalHandler,
+      ...(this.approvalHandler !== undefined ? { approvalHandler: this.approvalHandler } : {}),
     };
 
     const builder = new StateGraph(RecoveryGraphState);

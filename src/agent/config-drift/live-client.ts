@@ -33,7 +33,7 @@ export interface ConfigExpectation {
   /** Source type */
   source: 'env' | 'file' | 'secret' | 'remote';
   /** Whether to mask the value in output */
-  masked?: boolean;
+  masked?: boolean | undefined;
   /** Presence-only check: verify the key is set; never read or compare its value. */
   presence?: boolean;
 }

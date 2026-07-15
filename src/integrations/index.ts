@@ -62,7 +62,7 @@ export interface ErrorEvent {
   count: number;
   firstSeen: string;
   lastSeen: string;
-  release?: string;
+  release?: string | undefined;
 }
 
 export interface ErrorSpikeInfo {

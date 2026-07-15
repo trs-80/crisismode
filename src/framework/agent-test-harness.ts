@@ -295,7 +295,10 @@ async function checkPluginVerb(
   manifest: CheckPluginManifest,
   options?: { cwd?: string },
 ): Promise<HarnessCheck> {
-  const execOpts = { timeoutMs: manifest.timeoutMs ?? 10_000, cwd: options?.cwd };
+  const execOpts = {
+    timeoutMs: manifest.timeoutMs ?? 10_000,
+    ...(options?.cwd !== undefined ? { cwd: options.cwd } : {}),
+  };
 
   try {
     const request: CheckRequest = { verb: verb as CheckVerb, target: { name: 'harness-test', kind: manifest.targetKinds[0] ?? 'generic' } };

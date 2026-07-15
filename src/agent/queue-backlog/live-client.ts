@@ -26,7 +26,7 @@ export interface QueueLiveConfig {
   /** BullMQ queue names to monitor. Empty/absent = discover from ${prefix}:*:meta keys. */
   queueNames?: string[];
   /** BullMQ key prefix (default: 'bull') */
-  keyPrefix?: string;
+  keyPrefix?: string | undefined;
   /** Connection timeout in milliseconds (default: 5000) */
   timeoutMs?: number;
 }

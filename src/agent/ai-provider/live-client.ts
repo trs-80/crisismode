@@ -29,11 +29,11 @@ export interface ProviderEndpointConfig {
   /** API key for authentication */
   apiKey: string;
   /** Header name for the API key (default: 'Authorization') */
-  authHeader?: string;
+  authHeader?: string | undefined;
   /** Auth prefix (default: 'Bearer') */
-  authPrefix?: string;
+  authPrefix?: string | undefined;
   /** Additional headers required by this provider (e.g. anthropic-version). */
-  extraHeaders?: Record<string, string>;
+  extraHeaders?: Record<string, string> | undefined;
   /** Priority in fallback chain (lower = higher priority) */
   priority: number;
   /** Whether this provider is enabled in the fallback chain */

@@ -120,9 +120,10 @@ describe('Version-Aware Agent Selection', () => {
   });
 
   it('matches any agent when version is omitted (backward-compatible)', async () => {
+    const { version, ...targetWithoutVersion } = baseConfig.targets[0];
     const config: SiteConfig = {
       ...baseConfig,
-      targets: [{ ...baseConfig.targets[0], version: undefined }],
+      targets: [targetWithoutVersion],
     };
     const registry = new AgentRegistry(config);
     const instance = await registry.createForTarget('pg-16');
@@ -176,7 +177,7 @@ describe('Version Discovery', () => {
     return {
       name: 'test',
       kind: 'postgresql',
-      version,
+      ...(version !== undefined ? { version } : {}),
       primary: { host: 'localhost', port: 5432 },
       replicas: [],
       credentials: {},

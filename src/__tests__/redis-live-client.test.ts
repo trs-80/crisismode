@@ -15,7 +15,7 @@ import type { RedisLiveClient as RedisLiveClientType } from '../agent/redis/live
 import type { Command } from '../types/common.js';
 
 function structuredCommand(operation: string, parameters?: Record<string, unknown>): Command {
-  return { type: 'structured_command', operation, parameters };
+  return { type: 'structured_command', operation, ...(parameters !== undefined ? { parameters } : {}) };
 }
 
 async function loadClient(): Promise<typeof RedisLiveClientType> {

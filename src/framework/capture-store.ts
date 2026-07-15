@@ -110,13 +110,13 @@ export class CaptureStore {
       name: params.name,
       captureType: params.captureType,
       capturedAt: new Date().toISOString(),
-      planId: params.planId,
-      stepId: params.stepId,
-      agentId: params.agentId,
       sizeBytes: Buffer.byteLength(serialized, 'utf-8'),
-      retention: params.retention,
       rollbackCapable: params.rollbackCapable ?? false,
-      tags: params.tags,
+      ...(params.planId !== undefined ? { planId: params.planId } : {}),
+      ...(params.stepId !== undefined ? { stepId: params.stepId } : {}),
+      ...(params.agentId !== undefined ? { agentId: params.agentId } : {}),
+      ...(params.retention !== undefined ? { retention: params.retention } : {}),
+      ...(params.tags !== undefined ? { tags: params.tags } : {}),
     };
 
     const index = await this.readIndex();

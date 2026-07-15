@@ -9,6 +9,7 @@ export function assembleContext(
   trigger: AgentContext['trigger'],
   manifest: AgentManifest,
 ): AgentContext {
+  const network = getNetworkProfile();
   return {
     trigger,
     topology: {
@@ -77,7 +78,7 @@ export function assembleContext(
       coordination: getNetworkProfile()?.hub.status === 'available' ? 'available' : 'unavailable',
       enrichment: getNetworkProfile()?.internet.status === 'unavailable' ? 'unavailable' : 'available',
     },
-    network: getNetworkProfile() ?? undefined,
+    ...(network !== null ? { network } : {}),
     trustLevel: 'copilot',
     trustScenarioOverrides: {
       replication_lag_cascade: 'autopilot',

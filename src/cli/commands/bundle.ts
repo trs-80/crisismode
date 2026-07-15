@@ -23,7 +23,7 @@ import { printError } from '../output.js';
 export interface BundleOptions {
   subcommand: string;
   args: string[];
-  output?: string;
+  output?: string | undefined;
 }
 
 export async function runBundle(options: BundleOptions): Promise<void> {

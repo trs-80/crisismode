@@ -22,9 +22,9 @@ import { compareCheckValue } from '../../framework/check-helpers.js';
 export interface VercelConfig {
   token: string;
   projectId: string;
-  teamId?: string;
+  teamId?: string | undefined;
   /** Application health-check URLs to probe (e.g. ['https://app.example.com/healthz']) */
-  healthEndpoints?: string[];
+  healthEndpoints?: string[] | undefined;
   /** Request timeout in milliseconds (default: 10000) */
   timeoutMs?: number;
 }
@@ -78,7 +78,7 @@ export class DeployLiveClient implements DeployBackend {
         Authorization: `Bearer ${this.config.token}`,
         'Content-Type': 'application/json',
       },
-      body: body ? JSON.stringify(body) : undefined,
+      ...(body ? { body: JSON.stringify(body) } : {}),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
 

@@ -27,7 +27,7 @@ const execFileAsync = promisify(execFile);
 
 export interface DnsLiveConfig {
   /** Override resolvers instead of auto-detecting from OS */
-  resolvers?: string[];
+  resolvers?: string[] | undefined;
   /** Hostnames to probe for resolution correctness */
   probeNames?: string[];
   /** Per-query timeout in ms (default: 3000) */

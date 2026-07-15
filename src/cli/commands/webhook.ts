@@ -8,13 +8,13 @@
 import { startWebhookServer } from '../../webhook.js';
 
 export interface WebhookOptions {
-  configPath?: string;
+  configPath?: string | undefined;
   execute: boolean;
 }
 
 export async function runWebhookCommand(opts: WebhookOptions): Promise<void> {
   await startWebhookServer({
-    configPath: opts.configPath,
+    ...(opts.configPath !== undefined ? { configPath: opts.configPath } : {}),
     execute: opts.execute,
   });
 }

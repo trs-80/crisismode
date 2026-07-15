@@ -39,8 +39,8 @@ import type { CheckRequest, CheckHealthResult } from '../../framework/check-plug
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 
 export interface ScanOptions {
-  configPath?: string;
-  category?: string[];
+  configPath?: string | undefined;
+  category?: string[] | undefined;
   verbose?: boolean;
 }
 
@@ -424,7 +424,7 @@ function computeHealthScore(findings: ScanFinding[]): number {
  */
 function loadConfigWithDetectionSafe(configPath?: string) {
   try {
-    return loadConfigWithDetection({ configPath });
+    return loadConfigWithDetection(configPath !== undefined ? { configPath } : {});
   } catch {
     return { config: null, source: 'none' as const };
   }

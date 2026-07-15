@@ -489,7 +489,9 @@ export function dispatchPluginExecution(
     case 'sensu':
       return executeSensuPlugin(plugin.executablePath, verb, {
         ...options,
-        sensuMetricFormat: plugin.manifest.sensuMetricFormat,
+        ...(plugin.manifest.sensuMetricFormat !== undefined
+          ? { sensuMetricFormat: plugin.manifest.sensuMetricFormat }
+          : {}),
       });
     default:
       return executeCheckPlugin(

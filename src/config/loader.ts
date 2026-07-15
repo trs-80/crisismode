@@ -177,14 +177,14 @@ function buildLegacyConfig(): SiteConfig {
       name: 'legacy-env',
       environment: 'development',
     },
-    hub: process.env.HUB_ENDPOINT
-      ? { endpoint: process.env.HUB_ENDPOINT }
-      : undefined,
+    ...(process.env.HUB_ENDPOINT
+      ? { hub: { endpoint: process.env.HUB_ENDPOINT } }
+      : {}),
     webhook: {
       port: parseInt(process.env.PORT || '3000', 10),
-      secret: process.env.WEBHOOK_SECRET
-        ? { type: 'value', token: process.env.WEBHOOK_SECRET }
-        : undefined,
+      ...(process.env.WEBHOOK_SECRET
+        ? { secret: { type: 'value' as const, token: process.env.WEBHOOK_SECRET } }
+        : {}),
     },
     targets: [
       {
@@ -223,7 +223,7 @@ export function loadConfigWithDetection(options?: LoadConfigOptions): {
 /**
  * Parse --config <path> and --target <name> from process.argv.
  */
-export function parseCliFlags(argv: string[]): { configPath?: string; targetName?: string } {
+export function parseCliFlags(argv: string[]): { configPath?: string | undefined; targetName?: string | undefined } {
   let configPath: string | undefined;
   let targetName: string | undefined;
 

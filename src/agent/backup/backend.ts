@@ -109,20 +109,20 @@ export const CHECK_NAMES = {
 
 /** AWS-specific configuration for cloud backup providers. */
 export interface AwsBackupConfig {
-  region?: string;
-  profile?: string;
+  region?: string | undefined;
+  profile?: string | undefined;
   /** RDS: filter to specific DB instances */
-  dbInstanceIdentifiers?: string[];
+  dbInstanceIdentifiers?: string[] | undefined;
   /** RDS: filter to specific Aurora clusters */
-  dbClusterIdentifiers?: string[];
+  dbClusterIdentifiers?: string[] | undefined;
   /** RDS: include automated snapshots (default: true) */
   includeAutomated?: boolean;
   /** S3: bucket name */
   bucket?: string;
   /** S3: key prefix to filter objects */
-  prefix?: string;
+  prefix?: string | undefined;
   /** S3: glob pattern for backup file names */
-  filePattern?: string;
+  filePattern?: string | undefined;
 }
 
 /** Configuration for a single backup provider. */

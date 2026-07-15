@@ -59,9 +59,9 @@ export function parsePlaybook(markdown: string, filePath?: string): ParsedPlaybo
   return {
     frontmatter,
     steps,
-    rollback,
     rawMarkdown: markdown,
-    filePath,
+    ...(rollback !== undefined ? { rollback } : {}),
+    ...(filePath !== undefined ? { filePath } : {}),
   };
 }
 
@@ -167,9 +167,9 @@ function normalizeFrontmatter(raw: Record<string, unknown>): PlaybookFrontmatter
 
   if (raw.agent !== undefined) fm.agent = raw.agent as string;
   if (raw.provider !== undefined) fm.provider = raw.provider as string;
-  if (raw.severity !== undefined) fm.severity = raw.severity as PlaybookFrontmatter['severity'];
-  if (raw.triggers !== undefined) fm.triggers = raw.triggers as PlaybookFrontmatter['triggers'];
-  if (raw.requires !== undefined) fm.requires = raw.requires as PlaybookFrontmatter['requires'];
+  if (raw.severity !== undefined) fm.severity = raw.severity as NonNullable<PlaybookFrontmatter['severity']>;
+  if (raw.triggers !== undefined) fm.triggers = raw.triggers as NonNullable<PlaybookFrontmatter['triggers']>;
+  if (raw.requires !== undefined) fm.requires = raw.requires as NonNullable<PlaybookFrontmatter['requires']>;
   if (raw.tags !== undefined) fm.tags = raw.tags as string[];
   if (raw.author !== undefined) fm.author = raw.author as string;
   if (raw.estimated_duration !== undefined) fm.estimatedDuration = raw.estimated_duration as string;

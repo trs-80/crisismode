@@ -120,12 +120,12 @@ export async function executeCaptureAsync(
         name: capture.name,
         captureType: capture.captureType,
         data,
-        planId: options.planId,
-        stepId: options.stepId,
-        agentId: options.agentId,
-        retention: capture.retention,
         rollbackCapable: isRollbackCapable(capture),
         tags: [capture.captureType],
+        ...(options.planId !== undefined ? { planId: options.planId } : {}),
+        ...(options.stepId !== undefined ? { stepId: options.stepId } : {}),
+        ...(options.agentId !== undefined ? { agentId: options.agentId } : {}),
+        ...(capture.retention !== undefined ? { retention: capture.retention } : {}),
       });
       result.captureId = metadata.id;
     } catch {
@@ -199,7 +199,7 @@ async function executeLiveCapture(
       const result = await backend.executeCommand({
         type: 'api_call',
         operation: capture.statement ?? 'snapshot',
-        parameters: capture.targets ? { targets: capture.targets } : undefined,
+        ...(capture.targets ? { parameters: { targets: capture.targets } } : {}),
       });
       return {
         endpoint: capture.statement,
@@ -212,7 +212,7 @@ async function executeLiveCapture(
       const output = await backend.executeCommand({
         type: 'structured_command',
         operation: capture.statement ?? 'capture',
-        parameters: capture.targets ? { targets: capture.targets } : undefined,
+        ...(capture.targets ? { parameters: { targets: capture.targets } } : {}),
       });
       return {
         command: capture.statement,
