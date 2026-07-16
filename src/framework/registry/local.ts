@@ -19,7 +19,7 @@ import type {
   DiscoveredAgentPlugin,
   AgentPluginDiscoveryResult,
 } from './types.js';
-import { dirExists } from '../fs-utils.js';
+import { dirExists, fileExists } from '../fs-utils.js';
 
 const MANIFEST_FILENAME = 'crisismode-agent.json';
 
@@ -90,6 +90,15 @@ async function scanDirectory(
     // Each entry should be a subdirectory containing a crisismode-agent.json
     const stats = await stat(pluginDir).catch(() => null);
     if (!stats?.isDirectory()) continue;
+
+    // The @crisismode npm scope also holds non-plugin packages (e.g. the
+    // types-only agent-sdk). A scoped package without a manifest is not
+    // claiming to be an agent plugin — skip it silently. Explicit agent
+    // directories still warn, since a manifest-less entry there is likely
+    // a mistake.
+    if (source === 'node_modules' && !(await fileExists(join(pluginDir, MANIFEST_FILENAME)))) {
+      continue;
+    }
 
     try {
       const manifest = await readManifest(pluginDir);

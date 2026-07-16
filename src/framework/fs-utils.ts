@@ -15,3 +15,16 @@ export async function dirExists(path: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Check if a path exists and is a regular file.
+ * Returns false for missing paths or non-files.
+ */
+export async function fileExists(path: string): Promise<boolean> {
+  try {
+    const stats = await stat(path);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}

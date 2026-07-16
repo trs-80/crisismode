@@ -107,6 +107,38 @@ describe('agent plugin discovery', () => {
     expect(projectPlugins).toHaveLength(0);
   });
 
+  it('silently skips @crisismode-scoped npm packages without a manifest', async () => {
+    const tmpDir = await makeTmpDir();
+    const scopeDir = join(tmpDir, 'node_modules', '@crisismode');
+
+    // A non-plugin package in the scope (e.g. the types-only agent-sdk)
+    await mkdir(join(scopeDir, 'agent-sdk'), { recursive: true });
+    await writeFile(join(scopeDir, 'agent-sdk', 'package.json'), '{"name":"@crisismode/agent-sdk"}');
+
+    // A real plugin package alongside it
+    await createAgentPlugin(scopeDir, 'real-plugin');
+
+    const result = await discoverAgentPlugins({ projectDir: tmpDir });
+
+    const nmPlugins = result.plugins.filter((p) => p.source === 'node_modules');
+    expect(nmPlugins).toHaveLength(1);
+    expect(nmPlugins[0]!.manifest.name).toBe('real-plugin');
+    expect(result.warnings.filter((w) => w.path.includes('agent-sdk'))).toHaveLength(0);
+  });
+
+  it('still warns for a scoped npm package with a broken manifest', async () => {
+    const tmpDir = await makeTmpDir();
+    const scopeDir = join(tmpDir, 'node_modules', '@crisismode');
+    await mkdir(join(scopeDir, 'broken-plugin'), { recursive: true });
+    await writeFile(join(scopeDir, 'broken-plugin', 'crisismode-agent.json'), 'not json');
+
+    const result = await discoverAgentPlugins({ projectDir: tmpDir });
+
+    const warning = result.warnings.find((w) => w.path.includes('broken-plugin'));
+    expect(warning).toBeDefined();
+    expect(warning!.reason).toContain('Invalid JSON');
+  });
+
   it('returns empty result for non-existent directory', async () => {
     const result = await discoverAgentPlugins({
       projectDir: '/tmp/nonexistent-agent-discovery-dir-' + Date.now(),
