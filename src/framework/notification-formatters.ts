@@ -10,7 +10,7 @@
  */
 
 import type { IncidentReport } from './incident-report.js';
-import type { HealthAssessment, OperatorSummary } from '../types/health.js';
+import type { HealthAssessment, HealthStatus, OperatorSummary } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { HealthCard } from './watch-state.js';
@@ -54,14 +54,16 @@ export interface NotificationContext {
 
 // ── Severity helpers ──
 
-const SEVERITY_EMOJI: Record<string, string> = {
+// Keyed on the canonical HealthStatus union so a new status fails compilation
+// here instead of silently rendering the fallback.
+const SEVERITY_EMOJI: Record<HealthStatus, string> = {
   healthy: ':white_check_mark:',
   recovering: ':large_orange_diamond:',
   unhealthy: ':red_circle:',
   unknown: ':question:',
 };
 
-const SEVERITY_LABEL: Record<string, string> = {
+const SEVERITY_LABEL: Record<HealthStatus, string> = {
   healthy: 'Healthy',
   recovering: 'Recovering',
   unhealthy: 'Unhealthy',
