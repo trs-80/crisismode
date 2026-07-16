@@ -40,6 +40,19 @@ export function loadConfig(options?: LoadConfigOptions): LoadConfigResult {
 }
 
 /**
+ * An explicitly requested config file (--config flag or CRISISMODE_CONFIG)
+ * does not exist. Callers with detection fallbacks must NOT swallow this:
+ * when the user names a config file, silently diagnosing something else
+ * instead is dishonest — surface the error.
+ */
+export class ConfigNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigNotFoundError';
+  }
+}
+
+/**
  * Discover config file path using the priority chain.
  */
 function discoverConfigPath(explicit?: string): string | undefined {
@@ -47,7 +60,7 @@ function discoverConfigPath(explicit?: string): string | undefined {
   if (explicit) {
     const resolved = resolve(explicit);
     if (!existsSync(resolved)) {
-      throw new Error(`Config file not found: ${resolved}`);
+      throw new ConfigNotFoundError(`Config file not found: ${resolved}`);
     }
     return resolved;
   }
@@ -57,7 +70,7 @@ function discoverConfigPath(explicit?: string): string | undefined {
   if (envPath) {
     const resolved = resolve(envPath);
     if (!existsSync(resolved)) {
-      throw new Error(`Config file not found (CRISISMODE_CONFIG): ${resolved}`);
+      throw new ConfigNotFoundError(`Config file not found (CRISISMODE_CONFIG): ${resolved}`);
     }
     return resolved;
   }
@@ -215,7 +228,8 @@ export function loadConfigWithDetection(options?: LoadConfigOptions): {
   try {
     const result = loadConfig(options);
     return result;
-  } catch {
+  } catch (err) {
+    if (err instanceof ConfigNotFoundError) throw err;
     return { config: null, source: 'none' };
   }
 }

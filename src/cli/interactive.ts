@@ -15,7 +15,7 @@ import {
   printOperatorSummary,
 } from './output.js';
 import { noConfig } from './errors.js';
-import { loadConfig } from '../config/loader.js';
+import { loadConfig, ConfigNotFoundError } from '../config/loader.js';
 import { AgentRegistry } from '../config/agent-registry.js';
 import { buildConfigFromDetection, createAgentForTarget, formatConfigSource } from './runtime.js';
 import { assembleContext } from '../framework/context.js';
@@ -35,7 +35,10 @@ export async function runInteractive(): Promise<void> {
     const result = loadConfig();
     config = result.config;
     printInfo(`Config loaded: ${formatConfigSource(result)}`);
-  } catch {
+  } catch (err) {
+    // An explicitly named config file that doesn't exist is a user error,
+    // not a cue to silently diagnose something else.
+    if (err instanceof ConfigNotFoundError) throw err;
     // No config — will use detection
   }
 

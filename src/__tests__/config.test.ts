@@ -5,7 +5,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadConfig, parseCliFlags } from '../config/loader.js';
+import {
+  loadConfig,
+  loadConfigWithDetection,
+  parseCliFlags,
+  ConfigNotFoundError,
+} from '../config/loader.js';
 import { resolveCredentials } from '../config/credentials.js';
 import { resolveTargets } from '../config/resolve.js';
 import { AgentRegistry } from '../config/agent-registry.js';
@@ -90,6 +95,30 @@ describe('Config loader', () => {
 
   it('throws if explicit config path does not exist', () => {
     expect(() => loadConfig({ configPath: '/nonexistent/crisismode.yaml' })).toThrow('not found');
+  });
+
+  it('throws ConfigNotFoundError for a missing explicit --config path', () => {
+    expect(() => loadConfig({ configPath: '/nonexistent/crisismode.yaml' })).toThrow(
+      ConfigNotFoundError,
+    );
+  });
+
+  it('throws ConfigNotFoundError for a missing CRISISMODE_CONFIG path', () => {
+    vi.stubEnv('CRISISMODE_CONFIG', '/nonexistent/env-config.yaml');
+    expect(() => loadConfig()).toThrow(ConfigNotFoundError);
+  });
+
+  it('loadConfigWithDetection rethrows ConfigNotFoundError instead of returning none', () => {
+    expect(() => loadConfigWithDetection({ configPath: '/nonexistent/crisismode.yaml' })).toThrow(
+      ConfigNotFoundError,
+    );
+  });
+
+  it('loadConfigWithDetection still returns none for an invalid config file', () => {
+    const filePath = writeYamlConfig(tmpDir, { ...validConfig, apiVersion: 'wrong/v2' });
+    const result = loadConfigWithDetection({ configPath: filePath });
+    expect(result.config).toBeNull();
+    expect(result.source).toBe('none');
   });
 
   it('falls back to legacy env vars when no config file exists', () => {
