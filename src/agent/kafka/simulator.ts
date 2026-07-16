@@ -325,7 +325,6 @@ export class KafkaSimulator implements KafkaBackend {
 
   async getClusterMetadata(): Promise<KafkaClusterMetadata> {
     const brokers = this.data().brokers[this.state];
-    const aliveBrokers = brokers.filter((b) => b.isAlive);
     return {
       clusterId: 'kafka-cluster-001',
       controllerId: 0,

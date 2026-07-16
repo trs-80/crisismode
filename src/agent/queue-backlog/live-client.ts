@@ -83,7 +83,7 @@ export class QueueLiveClient implements QueueBackend {
         }
         this.redis = null;
       }
-      throw new Error(`Failed to connect to Redis at ${this.safeRedisUrl()}: ${err}`);
+      throw new Error(`Failed to connect to Redis at ${this.safeRedisUrl()}: ${err}`, { cause: err });
     }
   }
 

@@ -179,7 +179,7 @@ describe('executeCaptureAsync', () => {
 
     it('fails for sql_query without a statement', async () => {
       const backend = makeBackend();
-      const { statement, ...captureWithoutStatement } = sqlCapture;
+      const { statement: _statement, ...captureWithoutStatement } = sqlCapture;
       const result = await executeCaptureAsync(captureWithoutStatement, { backend });
       expect(result.status).toBe('failed');
       expect(result.reason).toContain('requires a statement');

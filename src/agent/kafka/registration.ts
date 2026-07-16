@@ -10,10 +10,10 @@ export const kafkaRecoveryRegistration = createSimulatorRegistration({
   manifest: kafkaRecoveryManifest,
   loadAgent: async () => {
     const { KafkaRecoveryAgent } = await import('./agent.js');
-    return KafkaRecoveryAgent as any;
+    return KafkaRecoveryAgent as never;
   },
   loadSimulator: async () => {
     const { KafkaSimulator } = await import('./simulator.js');
-    return KafkaSimulator as any;
+    return KafkaSimulator as never;
   },
 });

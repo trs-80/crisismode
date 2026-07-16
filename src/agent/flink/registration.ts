@@ -10,10 +10,10 @@ export const flinkRecoveryRegistration = createSimulatorRegistration({
   manifest: flinkRecoveryManifest,
   loadAgent: async () => {
     const { FlinkRecoveryAgent } = await import('./agent.js');
-    return FlinkRecoveryAgent as any;
+    return FlinkRecoveryAgent as never;
   },
   loadSimulator: async () => {
     const { FlinkSimulator } = await import('./simulator.js');
-    return FlinkSimulator as any;
+    return FlinkSimulator as never;
   },
 });

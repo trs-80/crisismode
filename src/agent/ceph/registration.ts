@@ -10,10 +10,10 @@ export const cephStorageRegistration = createSimulatorRegistration({
   manifest: cephRecoveryManifest,
   loadAgent: async () => {
     const { CephRecoveryAgent } = await import('./agent.js');
-    return CephRecoveryAgent as any;
+    return CephRecoveryAgent as never;
   },
   loadSimulator: async () => {
     const { CephSimulator } = await import('./simulator.js');
-    return CephSimulator as any;
+    return CephSimulator as never;
   },
 });

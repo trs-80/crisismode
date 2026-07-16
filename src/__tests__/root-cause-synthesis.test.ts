@@ -218,7 +218,7 @@ describe('Root cause synthesis (6.3)', () => {
 
       const result = synthesizeByRules(evidence);
       // Should detect temporal correlation since both went unhealthy within 5 min
-      const temporalClusters = result.clusters.filter((c) => c.temporalCorrelation);
+      const _temporalClusters = result.clusters.filter((c) => c.temporalCorrelation);
       // May or may not have temporal depending on rule match, but structure is valid
       expect(result.synthesizedAt).toBeTruthy();
     });

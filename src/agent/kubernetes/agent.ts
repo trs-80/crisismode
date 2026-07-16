@@ -5,7 +5,7 @@ import { defaultReplan } from '../interface.js';
 import type { RecoveryAgent } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
-import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';

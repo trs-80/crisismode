@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -11,7 +11,6 @@ import {
 } from '../config/check-registry.js';
 import type { CheckRegistryEntry } from '../config/check-registry.js';
 import {
-  installCheck,
   getInstalledVersion,
 } from '../framework/check-installer.js';
 

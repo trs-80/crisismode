@@ -16,6 +16,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as KubernetesLiveClientModule from '../agent/kubernetes/live-client.js';
+import type * as DeployRollbackLiveClientModule from '../agent/deploy-rollback/live-client.js';
+import type * as AiProviderLiveClientModule from '../agent/ai-provider/live-client.js';
+import type * as DbMigrationLiveClientModule from '../agent/db-migration/live-client.js';
+import type * as QueueBacklogLiveClientModule from '../agent/queue-backlog/live-client.js';
+import type * as ConfigDriftLiveClientModule from '../agent/config-drift/live-client.js';
 
 // ── Kubernetes Live Client ──
 //
@@ -26,7 +32,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // - Tests cover the domain logic inside the live client: status mapping, filtering, error guarding
 
 describe('K8sLiveClient', () => {
-  let K8sLiveClient: typeof import('../agent/kubernetes/live-client.js').K8sLiveClient;
+  let K8sLiveClient: (typeof KubernetesLiveClientModule)['K8sLiveClient'];
 
   // ── Test data: realistic K8s API response shapes ──
 
@@ -516,7 +522,7 @@ describe('K8s registration', () => {
 // ── Deploy Rollback Live Client ──
 
 describe('DeployLiveClient', () => {
-  let DeployLiveClient: typeof import('../agent/deploy-rollback/live-client.js').DeployLiveClient;
+  let DeployLiveClient: (typeof DeployRollbackLiveClientModule)['DeployLiveClient'];
 
   const mockConfig = {
     token: 'test-token',
@@ -688,7 +694,7 @@ describe('DeployLiveClient', () => {
 // ── AI Provider Live Client ──
 
 describe('AiProviderLiveClient', () => {
-  let AiProviderLiveClient: typeof import('../agent/ai-provider/live-client.js').AiProviderLiveClient;
+  let AiProviderLiveClient: (typeof AiProviderLiveClientModule)['AiProviderLiveClient'];
 
   const mockConfig = {
     providers: [
@@ -845,7 +851,7 @@ describe('DbMigrationLiveClient', () => {
   // lightweight duck-typed approach: construct the client and use
   // Object.defineProperty to replace the private pool with a mock.
 
-  let DbMigrationLiveClient: typeof import('../agent/db-migration/live-client.js').DbMigrationLiveClient;
+  let DbMigrationLiveClient: (typeof DbMigrationLiveClientModule)['DbMigrationLiveClient'];
   const mockQuery = vi.fn();
   const mockEnd = vi.fn().mockResolvedValue(undefined);
 
@@ -1012,7 +1018,7 @@ describe('DbMigrationLiveClient', () => {
 // ── Queue Backlog Live Client ──
 
 describe('QueueLiveClient', () => {
-  let QueueLiveClient: typeof import('../agent/queue-backlog/live-client.js').QueueLiveClient;
+  let QueueLiveClient: (typeof QueueBacklogLiveClientModule)['QueueLiveClient'];
 
   const mockConfig = {
     redisUrl: 'redis://localhost:6379',
@@ -1066,7 +1072,7 @@ describe('QueueLiveClient', () => {
 // ── Config Drift Live Client ──
 
 describe('ConfigDriftLiveClient', () => {
-  let ConfigDriftLiveClient: typeof import('../agent/config-drift/live-client.js').ConfigDriftLiveClient;
+  let ConfigDriftLiveClient: (typeof ConfigDriftLiveClientModule)['ConfigDriftLiveClient'];
 
   const mockConfig = {
     expectations: [

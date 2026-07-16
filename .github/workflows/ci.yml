@@ -31,6 +31,9 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Unit tests with coverage
         run: pnpm test:coverage
 

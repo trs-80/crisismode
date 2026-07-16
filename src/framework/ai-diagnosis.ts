@@ -17,7 +17,7 @@
  */
 
 import type { DiagnosisResult, DiagnosisFinding } from '../types/diagnosis-result.js';
-import { isInternetAvailable, getNetworkProfile } from './network-profile.js';
+import { getNetworkProfile } from './network-profile.js';
 import { defaultAiModel } from './ai-model.js';
 import { callClaude, stripCodeFence } from './ai-client.js';
 
@@ -64,6 +64,7 @@ interface AiRawResponse {
  */
 export function sanitizeInput(text: string, maxLength: number = MAX_FIELD_LENGTH): string {
   // Strip control characters except \n, \r, \t
+  // eslint-disable-next-line no-control-regex
   const cleaned = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   if (cleaned.length > maxLength) {
     return cleaned.slice(0, maxLength) + '\n... [truncated]';

@@ -2,7 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { CaptureDirective, RiskLevel } from '../types/common.js';
-import type { RecoveryStep, SystemActionStep } from '../types/step-types.js';
+import type { SystemActionStep } from '../types/step-types.js';
 import type { AgentManifest } from '../types/manifest.js';
 import type { AgentContext } from '../types/agent-context.js';
 import type { ExecutionBackend } from './backend.js';

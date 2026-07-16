@@ -318,7 +318,7 @@ export function displayCatalogMatch(result: CatalogMatchResult): void {
 
 export function displayStepExecution(
   recoveryStep: RecoveryStep,
-  index: number,
+  _index: number,
 ): void {
   const typeColor =
     recoveryStep.type === 'system_action'
@@ -401,7 +401,7 @@ export function displaySuccessCheck(passed: boolean, description: string): void 
   }
 }
 
-export function displayBlastRadius(step: SystemActionStep, message: string): void {
+export function displayBlastRadius(step: SystemActionStep, _message: string): void {
   console.log(
     chalk.dim(`     ◈ Blast radius: ${step.blastRadius.directComponents.join(', ')} (cascade: ${step.blastRadius.cascadeRisk})`),
   );

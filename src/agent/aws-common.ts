@@ -8,6 +8,7 @@
  * credential validation via STS GetCallerIdentity.
  */
 
+import type * as StsSdkModule from '@aws-sdk/client-sts';
 import type { ResolvedTarget } from '../config/schema.js';
 
 export interface AwsCredentialResult {
@@ -39,7 +40,7 @@ export async function resolveAwsCredentials(opts?: {
 }): Promise<AwsCredentialResult> {
   const invalid: AwsCredentialResult = { valid: false, accountId: '', region: '' };
 
-  const sts = await tryImportAws<typeof import('@aws-sdk/client-sts')>('@aws-sdk/client-sts');
+  const sts = await tryImportAws<typeof StsSdkModule>('@aws-sdk/client-sts');
   if (!sts) return invalid;
 
   const region = opts?.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';

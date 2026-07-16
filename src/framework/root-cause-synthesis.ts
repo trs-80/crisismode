@@ -16,7 +16,7 @@
 
 import { sanitizeInput } from './ai-diagnosis.js';
 import { getNetworkProfile } from './network-profile.js';
-import type { RoutingResult, ScoredScenario, SymptomSignal } from './symptom-router.js';
+import type { RoutingResult, SymptomSignal } from './symptom-router.js';
 import type { RecurringPattern, HealthSnapshot } from './watch-state.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';

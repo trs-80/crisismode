@@ -10,14 +10,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 // Mock Anthropic SDK (used by AI explainer)
 vi.mock('@anthropic-ai/sdk', () => ({ default: class {} }));
 
-import { configure, getOutputMode } from '../cli/output.js';
+import { configure } from '../cli/output.js';
 
 describe('recover --json output', () => {
   let tmpDir: string;

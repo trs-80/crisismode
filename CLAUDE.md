@@ -166,6 +166,10 @@ These are enforced by the validator (`src/framework/validator.ts`).
 ### Type checking
 - `pnpm run typecheck` — runs `tsc --noEmit`
 
+### Linting
+- `pnpm run lint` — ESLint (flat config in `eslint.config.js`); `pnpm run lint:fix` to autofix
+- Lint-time TypeScript is pinned to 6.0.2 via `.pnpmfile.cjs` (typescript-eslint does not yet support the TS 7 native compiler); `tsc` stays on TS 7
+
 ### CI
 - GitHub Actions (`.github/workflows/ci.yml`) — runs typecheck, unit tests, and gitleaks on push to main and PRs
 

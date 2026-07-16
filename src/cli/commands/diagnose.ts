@@ -9,7 +9,6 @@
 import { assembleContext } from '../../framework/context.js';
 import { applyEnvironmentGuard } from '../../framework/environment-guard.js';
 import { buildOperatorSummary } from '../../framework/operator-summary.js';
-import { parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { loadConfigWithLocalTargets } from '../runtime.js';
 import { probeNetwork } from '../../framework/network-profile.js';
@@ -20,7 +19,6 @@ import {
   printBanner, printHealthStatus, printDiagnosis, printOperatorSummary,
   printInfo, printSuccess, printWarning, printNetworkProfile,
 } from '../output.js';
-import { noConfig, formatError } from '../errors.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { CheckDiagnoseResult } from '../../framework/check-plugin.js';
 

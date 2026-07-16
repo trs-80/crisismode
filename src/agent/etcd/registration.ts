@@ -10,10 +10,10 @@ export const etcdRecoveryRegistration = createSimulatorRegistration({
   manifest: etcdRecoveryManifest,
   loadAgent: async () => {
     const { EtcdRecoveryAgent } = await import('./agent.js');
-    return EtcdRecoveryAgent as any;
+    return EtcdRecoveryAgent as never;
   },
   loadSimulator: async () => {
     const { EtcdSimulator } = await import('./simulator.js');
-    return EtcdSimulator as any;
+    return EtcdSimulator as never;
   },
 });

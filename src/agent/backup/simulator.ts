@@ -8,7 +8,6 @@ import type {
   BackupVerificationReport,
   BackupInventoryItem,
   BackupVerification,
-  BackupCheck,
   ProviderReport,
   RpoEvaluation,
   RtoEstimate,

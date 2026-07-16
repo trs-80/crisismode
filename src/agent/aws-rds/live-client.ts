@@ -9,6 +9,7 @@
  */
 
 import { tryImportAws } from '../aws-common.js';
+import type * as RdsSdkModule from '@aws-sdk/client-rds';
 import type { RdsRecoveryBackend, InstanceBackupConfig } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
@@ -23,7 +24,7 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
   private region: string;
   private instanceId: string;
   private rdsClient: unknown | null = null;
-  private rdsSdk: typeof import('@aws-sdk/client-rds') | null = null;
+  private rdsSdk: typeof RdsSdkModule | null = null;
 
   constructor(config: RdsConnectionConfig) {
     this.region = config.region;
@@ -31,17 +32,17 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
   }
 
   private async ensureClient(): Promise<{
-    sdk: typeof import('@aws-sdk/client-rds');
-    client: InstanceType<typeof import('@aws-sdk/client-rds').RDSClient>;
+    sdk: typeof RdsSdkModule;
+    client: InstanceType<(typeof RdsSdkModule)['RDSClient']>;
   }> {
     if (this.rdsSdk && this.rdsClient) {
       return {
         sdk: this.rdsSdk,
-        client: this.rdsClient as InstanceType<typeof import('@aws-sdk/client-rds').RDSClient>,
+        client: this.rdsClient as InstanceType<(typeof RdsSdkModule)['RDSClient']>,
       };
     }
 
-    const sdk = await tryImportAws<typeof import('@aws-sdk/client-rds')>('@aws-sdk/client-rds');
+    const sdk = await tryImportAws<typeof RdsSdkModule>('@aws-sdk/client-rds');
     if (!sdk) {
       throw new Error('@aws-sdk/client-rds is not installed. Install it to use the RDS live client.');
     }
@@ -50,7 +51,7 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
     this.rdsClient = new sdk.RDSClient({ region: this.region });
     return {
       sdk,
-      client: this.rdsClient as InstanceType<typeof import('@aws-sdk/client-rds').RDSClient>,
+      client: this.rdsClient as InstanceType<(typeof RdsSdkModule)['RDSClient']>,
     };
   }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi } from 'vitest';
-import { MemorySaver, Command } from '@langchain/langgraph';
+import { MemorySaver } from '@langchain/langgraph';
 
 // Mock the Anthropic SDK so agent.ts can be imported without the dependency
 vi.mock('@anthropic-ai/sdk', () => ({ default: class {} }));

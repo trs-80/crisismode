@@ -19,7 +19,6 @@
 import type { RiskLevel } from '../types/common.js';
 import type { RecoveryStep } from '../types/step-types.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
-import { getStepRisk } from './risk.js';
 
 export type EscalationLevel = 1 | 2 | 3 | 4 | 5;
 

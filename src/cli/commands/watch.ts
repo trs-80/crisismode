@@ -13,19 +13,15 @@
 import { assembleContext } from '../../framework/context.js';
 import { diagnoseWithEnvironmentGuard } from '../../framework/environment-guard.js';
 import { buildOperatorSummary } from '../../framework/operator-summary.js';
-import { parseCliFlags } from '../../config/loader.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { createAgentForTarget, loadConfigWithLocalTargets } from '../runtime.js';
 import { generateDiagnosisReport } from '../../framework/incident-report.js';
 import { WatchState } from '../../framework/watch-state.js';
-import type { HealthCard, RecurringPattern } from '../../framework/watch-state.js';
 import {
-  printBanner, printHealthStatus, printInfo, printSuccess,
+  printBanner, printInfo,
   printWarning, printError,
 } from '../output.js';
-import { noConfig, formatError } from '../errors.js';
 import type { AgentContext } from '../../types/agent-context.js';
-import type { HealthStatus } from '../../types/health.js';
 
 export interface WatchOptions {
   configPath?: string | undefined;

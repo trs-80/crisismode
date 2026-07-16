@@ -12,7 +12,7 @@ import type { RecoveryAgent } from '../agent/interface.js';
 import { executeCapture, validateBlastRadius } from './safety.js';
 import { requestApproval, shouldAutoApprove } from './coordinator.js';
 import { isCatalogCovered } from './catalog.js';
-import { ForensicRecorder } from './forensics.js';
+import type { ForensicRecorder } from './forensics.js';
 import type { ExecutionBackend } from './backend.js';
 import { resolveStepProviders } from './provider-registry.js';
 import { derivePlanMaxRiskLevel, getMaxRiskIndex } from './risk.js';

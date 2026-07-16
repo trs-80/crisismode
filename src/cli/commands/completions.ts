@@ -21,57 +21,57 @@ _crisismode_completions() {
   local global_flags="--config --target --json --no-color --verbose -h --help -v --version"
 
   if [[ \${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( \$(compgen -W "\${commands}" -- "\${cur}") )
+    COMPREPLY=( $(compgen -W "\${commands}" -- "\${cur}") )
     return 0
   fi
 
   local subcommand="\${COMP_WORDS[1]}"
 
   if [[ "\${prev}" == "--config" ]]; then
-    COMPREPLY=( \$(compgen -f -- "\${cur}") )
+    COMPREPLY=( $(compgen -f -- "\${cur}") )
     return 0
   fi
 
   case "\${subcommand}" in
     scan)
-      COMPREPLY=( \$(compgen -W "--category --config --verbose --json --no-color -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--category --config --verbose --json --no-color -h --help" -- "\${cur}") )
       ;;
     diagnose)
-      COMPREPLY=( \$(compgen -W "--config --target --json --no-color --verbose -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--config --target --json --no-color --verbose -h --help" -- "\${cur}") )
       ;;
     recover)
-      COMPREPLY=( \$(compgen -W "--config --target --execute --health-only --json --no-color --verbose -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--config --target --execute --health-only --json --no-color --verbose -h --help" -- "\${cur}") )
       ;;
     status)
-      COMPREPLY=( \$(compgen -W "--json --no-color -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--json --no-color -h --help" -- "\${cur}") )
       ;;
     init)
-      COMPREPLY=( \$(compgen -W "--agent --json --no-color -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--agent --json --no-color -h --help" -- "\${cur}") )
       ;;
     demo)
-      COMPREPLY=( \$(compgen -W "--json --no-color -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--json --no-color -h --help" -- "\${cur}") )
       ;;
     webhook)
-      COMPREPLY=( \$(compgen -W "--config --execute --json --no-color --verbose -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--config --execute --json --no-color --verbose -h --help" -- "\${cur}") )
       ;;
     ask)
       COMPREPLY=()
       ;;
     watch)
-      COMPREPLY=( \$(compgen -W "--config --target --interval --json --no-color --verbose -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--config --target --interval --json --no-color --verbose -h --help" -- "\${cur}") )
       ;;
     completions)
-      COMPREPLY=( \$(compgen -W "bash zsh fish" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "bash zsh fish" -- "\${cur}") )
       ;;
     registry)
       if [[ \${COMP_CWORD} -eq 2 ]]; then
-        COMPREPLY=( \$(compgen -W "list install search" -- "\${cur}") )
+        COMPREPLY=( $(compgen -W "list install search" -- "\${cur}") )
       else
-        COMPREPLY=( \$(compgen -W "--local --force --json --no-color -h --help" -- "\${cur}") )
+        COMPREPLY=( $(compgen -W "--local --force --json --no-color -h --help" -- "\${cur}") )
       fi
       ;;
     *)
-      COMPREPLY=( \$(compgen -W "\${global_flags}" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "\${global_flags}" -- "\${cur}") )
       ;;
   esac
 
@@ -93,7 +93,7 @@ _crisismode() {
     '*: :->args' \\
     && return 0
 
-  case \$state in
+  case $state in
     subcommand)
       local -a subcommands
       subcommands=(
@@ -113,7 +113,7 @@ _crisismode() {
       _describe 'subcommand' subcommands
       ;;
     args)
-      case \$line[1] in
+      case $line[1] in
         scan)
           _arguments \\
             '--category[Comma-separated service kinds to scan]:kinds' \\

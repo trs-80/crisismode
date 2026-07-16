@@ -9,7 +9,6 @@ import type { AgentContext } from '../types/agent-context.js';
 import type { ExecutionBackend } from './backend.js';
 import type { RecoveryGraphStateType } from './graph-state.js';
 import type { RecoveryAgent } from '../agent/interface.js';
-import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { ExecutionMode, RiskLevel } from '../types/common.js';
 import type { ForensicLogEntry } from './graph-types.js';
 import type { ApprovalHandler } from './approval-handler.js';
@@ -46,7 +45,7 @@ function makeLogEntry(
  * Creates a LangGraph node function for a diagnosis_action step.
  */
 export function makeDiagnosisNode(step: RecoveryStep & { type: 'diagnosis_action' }, ctx: GraphNodeContext) {
-  return async (state: RecoveryGraphStateType) => {
+  return async (_state: RecoveryGraphStateType) => {
     const startTime = Date.now();
     const startedAt = makeTimestamp();
     const logs: ForensicLogEntry[] = [
@@ -151,7 +150,7 @@ export function makeCheckpointNode(step: RecoveryStep & { type: 'checkpoint' }, 
  * Creates a LangGraph node function for a system_action step.
  */
 export function makeSystemActionNode(step: SystemActionStep, ctx: GraphNodeContext) {
-  return async (state: RecoveryGraphStateType) => {
+  return async (_state: RecoveryGraphStateType) => {
     const startTime = Date.now();
     const startedAt = makeTimestamp();
     const logs: ForensicLogEntry[] = [

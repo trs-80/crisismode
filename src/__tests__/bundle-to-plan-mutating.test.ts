@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { adapterResponseToPlan } from '../framework/bundle-to-plan.js';
 import { resetBuiltInActionTemplates } from '../framework/action-template-registry.js';
 import type { AdapterRequest, AdapterResponse } from '../types/evidence-bundle.js';
+import type { AgentManifest } from '../types/manifest.js';
 
 const BUNDLE: AdapterRequest = {
   schema_version: 'incident-generator.agent-adapter-request/v1',
@@ -264,7 +265,7 @@ describe('adapterResponseToPlan — plan passes existing validator checks', () =
         },
         requiredCapabilities: ['db.replica.disconnect'],
       },
-    } as unknown as import('../types/manifest.js').AgentManifest;
+    } as unknown as AgentManifest;
     const result = validatePlan(plan, manifest);
     const stateCheck = result.checks.find((c) => c.name.includes('State preservation'));
     const notifCheck = result.checks.find((c) => c.name.includes('Human notification'));

@@ -9,6 +9,7 @@
  * and bucket versioning. Requires @aws-sdk/client-s3 (optional dependency).
  */
 
+import type * as S3Module from '@aws-sdk/client-s3';
 import type {
   BackupProvider,
   BackupProviderConfig,
@@ -45,15 +46,13 @@ const BACKUP_EXTENSIONS = new Set([
   '.bak', '.backup',
 ]);
 
-type S3Module = typeof import('@aws-sdk/client-s3');
-
 export class S3BackupProvider implements BackupProvider {
   kind = 'aws_s3' as const;
 
-  private s3Module: S3Module | null = null;
+  private s3Module: typeof S3Module | null = null;
 
   async detect(config: BackupProviderConfig): Promise<boolean> {
-    const s3 = await tryImportAws<S3Module>('@aws-sdk/client-s3');
+    const s3 = await tryImportAws<typeof S3Module>('@aws-sdk/client-s3');
     if (!s3) return false;
 
     const creds = await resolveAwsCredentials({
@@ -79,7 +78,7 @@ export class S3BackupProvider implements BackupProvider {
   }
 
   async inventory(config: BackupProviderConfig): Promise<BackupInventoryItem[]> {
-    const s3 = this.s3Module ?? await tryImportAws<S3Module>('@aws-sdk/client-s3');
+    const s3 = this.s3Module ?? await tryImportAws<typeof S3Module>('@aws-sdk/client-s3');
     if (!s3) return [];
 
     const creds = await resolveAwsCredentials({
@@ -273,7 +272,7 @@ export class S3BackupProvider implements BackupProvider {
     item: BackupInventoryItem,
     config: BackupProviderConfig,
   ): Promise<BackupCheck> {
-    const s3 = this.s3Module ?? await tryImportAws<S3Module>('@aws-sdk/client-s3');
+    const s3 = this.s3Module ?? await tryImportAws<typeof S3Module>('@aws-sdk/client-s3');
     if (!s3) {
       return { name: CHECK_NAMES.EXISTS, passed: true, detail: `Object listed in inventory: ${item.location}`, severity: 'info' };
     }
@@ -303,7 +302,7 @@ export class S3BackupProvider implements BackupProvider {
   }
 
   private async checkVersioning(config: BackupProviderConfig): Promise<BackupCheck | null> {
-    const s3 = this.s3Module ?? await tryImportAws<S3Module>('@aws-sdk/client-s3');
+    const s3 = this.s3Module ?? await tryImportAws<typeof S3Module>('@aws-sdk/client-s3');
     if (!s3) return null;
 
     const bucket = this.resolveBucket(config);

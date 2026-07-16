@@ -11,7 +11,7 @@ import type { ExecutionBackend } from '../framework/backend.js';
 import { StreamingForensicRecorder } from '../framework/forensics.js';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 
 function makeSystemActionResult(
   stepId: string,

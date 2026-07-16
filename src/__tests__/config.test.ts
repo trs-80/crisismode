@@ -5,6 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { stringify } from 'yaml';
 import {
   loadConfig,
   loadConfigWithDetection,
@@ -15,7 +16,7 @@ import { resolveCredentials } from '../config/credentials.js';
 import { resolveTargets } from '../config/resolve.js';
 import { AgentRegistry } from '../config/agent-registry.js';
 import { generateTemplate } from '../config/init.js';
-import type { SiteConfig } from '../config/schema.js';
+import type { SiteConfig, ResolvedTarget } from '../config/schema.js';
 
 // ── Fixtures ──
 
@@ -43,7 +44,6 @@ const validConfig: SiteConfig = {
 };
 
 function writeYamlConfig(dir: string, config: object): string {
-  const { stringify } = require('yaml') as { stringify: (v: unknown) => string };
   const filePath = join(dir, 'crisismode.yaml');
   writeFileSync(filePath, stringify(config), 'utf-8');
   return filePath;
@@ -264,7 +264,7 @@ describe('Agent registry', () => {
       kind: 'postgresql',
       name: 'pg-vacuum-recovery',
       manifest: { ...pgReplicationManifest, metadata: { ...pgReplicationManifest.metadata, name: 'pg-vacuum-recovery' } },
-      async createAgent(target: import('../config/schema.js').ResolvedTarget) {
+      async createAgent(target: ResolvedTarget) {
         // Dummy — just reuse PG agent for the test
         const { PgReplicationAgent } = await import('../agent/pg-replication/agent.js');
         const { PgSimulator } = await import('../agent/pg-replication/simulator.js');
