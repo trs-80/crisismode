@@ -632,7 +632,7 @@ export function printStackProfile(profile: StackProfile): void {
  * Print a first-run onboarding message when no config file exists
  * and services were detected. Only prints in human output mode.
  */
-export function printOnboardingMessage(profile: StackProfile, configSource: string): void {
+export function printOnboardingMessage(profile: StackProfile, _configSource: string): void {
   // Only show when there's something meaningful to report
   const detected = profile.services.filter((s) => s.detected);
   if (detected.length === 0 && profile.derivedTargets.length === 0) return;

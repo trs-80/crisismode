@@ -17,7 +17,7 @@ import type { RecoveryAgent } from '../agent/interface.js';
 import type { ExecutionBackend } from './backend.js';
 import type { ApprovalHandler } from './approval-handler.js';
 import type { EngineCallbacks } from './engine.js';
-import { ForensicRecorder } from './forensics.js';
+import type { ForensicRecorder } from './forensics.js';
 import { Command } from '@langchain/langgraph';
 import { dynamicOps } from './graph-helpers.js';
 

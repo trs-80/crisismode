@@ -237,7 +237,7 @@ async function handleAlert(alert: AlertManagerAlert): Promise<{
     recorder.setCatalogMatchUsed(catalogMatch.matched);
 
     const callbacks: EngineCallbacks = {
-      onStepStart: (s, i) => log(`  ▶️  Step ${s.stepId} [${s.type}]: ${s.name}`),
+      onStepStart: (s, _i) => log(`  ▶️  Step ${s.stepId} [${s.type}]: ${s.name}`),
       onStepComplete: (s, result) => {
         const icon = result.status === 'success' ? '✅' : result.status === 'failed' ? '❌' : '⏭️';
         log(`  ${icon} Step ${s.stepId}: ${result.status} (${result.durationMs}ms)`);

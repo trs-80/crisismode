@@ -9,7 +9,6 @@
  * for its target platform.
  */
 
-import type { IncidentReport } from './incident-report.js';
 import type { HealthAssessment, HealthStatus, OperatorSummary } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';

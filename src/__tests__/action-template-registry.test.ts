@@ -89,12 +89,12 @@ describe('action-template-registry', () => {
   });
 
   it('rejects system_action template missing risk_level', () => {
-    const { risk_level, ...bad } = MUTATING_TEMPLATE;
+    const { risk_level: _risk_level, ...bad } = MUTATING_TEMPLATE;
     expect(() => registerActionTemplate(bad)).toThrow(/risk_level/);
   });
 
   it('rejects system_action template missing blast_radius', () => {
-    const { blast_radius, ...bad } = MUTATING_TEMPLATE;
+    const { blast_radius: _blast_radius, ...bad } = MUTATING_TEMPLATE;
     expect(() => registerActionTemplate(bad)).toThrow(/blast_radius/);
   });
 

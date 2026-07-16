@@ -65,7 +65,7 @@ const routes = {
 
   // Trigger ingress — accepts alert, returns mock plan assignment
   'POST /api/v1/triggers': async (req, res) => {
-    const body = await readBody(req);
+    await readBody(req);
     json(res, 200, {
       trigger_id: `trigger-${Date.now()}`,
       matched_agent: 'pg-replication-recovery',

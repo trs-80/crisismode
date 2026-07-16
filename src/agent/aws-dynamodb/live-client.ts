@@ -14,10 +14,21 @@ import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
+/** Subset of the DynamoDB continuous-backups response shape this client reads. */
+interface ContinuousBackupsResponse {
+  ContinuousBackupsDescription?: {
+    PointInTimeRecoveryDescription?: {
+      PointInTimeRecoveryStatus?: string;
+      EarliestRestorableDateTime?: Date;
+      LatestRestorableDateTime?: Date;
+    };
+  };
+}
+
 /** Dynamically-imported AWS SDK module shape. */
 interface DynamoDbSdkModule {
   DynamoDBClient: new (config: { region: string }) => {
-    send(command: unknown): Promise<any>;
+    send(command: unknown): Promise<ContinuousBackupsResponse>;
     destroy(): void;
   };
   DescribeContinuousBackupsCommand: new (input: { TableName: string }) => unknown;

@@ -161,7 +161,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
         state,
         wait_event_type AS wait_event
       FROM pg_stat_activity
-      WHERE query ~* '(CREATE|ALTER|DROP|REINDEX)\s+(TABLE|INDEX|COLUMN|CONSTRAINT)'
+      WHERE query ~* '(CREATE|ALTER|DROP|REINDEX)s+(TABLE|INDEX|COLUMN|CONSTRAINT)'
         AND state != 'idle'
       ORDER BY query_start ASC
       LIMIT 1

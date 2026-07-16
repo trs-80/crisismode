@@ -12,8 +12,6 @@
 import type { ForensicRecord, ExecutionLogEntry } from '../types/forensic-record.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { HealthAssessment, OperatorSummary } from '../types/health.js';
-import type { RecoveryPlan } from '../types/recovery-plan.js';
-import type { StepResult } from '../types/execution-state.js';
 
 export interface IncidentReport {
   /** Markdown-formatted incident report */

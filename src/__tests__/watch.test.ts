@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type * as LoaderModule from '../config/loader.js';
 
 // ── Mocks (must be before imports) ──
 
@@ -14,7 +15,7 @@ vi.mock('../cli/output.js', () => ({
 }));
 
 vi.mock('../config/loader.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../config/loader.js')>();
+  const actual = await importOriginal<typeof LoaderModule>();
   return {
     ConfigNotFoundError: actual.ConfigNotFoundError,
     loadConfig: vi.fn(),

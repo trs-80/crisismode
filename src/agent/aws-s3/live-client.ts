@@ -8,13 +8,12 @@
  * Used when running the spoke against real infrastructure.
  */
 
+import type * as S3Module from '@aws-sdk/client-s3';
 import type { S3RecoveryBackend, BucketConfig, LifecycleRule } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { tryImportAws } from '../aws-common.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
-
-type S3Module = typeof import('@aws-sdk/client-s3');
 
 export interface S3ConnectionConfig {
   region: string;
@@ -24,16 +23,16 @@ export interface S3ConnectionConfig {
 
 export class S3RecoveryLiveClient implements S3RecoveryBackend {
   private config: S3ConnectionConfig;
-  private s3Module: S3Module | null = null;
-  private client: InstanceType<S3Module['S3Client']> | null = null;
+  private s3Module: typeof S3Module | null = null;
+  private client: InstanceType<(typeof S3Module)['S3Client']> | null = null;
 
   constructor(config: S3ConnectionConfig) {
     this.config = config;
   }
 
-  private async getS3Module(): Promise<S3Module> {
+  private async getS3Module(): Promise<typeof S3Module> {
     if (!this.s3Module) {
-      const mod = await tryImportAws<S3Module>('@aws-sdk/client-s3');
+      const mod = await tryImportAws<typeof S3Module>('@aws-sdk/client-s3');
       if (!mod) throw new Error('@aws-sdk/client-s3 is not installed');
       this.s3Module = mod;
     }
@@ -45,7 +44,7 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
    * connection pool, so creating one per call would leak sockets across
    * getBucketConfig/executeCommand/evaluateCheck. Disposed in close().
    */
-  private async getClient(): Promise<InstanceType<S3Module['S3Client']>> {
+  private async getClient(): Promise<InstanceType<(typeof S3Module)['S3Client']>> {
     if (!this.client) {
       const s3 = await this.getS3Module();
       this.client = new s3.S3Client({
@@ -71,7 +70,7 @@ export class S3RecoveryLiveClient implements S3RecoveryBackend {
         : 'Disabled';
 
     // Get lifecycle rules
-    let lifecycleRules: LifecycleRule[] = [];
+    let lifecycleRules: LifecycleRule[];
     try {
       const lifecycleResp = await client.send(
         new s3.GetBucketLifecycleConfigurationCommand({ Bucket: this.config.bucket }),

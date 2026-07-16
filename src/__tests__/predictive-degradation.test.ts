@@ -88,7 +88,7 @@ describe('Predictive degradation (6.5)', () => {
       state.recordHealth(makeHealth('recovering'), 10);
 
       const forecasts = state.forecastDegradation();
-      const trajectory = forecasts.find((f) => f.driver === 'status-trajectory');
+      const _trajectory = forecasts.find((f) => f.driver === 'status-trajectory');
       // May or may not trigger depending on exact slope calculation
       expect(forecasts.length).toBeGreaterThanOrEqual(0);
     });

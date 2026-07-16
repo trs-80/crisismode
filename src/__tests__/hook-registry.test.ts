@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { HookRegistry } from '../framework/hooks/registry.js';
-import type { HookRegistration, HookContext } from '../framework/hooks/types.js';
+import type { HookContext } from '../framework/hooks/types.js';
 
 function makeStep(name: string) {
   return {

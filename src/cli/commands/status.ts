@@ -7,7 +7,7 @@
 
 import { detectServices } from '../detect.js';
 import { printStatus, printBanner, printInfo } from '../output.js';
-import { noConfig, formatError } from '../errors.js';
+import { noConfig } from '../errors.js';
 import { loadConfigWithDetection } from '../../config/loader.js';
 
 export async function runStatus(): Promise<void> {

@@ -36,7 +36,7 @@ export async function requestApproval(
   }
 }
 
-export function sendNotification(step: HumanNotificationStep): void {
+export function sendNotification(_step: HumanNotificationStep): void {
   // In the demo, notifications are displayed by the display module.
   // This is a no-op placeholder for framework routing.
 }

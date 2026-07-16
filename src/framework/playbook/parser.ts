@@ -44,7 +44,7 @@ export function parsePlaybook(markdown: string, filePath?: string): ParsedPlaybo
     frontmatterObj = parseYaml(frontmatterRaw);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Invalid YAML in frontmatter: ${message}`);
+    throw new Error(`Invalid YAML in frontmatter: ${message}`, { cause: err });
   }
 
   const validation = validatePlaybookFrontmatter(frontmatterObj);

@@ -49,3 +49,7 @@ test/local/.data/
 specs/product/
 eval/reports/
 package-lock.json
+
+# Session memory files and check artifacts (never commit)
+memory/
+checks/example-sensu-metrics/sh-thd-*

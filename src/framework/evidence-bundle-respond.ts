@@ -99,14 +99,6 @@ function defaultMaxTokens(): number {
   return DEFAULT_BUNDLE_MAX_TOKENS;
 }
 
-const DEFAULT_AGENT: AgentMetadata = {
-  adapter_id: 'crisismode',
-  display_name: 'CrisisMode AI',
-  adapter_version: null,
-  execution_mode: 'real',
-  model: null,
-};
-
 /**
  * Build agent metadata reflecting the CrisisMode SymptomRouter's
  * recommendation. The routed agent family is surfaced as

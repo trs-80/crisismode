@@ -14,13 +14,12 @@
 import { assembleContext } from '../../framework/context.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { loadConfigWithDetection, ConfigNotFoundError } from '../../config/loader.js';
-import { detectServices } from '../detect.js';
 import { discoverStack, printOnboardingMessage } from '../autodiscovery.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
   printBanner, printScanSummary, printNextAction,
-  printInfo, printDetection, printError, getOutputMode,
+  printInfo, printDetection, getOutputMode,
   printPlainEnglishSummary, printSynthesis,
 } from '../output.js';
 import {
@@ -34,7 +33,7 @@ import type { AgentEvidence } from '../../framework/root-cause-synthesis.js';
 import { healthToSignals } from '../../framework/health-to-signals.js';
 import type { ScanFinding, ScanResult, RecentChange } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
-import type { HealthAssessment } from '../../types/health.js';
+import type { HealthAssessment, HealthStatus } from '../../types/health.js';
 import type { AgentInstance } from '../../config/agent-registration.js';
 import type { CheckRequest, CheckHealthResult } from '../../framework/check-plugin.js';
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
@@ -442,7 +441,7 @@ function timeoutPromise<T>(ms: number, fallback: T): Promise<T> {
  * Normalize plugin-reported status values to the HealthStatus union.
  * Plugins may return 'critical' or 'warning' which are not HealthStatus values.
  */
-function normalizePluginStatus(status: string): import('../../types/health.js').HealthStatus {
+function normalizePluginStatus(status: string): HealthStatus {
   switch (status) {
     case 'healthy': return 'healthy';
     case 'recovering': return 'recovering';

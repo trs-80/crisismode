@@ -171,6 +171,7 @@ describe('formatIncidentSummaryText', () => {
     const text = formatIncidentSummaryText(summary);
 
     // No ANSI escape codes
+    // eslint-disable-next-line no-control-regex
     expect(text).not.toMatch(/\x1b\[/);
     expect(text).toContain('CrisisMode Scan Summary');
     expect(text).toContain('UNHEALTHY:');

@@ -7,6 +7,9 @@ STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 if echo "$STAGED_FILES" | grep -qE '\.tsx?$'; then
     echo "🔍 Running TypeScript type check..."
     pnpm run typecheck || exit 1
+
+    echo "🧹 Running ESLint..."
+    pnpm run lint || exit 1
 fi
 
 # --- 2. Gitleaks secret detection ---

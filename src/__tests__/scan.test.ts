@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ScanResult, OutputMode } from '../cli/output.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import type * as OutputModule from '../cli/output.js';
 
 // ── Output mode tests ──
 
 describe('Output mode detection', () => {
-  let configure: typeof import('../cli/output.js').configure;
-  let getOutputMode: typeof import('../cli/output.js').getOutputMode;
+  let configure: (typeof OutputModule)['configure'];
+  let getOutputMode: (typeof OutputModule)['getOutputMode'];
 
   beforeEach(async () => {
     // Re-import to reset state

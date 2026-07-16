@@ -6,12 +6,12 @@ import type { RecoveryAgent, ReplanResult } from '../interface.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { ExecutionState } from '../../types/execution-state.js';
-import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/health.js';
+import type { HealthAssessment, HealthSignal } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
 import { createPlanEnvelope } from '../../framework/plan-helpers.js';
-import type { ReplicaStatus, ConnectionUsage } from './backend.js';
+import type { ReplicaStatus, ConnectionUsage, ReplicationSlot } from './backend.js';
 import { pgReplicationManifest } from './manifest.js';
 import type { PgBackend } from './backend.js';
 import { PgSimulator } from './simulator.js';
@@ -118,7 +118,7 @@ export class PgReplicationAgent implements RecoveryAgent {
     const observedAt = new Date().toISOString();
 
     let replicas: ReplicaStatus[];
-    let slots: import('./backend.js').ReplicationSlot[];
+    let slots: ReplicationSlot[];
     let connectionCount: number;
     try {
       replicas = await this.backend.queryReplicationStatus();
@@ -237,9 +237,9 @@ export class PgReplicationAgent implements RecoveryAgent {
     });
   }
 
-  async diagnose(context: AgentContext): Promise<DiagnosisResult> {
+  async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
     let replStatus: ReplicaStatus[];
-    let slots: import('./backend.js').ReplicationSlot[];
+    let slots: ReplicationSlot[];
     let connCount: number;
     try {
       replStatus = await this.backend.queryReplicationStatus();
@@ -389,7 +389,7 @@ export class PgReplicationAgent implements RecoveryAgent {
 
   private diagnoseReplayPaused(
     replStatus: ReplicaStatus[],
-    slots: import('./backend.js').ReplicationSlot[],
+    slots: ReplicationSlot[],
     connCount: number,
   ): DiagnosisResult {
     // Replay pause is measured over the single configured replica connection
@@ -431,7 +431,7 @@ export class PgReplicationAgent implements RecoveryAgent {
 
   private ruleBasedDiagnose(
     replStatus: ReplicaStatus[],
-    slots: import('./backend.js').ReplicationSlot[],
+    slots: ReplicationSlot[],
     connCount: number,
   ): DiagnosisResult {
     const severelyLagging = replStatus.filter((r) => r.lag_seconds > 300);

@@ -8,7 +8,7 @@ import { matchCatalog, getCatalogEntry } from '../framework/catalog.js';
 import { ForensicRecorder } from '../framework/forensics.js';
 import { ExecutionEngine, type EngineCallbacks } from '../framework/engine.js';
 import type { AgentContext } from '../types/agent-context.js';
-import type { HumanApprovalStep, SystemActionStep } from '../types/step-types.js';
+import type { HumanApprovalStep } from '../types/step-types.js';
 import * as display from './display.js';
 
 const FORENSIC_OUTPUT_PATH = 'output/forensic-record.json';

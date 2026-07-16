@@ -31,18 +31,11 @@ import type { HumanApprovalStep } from './types/step-types.js';
 import type { PgLiveClient } from './agent/pg-replication/live-client.js';
 import * as display from './demo/display.js';
 import {
-  getOutputMode, jsonOut as jsonOutRecord, printHealthStatus, printDiagnosis, printPlan,
+  getOutputMode, printHealthStatus, printDiagnosis, printPlan,
   printPlanExplanation, printResults, printOperatorSummary,
 } from './cli/output.js';
 
 const FORENSIC_OUTPUT_PATH = 'output/forensic-record-live.json';
-
-/** Emit a JSON line when in machine output mode. */
-function jsonOut(type: string, data: unknown): void {
-  if (getOutputMode() === 'machine') {
-    jsonOutRecord(type, data);
-  }
-}
 
 /** True when display.* human-formatted output should be suppressed. */
 function isJson(): boolean {
@@ -160,7 +153,6 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
     // Quick connectivity check (PG-specific display)
     let replStatus: Awaited<ReturnType<PgLiveClient['queryReplicationStatus']>> = [];
     let replicaStatus: Awaited<ReturnType<PgLiveClient['queryReplicaStatus']>> = null;
-    let pgConnected = true;
 
     if (pgClient) {
       if (!isJson()) console.log('  Connecting to PostgreSQL...');
@@ -194,7 +186,6 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
           console.log('');
         }
       } catch {
-        pgConnected = false;
         if (!isJson()) {
           console.log('  ❌ PostgreSQL unreachable — target is down or connection refused');
           console.log('');

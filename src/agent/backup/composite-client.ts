@@ -15,7 +15,6 @@ import type {
   BackupProviderKind,
   BackupProviderConfig,
   BackupVerificationReport,
-  BackupInventoryItem,
   ProviderReport,
   RpoEvaluation,
   RtoEstimate,

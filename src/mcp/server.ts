@@ -224,7 +224,9 @@ function parseBundle(bundle: string | Record<string, unknown>): unknown {
   try {
     return JSON.parse(bundle);
   } catch (err) {
-    throw new Error(`bundle is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`bundle is not valid JSON: ${err instanceof Error ? err.message : String(err)}`, {
+      cause: err,
+    });
   }
 }
 
@@ -379,12 +381,12 @@ export function createMcpServer(): McpServer {
  * framework code is rerouted to stderr before the transport connects.
  */
 export async function startMcpServer(): Promise<void> {
-  /* eslint-disable no-console */
+   
   console.log = (...args: unknown[]) => console.error(...args);
   console.info = (...args: unknown[]) => console.error(...args);
   console.warn = (...args: unknown[]) => console.error(...args);
   console.debug = (...args: unknown[]) => console.error(...args);
-  /* eslint-enable no-console */
+   
 
   const server = createMcpServer();
   const transport = new StdioServerTransport();

@@ -545,7 +545,7 @@ let CAPABILITIES: CapabilityDefinition[] = [
   },
 ];
 
-let CAPABILITY_INDEX = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));
+const CAPABILITY_INDEX = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));
 
 export function listCapabilities(): CapabilityDefinition[] {
   return CAPABILITIES;

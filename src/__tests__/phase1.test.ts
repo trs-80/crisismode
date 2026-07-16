@@ -120,7 +120,7 @@ describe('Version-Aware Agent Selection', () => {
   });
 
   it('matches any agent when version is omitted (backward-compatible)', async () => {
-    const { version, ...targetWithoutVersion } = baseConfig.targets[0]!;
+    const { version: _version, ...targetWithoutVersion } = baseConfig.targets[0]!;
     const config: SiteConfig = {
       ...baseConfig,
       targets: [targetWithoutVersion],

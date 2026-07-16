@@ -12,7 +12,7 @@ import { signalStatus, buildHealthAssessment } from '../../framework/health-help
 import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { defaultReplan } from '../interface.js';
 import { backupManifest } from './manifest.js';
-import { formatBytes, formatDuration } from '../../framework/format-helpers.js';
+import { formatDuration } from '../../framework/format-helpers.js';
 import type {
   BackupBackend,
   BackupProviderConfig,
