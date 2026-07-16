@@ -7,6 +7,7 @@
  */
 
 import chalk from 'chalk';
+import { healthStatusColor, signalStatusColor, findingSeverityColor } from './status-presentation.js';
 import type { HealthAssessment, HealthStatus, OperatorSummary } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { SynthesisResult } from '../framework/root-cause-synthesis.js';
@@ -116,22 +117,14 @@ export function printHealthStatus(assessment: HealthAssessment): void {
     return;
   }
 
-  const statusColor =
-    assessment.status === 'healthy' ? chalk.green
-    : assessment.status === 'recovering' ? chalk.yellow
-    : assessment.status === 'unhealthy' ? chalk.red
-    : chalk.dim;
+  const statusColor = healthStatusColor(assessment.status);
 
   console.log(chalk.bold('  Health: ') + statusColor(assessment.status) + chalk.dim(` (${(assessment.confidence * 100).toFixed(0)}% confidence)`));
   console.log(chalk.dim(`  ${assessment.summary}`));
   console.log('');
 
   for (const signal of assessment.signals) {
-    const color =
-      signal.status === 'critical' ? chalk.red
-      : signal.status === 'warning' ? chalk.yellow
-      : signal.status === 'healthy' ? chalk.green
-      : chalk.dim;
+    const color = signalStatusColor(signal.status);
     console.log(color(`    [${signal.status.toUpperCase()}] `) + chalk.dim(`${signal.source}: ${signal.detail}`));
     if (signal.status !== 'healthy' && signal.explanation) {
       console.log(chalk.dim(`        ${signal.explanation}`));
@@ -182,10 +175,7 @@ export function printDiagnosis(diagnosis: DiagnosisResult): void {
 
   console.log('');
   for (const finding of diagnosis.findings) {
-    const sevColor =
-      finding.severity === 'critical' ? chalk.red
-      : finding.severity === 'warning' ? chalk.yellow
-      : chalk.dim;
+    const sevColor = findingSeverityColor(finding.severity);
     console.log(sevColor(`    [${finding.severity.toUpperCase()}] `) + chalk.dim(`${finding.source}: ${finding.observation}`));
     if (finding.severity !== 'info' && finding.explanation) {
       console.log(chalk.dim(`        ${finding.explanation}`));
@@ -542,12 +532,8 @@ function printFindingGroup(findings: ScanFinding[]): void {
 }
 
 function healthStatusIcon(status: HealthStatus): string {
-  switch (status) {
-    case 'healthy': return chalk.green('OK');
-    case 'recovering': return chalk.yellow('RECOVERING');
-    case 'unhealthy': return chalk.red('UNHEALTHY');
-    case 'unknown': return chalk.dim('UNKNOWN');
-  }
+  const label = status === 'healthy' ? 'OK' : status.toUpperCase();
+  return healthStatusColor(status)(label);
 }
 
 // ── Plain-English summary ──

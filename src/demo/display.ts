@@ -2,6 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import chalk from 'chalk';
+import { healthStatusColor, signalStatusColor } from '../cli/status-presentation.js';
 import type { RecoveryStep, SystemActionStep, HumanApprovalStep } from '../types/step-types.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { AgentContext } from '../types/agent-context.js';
@@ -153,21 +154,14 @@ export function displayDiagnosis(diagnosis: DiagnosisResult): void {
 
 export function displayHealthAssessment(assessment: HealthAssessment): void {
   console.log(
-    chalk.dim('     State:       ') + colorHealthStatus(assessment.status)(assessment.status),
+    chalk.dim('     State:       ') + healthStatusColor(assessment.status)(assessment.status),
   );
   console.log(chalk.dim(`     Confidence:  ${(assessment.confidence * 100).toFixed(0)}%`));
   console.log(chalk.dim(`     Summary:     ${assessment.summary}`));
   console.log('');
 
   for (const signal of assessment.signals) {
-    const color =
-      signal.status === 'critical'
-        ? chalk.red
-        : signal.status === 'warning'
-          ? chalk.yellow
-          : signal.status === 'healthy'
-            ? chalk.green
-            : chalk.dim;
+    const color = signalStatusColor(signal.status);
     console.log(color(`     [${signal.status.toUpperCase()}] `) + chalk.dim(`${signal.source}: ${signal.detail}`));
   }
 
@@ -482,18 +476,6 @@ export function displayComplete(outputPath: string): void {
   console.log('');
 }
 
-function colorHealthStatus(status: HealthAssessment['status']): typeof chalk {
-  switch (status) {
-    case 'healthy':
-      return chalk.green;
-    case 'recovering':
-      return chalk.yellow;
-    case 'unhealthy':
-      return chalk.red;
-    default:
-      return chalk.dim;
-  }
-}
 
 function formatActionRequired(action: OperatorSummary['actionRequired']): string {
   switch (action) {
