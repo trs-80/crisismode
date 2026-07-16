@@ -13,7 +13,7 @@
 
 import { assembleContext } from '../../framework/context.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
-import { loadConfigWithDetection } from '../../config/loader.js';
+import { loadConfigWithDetection, ConfigNotFoundError } from '../../config/loader.js';
 import { detectServices } from '../detect.js';
 import { discoverStack, printOnboardingMessage } from '../autodiscovery.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
@@ -426,7 +426,10 @@ function computeHealthScore(findings: ScanFinding[]): number {
 function loadConfigWithDetectionSafe(configPath?: string) {
   try {
     return loadConfigWithDetection(configPath !== undefined ? { configPath } : {});
-  } catch {
+  } catch (err) {
+    // An explicitly named config file that doesn't exist is a user error,
+    // not a cue to silently scan something else.
+    if (err instanceof ConfigNotFoundError) throw err;
     return { config: null, source: 'none' as const };
   }
 }

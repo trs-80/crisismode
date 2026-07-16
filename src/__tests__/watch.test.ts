@@ -13,10 +13,14 @@ vi.mock('../cli/output.js', () => ({
   printDetection: vi.fn(),
 }));
 
-vi.mock('../config/loader.js', () => ({
-  loadConfig: vi.fn(),
-  parseCliFlags: vi.fn(),
-}));
+vi.mock('../config/loader.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../config/loader.js')>();
+  return {
+    ConfigNotFoundError: actual.ConfigNotFoundError,
+    loadConfig: vi.fn(),
+    parseCliFlags: vi.fn(),
+  };
+});
 
 vi.mock('../cli/detect.js', () => ({
   detectServices: vi.fn(),
@@ -251,6 +255,16 @@ describe('runWatch', () => {
     expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('No configuration found'));
     expect(vi.mocked(detectServices)).toHaveBeenCalled();
     expect(vi.mocked(printDetection)).toHaveBeenCalled();
+  });
+
+  it('propagates a missing explicit config instead of falling back to detection', async () => {
+    const { ConfigNotFoundError } = await import('../config/loader.js');
+    vi.mocked(loadConfig).mockImplementation(() => {
+      throw new ConfigNotFoundError('Config file not found: /nonexistent/crisismode.yaml');
+    });
+
+    await expect(runWatch({ maxCycles: 1, intervalMs: 10 })).rejects.toThrow(ConfigNotFoundError);
+    expect(vi.mocked(detectServices)).not.toHaveBeenCalled();
   });
 
   it('runs with local agents when config fails and no services detected', async () => {
