@@ -4,7 +4,10 @@
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import type { Command, RiskLevel, Urgency, TimeoutAction } from '../../types/common.js';
+import type { AgentManifest } from '../../types/manifest.js';
 import type { ParsedPlaybook, PlaybookCodeBlock, PlaybookStep } from './types.js';
+import { RISK_ORDER } from '../risk.js';
+import { MANIFEST_API_VERSION } from '../manifest-defaults.js';
 
 function buildCommandFromCodeBlocks(codeBlocks: PlaybookCodeBlock[]): Command | null {
   if (codeBlocks.length === 0) return null;
@@ -83,9 +86,19 @@ function convertStep(playbook: ParsedPlaybook, step: PlaybookStep): RecoveryStep
         executionContext: step.executionContext ?? 'default',
         target: step.target ?? 'primary',
         riskLevel: (step.risk as RiskLevel) ?? 'routine',
-        requiredCapabilities: [],
+        requiredCapabilities: step.capabilities ?? [],
         command: buildCommandFromCodeBlocks(step.codeBlocks) ?? { type: 'structured_command', operation: step.title },
-        statePreservation: { before: [], after: [] },
+        statePreservation: {
+          // Author-declared captures are 'required': if the playbook says
+          // state must be preserved, a failed capture blocks the step.
+          before: (step.preserve ?? []).map((name) => ({
+            name,
+            captureType: 'command_output' as const,
+            captureCost: 'negligible' as const,
+            capturePolicy: 'required' as const,
+          })),
+          after: [],
+        },
         successCriteria: step.success
           ? { description: step.success, check: { type: 'expression', expect: { operator: 'eq', value: true } } }
           : {
@@ -191,6 +204,75 @@ function convertStep(playbook: ParsedPlaybook, step: PlaybookStep): RecoveryStep
         timeout: step.timeout ?? '60s',
       };
   }
+}
+
+/**
+ * Build a synthetic AgentManifest for a playbook so compiled plans can run
+ * through the same validatePlan() safety checks as code-based agents
+ * (no shortcuts). Derived entirely from the playbook's own declarations.
+ */
+export function buildPlaybookManifest(playbook: ParsedPlaybook): AgentManifest {
+  const fm = playbook.frontmatter;
+
+  // Execution contexts and their capability unions, as the compiled plan uses them
+  const contextCapabilities = new Map<string, Set<string>>();
+  let maxRiskIndex = RISK_ORDER.indexOf('routine');
+  for (const step of playbook.steps) {
+    if (step.type !== 'system_action' && step.type !== 'diagnosis_action') continue;
+    const context = step.executionContext ?? 'default';
+    const capabilities = contextCapabilities.get(context) ?? new Set<string>();
+    for (const capability of step.capabilities ?? []) capabilities.add(capability);
+    contextCapabilities.set(context, capabilities);
+
+    const riskIndex = RISK_ORDER.indexOf((step.risk ?? 'routine') as RiskLevel);
+    if (riskIndex > maxRiskIndex) maxRiskIndex = riskIndex;
+  }
+
+  const maxRiskLevel = RISK_ORDER[maxRiskIndex] ?? 'routine';
+
+  return {
+    apiVersion: MANIFEST_API_VERSION,
+    kind: 'AgentManifest',
+    metadata: {
+      name: fm.name,
+      version: fm.version,
+      description: fm.description,
+      ...(fm.author !== undefined ? { authors: [fm.author] } : { authors: [] }),
+      license: 'Apache-2.0',
+      tags: fm.tags ?? [],
+      plugin: {
+        id: `${fm.name}.playbook`,
+        kind: 'scenario_module',
+        maturity: 'experimental',
+        compatibilityMode: 'recovery_agent',
+      },
+    },
+    spec: {
+      targetSystems: fm.agent
+        ? [{ technology: fm.agent, versionConstraint: '*', components: [] }]
+        : [],
+      triggerConditions: [],
+      failureScenarios: [fm.description],
+      executionContexts: [...contextCapabilities.entries()].map(([name, capabilities]) => ({
+        name,
+        type: 'playbook',
+        privilege: 'operator',
+        target: 'primary',
+        capabilities: [...capabilities],
+      })),
+      observabilityDependencies: { required: [], optional: [] },
+      riskProfile: {
+        maxRiskLevel,
+        dataLossPossible: false,
+        serviceDisruptionPossible: maxRiskLevel !== 'routine',
+      },
+      humanInteraction: {
+        requiresApproval: true,
+        minimumApprovalRole: 'sre',
+        escalationPath: [],
+      },
+    },
+  };
 }
 
 export function playbookToPlan(playbook: ParsedPlaybook): RecoveryPlan {

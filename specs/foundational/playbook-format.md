@@ -166,6 +166,8 @@ All properties:
 | `precondition` | No | system_action | Expression that must be true before execution. |
 | `success` | No | system_action, diagnosis_action | Success criteria expression. |
 | `blast_radius` | No | system_action | YAML block with blast radius constraints. |
+| `preserve` | For `elevated`+ risk | system_action | Comma-separated state-capture names recorded before the step executes (see State Preservation). |
+| `capability` | Yes (validator-enforced) | system_action | Comma-separated registered capability ids the step requires (e.g. `db.replica.disconnect`). |
 | `channel` | No | human_notification | Notification channel (e.g., `slack`, `pagerduty`, `email`). |
 | `message` | No | human_notification | Message template with variable interpolation. |
 | `timeout` | No | system_action, human_approval | Step timeout (e.g., `"30s"`, `"5m"`). |
@@ -188,6 +190,33 @@ The 7 step types match those defined in the Recovery Agent Contract:
 | `human_approval` | Gate execution pending human decision. |
 | `replanning_checkpoint` | Allow plan revision mid-flight. |
 | `conditional` | Branch execution based on system state. |
+
+### State Preservation
+
+Every `system_action` at `elevated` risk or higher MUST declare `preserve`
+with at least one state-capture name. Captures compile to
+`statePreservation.before` entries with `capturePolicy: required` — if a
+declared capture fails at execution time, the step is blocked. This is the
+same safety rule the plan validator enforces for code-based agents; compiled
+playbook plans run through the identical validator (`crisismode playbook
+validate` / `dry-run`), so a missing `preserve` fails validation rather than
+silently compiling an unprotected plan.
+
+```markdown
+- preserve: replication_slot_state, replica_connection_info
+```
+
+### Capabilities
+
+Every `system_action` MUST declare `capability` with one or more registered
+capability ids (see `src/framework/capability-registry.ts`, e.g.
+`db.query.read`, `db.replica.disconnect`, `cache.config.set`). The validator
+rejects steps with no declared capabilities and ids not present in the
+registry.
+
+```markdown
+- capability: db.replica.disconnect
+```
 
 ### Blast Radius
 

@@ -12,7 +12,8 @@
 
 import { readFile } from 'node:fs/promises';
 import { parsePlaybook } from '../../framework/playbook/parser.js';
-import { playbookToPlan } from '../../framework/playbook/runtime.js';
+import { playbookToPlan, buildPlaybookManifest } from '../../framework/playbook/runtime.js';
+import { validatePlan } from '../../framework/validator.js';
 import { discoverPlaybooks } from '../../framework/playbook/discovery.js';
 import { printInfo, printSuccess, printError, printWarning } from '../output.js';
 
@@ -61,19 +62,31 @@ async function runValidate(opts: PlaybookOptions): Promise<void> {
     const playbook = parsePlaybook(content, filePath);
     const plan = playbookToPlan(playbook);
 
+    // Compiled plans go through the same safety validator as agent plans.
+    const validation = validatePlan(plan, buildPlaybookManifest(playbook));
+
     if (opts.json) {
       console.log(JSON.stringify({
-        valid: true,
+        valid: validation.valid,
         name: playbook.frontmatter.name,
         version: playbook.frontmatter.version,
         stepCount: playbook.steps.length,
         planStepCount: plan.steps.length,
+        checks: validation.checks,
       }));
-    } else {
+      if (!validation.valid) process.exit(1);
+    } else if (validation.valid) {
       printSuccess(
         `${filePath}: valid playbook "${playbook.frontmatter.name}" v${playbook.frontmatter.version} ` +
-        `(${playbook.steps.length} step(s), compiles to ${plan.steps.length} plan step(s))`,
+        `(${playbook.steps.length} step(s), compiles to ${plan.steps.length} plan step(s), ` +
+        `${validation.checks.length} safety checks passed)`,
       );
+    } else {
+      printError(`${filePath}: playbook compiles but fails plan safety validation:`);
+      for (const check of validation.checks.filter((c) => !c.passed)) {
+        printError(`  ✗ ${check.name}: ${check.message}`);
+      }
+      process.exit(1);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -157,10 +170,23 @@ async function runDryRun(opts: PlaybookOptions): Promise<void> {
     const playbook = parsePlaybook(content, filePath);
     const plan = playbookToPlan(playbook);
 
+    // Compiled plans go through the same safety validator as agent plans.
+    const validation = validatePlan(plan, buildPlaybookManifest(playbook));
+
     if (opts.json) {
-      console.log(JSON.stringify(plan, null, 2));
+      console.log(JSON.stringify({ plan, validation }, null, 2));
+      if (!validation.valid) process.exit(1);
       return;
     }
+
+    if (!validation.valid) {
+      printError('Plan safety validation failed:');
+      for (const check of validation.checks.filter((c) => !c.passed)) {
+        printError(`  ✗ ${check.name}: ${check.message}`);
+      }
+      process.exit(1);
+    }
+    printSuccess(`Plan safety validation: ${validation.checks.length} checks passed`);
 
     printInfo(`Compiled plan: "${plan.metadata.planId}" (${plan.steps.length} step(s))\n`);
 

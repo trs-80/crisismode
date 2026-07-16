@@ -57,6 +57,7 @@ redis-cli DBSIZE
 - risk: routine
 - description: Force lazy expiration scan to reclaim memory from expired keys
 - target: redis-primary
+- capability: cache.expiry.trigger
 
 ```sh
 redis-cli DEBUG JMAP
@@ -81,6 +82,8 @@ temporarily to prevent further evictions while the team investigates.
 - risk: elevated
 - description: Temporarily increase maxmemory to relieve pressure
 - target: redis-primary
+- capability: cache.config.set
+- preserve: maxmemory_config, memory_usage_stats
 - precondition: "Host has available system memory"
 - success: "Redis used_memory_percent below 80%"
 - blast_radius:

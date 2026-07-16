@@ -84,6 +84,8 @@ Properties use `- key: value` syntax. Available properties vary by step type:
 | `target` | system_action, diagnosis_action | Target system identifier |
 | `execution_context` | system_action, diagnosis_action | Named execution context |
 | `risk` | system_action | Risk level: routine, elevated, high, critical |
+| `capability` | system_action | Comma-separated registered capability ids (required by the validator) |
+| `preserve` | system_action | Comma-separated state-capture names (required for elevated+ risk) |
 | `precondition` | system_action | Condition that must be true before execution |
 | `success` | system_action | Condition that must be true after execution |
 | `channel` | human_notification | Notification channel (pagerduty, slack, default) |
@@ -116,7 +118,7 @@ Alert stakeholders. Set `channel` and `message`. No commands are executed.
 Capture system state before mutations. The framework snapshots the configured targets for rollback and audit.
 
 ### `system_action`
-Execute a command that mutates system state. Must declare `risk`, should have `precondition`, `success`, and `blast_radius`. Include a code block with the command.
+Execute a command that mutates system state. Must declare `risk` and `capability`; at `elevated` risk or higher must also declare `preserve` (state captured before the step runs, blocking on failure). Should have `precondition`, `success`, and `blast_radius`. Include a code block with the command. `crisismode playbook validate` runs the compiled plan through the same safety validator as code-based agents and reports exactly which rule a step violates.
 
 ### `human_approval`
 Pause execution until a human approves. Set `timeout` and `escalation`. The body text is shown to the approver as context.

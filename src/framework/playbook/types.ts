@@ -53,6 +53,10 @@ export interface PlaybookStep {
   precondition?: string;
   success?: string;
   blastRadius?: PlaybookBlastRadius;
+  /** State-capture names for statePreservation.before (required for elevated+ risk). */
+  preserve?: string[];
+  /** Registered capability ids this step requires (see capability-registry). */
+  capabilities?: string[];
   channel?: string;
   message?: string;
   timeout?: string;
