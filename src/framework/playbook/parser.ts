@@ -231,7 +231,7 @@ function parseStepSection(content: string, position: number, title: string): Pla
 
   // Map parsed properties to step fields
   for (const [key, value] of Object.entries(properties)) {
-    if (key === 'blast_radius') continue; // handled separately
+    if (key === 'blast_radius' || key === 'preserve' || key === 'capability') continue; // handled separately
     const camelKey = SNAKE_TO_CAMEL[key];
     if (camelKey && camelKey !== 'type') {
       (step as unknown as Record<string, unknown>)[camelKey] = value;
@@ -243,7 +243,30 @@ function parseStepSection(content: string, position: number, title: string): Pla
     step.blastRadius = properties.blast_radius as PlaybookBlastRadius;
   }
 
+  // Handle preserve: a comma-separated list of state-capture names
+  if (typeof properties.preserve === 'string') {
+    const names = splitCommaList(properties.preserve);
+    if (names.length > 0) {
+      step.preserve = names;
+    }
+  }
+
+  // Handle capability: a comma-separated list of registered capability ids
+  if (typeof properties.capability === 'string') {
+    const ids = splitCommaList(properties.capability);
+    if (ids.length > 0) {
+      step.capabilities = ids;
+    }
+  }
+
   return step;
+}
+
+function splitCommaList(value: string): string[] {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 }
 
 function parseProperties(content: string): {

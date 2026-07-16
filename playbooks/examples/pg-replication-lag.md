@@ -62,6 +62,8 @@ FROM pg_stat_replication;
 - risk: elevated
 - target: replica
 - executionContext: pg-primary-write
+- capability: db.replica.disconnect
+- preserve: replication_slot_state, replica_connection_info
 - precondition: "Replica is currently connected to primary"
 - success: "WAL sender for replica is no longer present"
 - blast_radius:
@@ -73,6 +75,7 @@ FROM pg_stat_replication;
 - risk: routine
 - description: Update connection pool to exclude disconnected replica
 - target: connection-pool
+- capability: traffic.backend.detach
 
 ### 6. Assess recovery progress
 - type: replanning_checkpoint
@@ -92,6 +95,8 @@ This will take the replica offline for the duration of the sync.
 - risk: high
 - description: Full resync via pg_basebackup
 - target: replica
+- capability: db.replica.reseed
+- preserve: replication_slot_state, replica_data_directory_manifest
 - blast_radius:
   max_downtime_seconds: 1800
   requires_maintenance_window: true
