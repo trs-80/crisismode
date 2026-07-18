@@ -1,6 +1,6 @@
 {
   "name": "crisismode",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "AI-powered infrastructure recovery — detect, diagnose, and recover stateful systems",
   "type": "module",
   "bin": {
