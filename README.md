@@ -275,6 +275,7 @@ crisismode init                       # Generate crisismode.yaml configuration
 crisismode init --agent <name>        # Scaffold a check plugin
 crisismode webhook                    # Start webhook receiver for AlertManager
 crisismode watch                      # Continuous shadow observation
+crisismode readiness                  # Scale-readiness report (read-only): will this stack break under load?
 
 crisismode bundle ingest <path|->     # Ingest an SRE evidence bundle (v1) for AI diagnosis
 crisismode bundle respond <path|->    # Emit AdapterResponse v1 ("-" reads from stdin)
@@ -362,6 +363,7 @@ Every MCP tool is read-only — the MCP surface never mutates infrastructure:
 | `crisismode_bundle_ingest` | Read-only diagnosis of an SRE evidence bundle (v1) |
 | `crisismode_bundle_respond` | Ranked hypotheses with evidence citations and policy-gated proposed actions |
 | `crisismode_bundle_plan` | Translate a bundle into a dry-run RecoveryPlan (returned, never executed) |
+| `crisismode_readiness` | Forward-looking scale-readiness report: connection headroom, pooling, indexes, slow queries |
 
 ## Check Plugin Ecosystem
 
