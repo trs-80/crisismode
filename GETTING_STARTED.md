@@ -110,7 +110,7 @@ pnpm run webhook --execute      # execute mode
 
 ### CLI (`src/cli/`)
 
-The unified `crisismode` CLI provides commands: `scan` (default), `diagnose`, `recover`, `status`, `ask`, `demo`, `init`, `webhook`, `watch`, plus subcommand groups `bundle` (ingest/respond/execute for SRE evidence bundles), `playbook` (list/validate/dry-run), `agent` (list/info), `registry` (list/search/install), and `mcp` (stdio MCP server) and `completions` (shell completions). Running `crisismode` with no arguments performs a zero-config health scan. Supporting modules handle system detection (`detect.ts`), zero-config agent discovery (`autodiscovery.ts`), structured output (`output.ts`), and error formatting (`errors.ts`); escalation levels live in `src/framework/escalation.ts`. See the [README CLI reference](README.md#cli-reference) for the full command list.
+The unified `crisismode` CLI provides commands: `scan` (default), `diagnose`, `recover`, `status`, `ask`, `demo`, `init`, `webhook`, `watch`, `readiness`, plus subcommand groups `bundle` (ingest/respond/execute for SRE evidence bundles), `playbook` (list/validate/dry-run), `agent` (list/info), `registry` (list/search/install), and `mcp` (stdio MCP server) and `completions` (shell completions). Running `crisismode` with no arguments performs a zero-config health scan. Supporting modules handle system detection (`detect.ts`), zero-config agent discovery (`autodiscovery.ts`), structured output (`output.ts`), and error formatting (`errors.ts`); escalation levels live in `src/framework/escalation.ts`. See the [README CLI reference](README.md#cli-reference) for the full command list.
 
 ### Core Framework (`src/framework/`)
 

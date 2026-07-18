@@ -78,6 +78,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `init` | Generate `crisismode.yaml` configuration |
 | `webhook` | Start webhook receiver for AlertManager |
 | `watch` | Continuous shadow observation |
+| `readiness` | Scale-readiness report (read-only): will this stack break under load? |
 | `playbook validate` | Validate a playbook file |
 | `playbook list` | List discovered playbooks |
 | `playbook dry-run` | Preview compiled recovery plan |
@@ -87,7 +88,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `bundle respond` | Emit AdapterResponse v1 (ranked hypotheses, policy-gated actions) |
 | `bundle execute` | Translate a bundle into a RecoveryPlan (dry-run) |
 | `registry list` / `search` / `install` | Discover and install check plugins |
-| `mcp` | Start MCP server on stdio — 7 read-only diagnosis tools (`src/mcp/server.ts`); the MCP surface never mutates infrastructure |
+| `mcp` | Start MCP server on stdio — 8 read-only diagnosis tools (`src/mcp/server.ts`); the MCP surface never mutates infrastructure |
 | `completions` | Generate bash/zsh/fish shell completions |
 
 ### Output Modes
@@ -193,8 +194,9 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
 | `src/cli/index.ts` | Unified CLI entry point |
-| `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch, agent, playbook, bundle, registry, completions) |
-| `src/mcp/server.ts` | MCP server — 7 read-only diagnosis tools exposed via `crisismode mcp` |
+| `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch, readiness, agent, playbook, bundle, registry, completions) |
+| `src/mcp/server.ts` | MCP server — 8 read-only diagnosis tools exposed via `crisismode mcp` |
+| `src/readiness/` | Scale-readiness rule registry (readiness command + MCP tool) |
 | `src/framework/escalation.ts` | Five-level progressive escalation model |
 | `src/agent/pg-replication/` | Reference agent implementation (PostgreSQL) |
 | `src/agent/redis/` | Redis memory pressure recovery agent |
