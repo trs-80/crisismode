@@ -14,6 +14,7 @@ import { loadConfigWithLocalTargets } from '../runtime.js';
 import { probeNetwork } from '../../framework/network-profile.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution } from '../../framework/check-plugin.js';
+import { readVercelProjectConfig } from '../autodiscovery.js';
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 import {
   printBanner, printHealthStatus, printDiagnosis, printOperatorSummary,
@@ -21,6 +22,7 @@ import {
 } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { CheckDiagnoseResult } from '../../framework/check-plugin.js';
+import type { ExplanationContext } from '../../framework/signal-explanations.js';
 
 export interface DiagnoseOptions {
   configPath?: string | undefined;
@@ -29,6 +31,10 @@ export interface DiagnoseOptions {
 
 export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
   printBanner();
+
+  const explanationCtx: ExplanationContext = {
+    serverless: readVercelProjectConfig(process.cwd()) !== null || process.env['VERCEL_TOKEN'] !== undefined,
+  };
 
   // Route PLUG-* IDs to check plugin diagnose verb
   if (opts.targetName) {
@@ -89,7 +95,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     // Health assessment
     printInfo('Assessing health...');
     const health = await agent.assessHealth(context);
-    printHealthStatus(health);
+    printHealthStatus(health, explanationCtx);
 
     if (health.status === 'healthy') {
       printSuccess('System is healthy. No issues detected.');
@@ -114,7 +120,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
       networkProfile,
       target.name,
     );
-    printDiagnosis(diagnosis);
+    printDiagnosis(diagnosis, explanationCtx);
 
     printOperatorSummary(buildOperatorSummary({
       health,

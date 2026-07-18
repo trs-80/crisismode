@@ -195,7 +195,7 @@ describe('runInteractive environment guard wiring', () => {
       scenario: string;
       status: string;
       findings: Array<{ source: string }>;
-    }];
+    }, ...unknown[]];
     expect(reportedDiagnosis.scenario).toBe('target_unresolvable');
     expect(reportedDiagnosis.findings[0]!.source).toBe('environment_check');
   });

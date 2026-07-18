@@ -84,23 +84,58 @@ export function explainSource(source: string): SignalExplanation | undefined {
   return hit ? { explanation: hit.explanation, learnMoreUrl: hit.learnMoreUrl } : undefined;
 }
 
-export function enrichHealth(assessment: HealthAssessment): HealthAssessment {
+export interface ExplanationContext {
+  /** True when the app deploys to a serverless platform (Vercel detected). */
+  serverless: boolean;
+}
+
+const DEFAULT_EXPLANATION_CONTEXT: ExplanationContext = { serverless: false };
+
+/** Scaling attributions layered onto base explanations when context matches. */
+const ATTRIBUTIONS: Array<{ match: RegExp; when: (ctx: ExplanationContext) => boolean; append: string }> = [
+  {
+    match: /^pg_connection|connection_pool|pool_exhaust/,
+    when: (ctx) => ctx.serverless,
+    append:
+      ' In a serverless deploy, each function invocation opens its own database connection — traffic spikes become connection spikes. Use a pooled connection string (or pgbouncer) for serverless functions.',
+  },
+  {
+    match: /queue|consumer|lag_/,
+    when: (ctx) => ctx.serverless,
+    append:
+      ' On serverless platforms, background work competes with request traffic for the same concurrency limits — a burst of requests can starve your workers and grow the backlog.',
+  },
+];
+
+export function explainSourceInContext(
+  source: string,
+  ctx: ExplanationContext,
+): SignalExplanation | undefined {
+  const base = explainSource(source);
+  if (!base) return undefined;
+  const extra = ATTRIBUTIONS.filter((a) => a.match.test(source) && a.when(ctx))
+    .map((a) => a.append)
+    .join('');
+  return extra ? { ...base, explanation: base.explanation + extra } : base;
+}
+
+export function enrichHealth(assessment: HealthAssessment, ctx: ExplanationContext = DEFAULT_EXPLANATION_CONTEXT): HealthAssessment {
   return {
     ...assessment,
     signals: assessment.signals.map((s) => {
       if (s.explanation || s.learnMoreUrl) return s;
-      const e = explainSource(s.source);
+      const e = explainSourceInContext(s.source, ctx);
       return e ? { ...s, ...e } : s;
     }),
   };
 }
 
-export function enrichDiagnosis(diagnosis: DiagnosisResult): DiagnosisResult {
+export function enrichDiagnosis(diagnosis: DiagnosisResult, ctx: ExplanationContext = DEFAULT_EXPLANATION_CONTEXT): DiagnosisResult {
   return {
     ...diagnosis,
     findings: diagnosis.findings.map((f) => {
       if (f.explanation || f.learnMoreUrl) return f;
-      const e = explainSource(f.source);
+      const e = explainSourceInContext(f.source, ctx);
       return e ? { ...f, ...e } : f;
     }),
   };
