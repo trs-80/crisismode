@@ -19,6 +19,7 @@ import type { NetworkProfile } from '../framework/network-profile.js';
 import type { EscalationLevel } from '../framework/escalation.js';
 import type { PlainEnglishSummary } from './ai-summary.js';
 import { enrichHealth, enrichDiagnosis } from '../framework/signal-explanations.js';
+import type { ExplanationContext } from '../framework/signal-explanations.js';
 
 /**
  * Three output modes:
@@ -110,8 +111,8 @@ export function printDetection(services: DetectedService[]): void {
 
 // ── Health status ──
 
-export function printHealthStatus(assessment: HealthAssessment): void {
-  assessment = enrichHealth(assessment);
+export function printHealthStatus(assessment: HealthAssessment, ctx?: ExplanationContext): void {
+  assessment = enrichHealth(assessment, ctx);
   if (outputOptions.mode === 'machine') {
     jsonOut('health', { assessment });
     return;
@@ -146,8 +147,8 @@ export function printHealthStatus(assessment: HealthAssessment): void {
 
 // ── Diagnosis ──
 
-export function printDiagnosis(diagnosis: DiagnosisResult): void {
-  diagnosis = enrichDiagnosis(diagnosis);
+export function printDiagnosis(diagnosis: DiagnosisResult, ctx?: ExplanationContext): void {
+  diagnosis = enrichDiagnosis(diagnosis, ctx);
   if (outputOptions.mode === 'machine') {
     jsonOut('diagnosis', { diagnosis });
     return;
