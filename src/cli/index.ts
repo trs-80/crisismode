@@ -31,6 +31,7 @@ const HELP = `
     crisismode diagnose [options]           Health check + diagnosis (read-only)
     crisismode recover [options]            Full recovery flow (dry-run default)
     crisismode status                       Quick health probe
+    crisismode readiness                    Scale-readiness report (read-only, will-it-break-under-load)
     crisismode init [path]                  Generate crisismode.yaml
     crisismode init --agent <name>          Scaffold a check plugin
     crisismode demo                         Run simulator demo
@@ -174,6 +175,12 @@ async function main(): Promise<void> {
     case 'status': {
       const { runStatus } = await import('./commands/status.js');
       await runStatus();
+      break;
+    }
+
+    case 'readiness': {
+      const { runReadinessCommand } = await import('./commands/readiness.js');
+      await runReadinessCommand();
       break;
     }
 
