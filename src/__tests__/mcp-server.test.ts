@@ -82,6 +82,7 @@ const EXPECTED_TOOLS = [
   'crisismode_bundle_respond',
   'crisismode_diagnose',
   'crisismode_list_agents',
+  'crisismode_readiness',
   'crisismode_scan',
   'crisismode_status',
 ];

@@ -18,6 +18,7 @@
  * - crisismode_bundle_ingest  — read-only diagnosis of an SRE evidence bundle (v1)
  * - crisismode_bundle_respond — full AdapterResponse v1 for an evidence bundle
  * - crisismode_bundle_plan    — translate a bundle to a dry-run RecoveryPlan
+ * - crisismode_readiness      — forward-looking scale-readiness report
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -34,6 +35,7 @@ import { buildOperatorSummary } from '../framework/operator-summary.js';
 import { ingestEvidenceBundle } from '../framework/evidence-bundle-ingest.js';
 import { respondToEvidenceBundle } from '../framework/evidence-bundle-respond.js';
 import { adapterResponseToPlan } from '../framework/bundle-to-plan.js';
+import { runReadiness } from '../readiness/run.js';
 import type { AgentContext } from '../types/agent-context.js';
 
 // ── Tool Handlers ──
@@ -369,6 +371,18 @@ export function createMcpServer(): McpServer {
       annotations: { readOnlyHint: true },
     },
     async (args) => toResult(await handleBundlePlan(args)),
+  );
+
+  server.registerTool(
+    'crisismode_readiness',
+    {
+      title: 'Scale-readiness report',
+      description:
+        'Forward-looking scale-readiness check for the detected stack (serverless + PostgreSQL): connection headroom, pooling, indexes, slow queries. Returns a scored report with plain-English findings and fixes. Read-only.',
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => toResult(await runReadiness()),
   );
 
   return server;
