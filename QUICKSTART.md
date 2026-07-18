@@ -2,6 +2,11 @@
 
 Get CrisisMode running in under 5 minutes. No configuration required.
 
+> **Fastest path:** prebuilt binaries (no Node.js required) are on
+> [GitHub Releases](https://github.com/trs-80/crisismode/releases/latest) —
+> see the [README install section](README.md#install). This guide covers
+> running from source, which you'll want for development.
+
 ## Prerequisites
 
 - **Node.js** >= 18

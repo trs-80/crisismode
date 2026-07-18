@@ -244,9 +244,11 @@ AWS cloud providers are now live:
 
 | Kind | Description | Detection |
 |---|---|---|
-| `aws-s3` | S3 backup bucket verification | Checks bucket for backup objects |
-| `aws-dynamodb` | DynamoDB point-in-time recovery status | Checks PITR configuration |
-| `aws-rds` | RDS automated backup and snapshot verification | Checks backup retention and snapshot recency |
+| `aws_s3` | S3 backup bucket verification | Checks bucket for backup objects |
+| `aws_rds` | RDS automated backup and snapshot verification | Checks backup retention and snapshot recency |
+
+(DynamoDB point-in-time recovery is checked by the standalone `aws-dynamodb`
+agent, not by a backup provider.)
 
 The `BackupProviderKind` type is string-extensible, so additional cloud providers (`gcp_cloudsql`, `azure_sql`) can be added without modifying existing code.
 
@@ -374,13 +376,12 @@ The architecture is designed for cloud expansion. Key properties that enable thi
 - **BackupInventoryItem has region/account fields** — ready for cross-region and cross-account verification.
 - **RPO/RTO evaluation is provider-agnostic** — the same age comparison and throughput estimation works regardless of backup source.
 
-## Demo mode
+## Simulator mode
 
-The simulator supports all six failure scenarios for demos and testing:
-
-```bash
-crisismode demo --agent backup-verification
-```
+The simulator supports all six failure scenarios for demos and testing.
+(`crisismode demo` runs the PostgreSQL walkthrough only — to exercise this
+agent's simulator, configure a target with `host: simulator` and run
+`scan`/`diagnose`, or drive it through unit tests.)
 
 Simulator states: `no_backups_found`, `stale_backup`, `size_anomaly`, `integrity_failure`, `incomplete_coverage`, `rto_at_risk`, `healthy`.
 
@@ -388,12 +389,16 @@ Simulator states: `no_backups_found`, `stale_backup`, `size_anomaly`, `integrity
 
 ```
 src/agent/backup/
-  backend.ts          # BackupBackend + BackupProvider interfaces
-  simulator.ts        # In-memory simulator (7 states, 6 failure scenarios)
-  live-client.ts      # Real filesystem verification client
-  manifest.ts         # Agent manifest
-  agent.ts            # BackupVerificationAgent coordinator
-  registration.ts     # Lazy factory for agent registry
+  backend.ts            # BackupBackend + BackupProvider interfaces
+  simulator.ts          # In-memory simulator (7 states, 6 failure scenarios)
+  live-client.ts        # Real filesystem verification client
+  composite-client.ts   # Aggregates multiple providers into one backend
+  aws-common.ts         # Shared AWS client/config helpers
+  aws-s3-provider.ts    # S3 backup provider (aws_s3)
+  aws-rds-provider.ts   # RDS backup provider (aws_rds)
+  manifest.ts           # Agent manifest
+  agent.ts              # BackupVerificationAgent coordinator
+  registration.ts       # Lazy factory for agent registry
 ```
 
 ## Integration points
