@@ -110,7 +110,7 @@ pnpm run webhook --execute      # execute mode
 
 ### CLI (`src/cli/`)
 
-The unified `crisismode` CLI provides commands: `scan` (default), `diagnose`, `recover`, `status`, `ask`, `demo`, `init`, `webhook`, `watch`. Running `crisismode` with no arguments performs a zero-config health scan. Supporting modules handle system detection (`detect.ts`), zero-config agent discovery (`autodiscovery.ts`), structured output (`output.ts`), escalation levels (`escalation.ts`), and error formatting (`errors.ts`).
+The unified `crisismode` CLI provides commands: `scan` (default), `diagnose`, `recover`, `status`, `ask`, `demo`, `init`, `webhook`, `watch`, plus subcommand groups `bundle` (ingest/respond/execute for SRE evidence bundles), `playbook` (list/validate/dry-run), `agent` (list/info), `registry` (list/search/install), and `mcp` (stdio MCP server) and `completions` (shell completions). Running `crisismode` with no arguments performs a zero-config health scan. Supporting modules handle system detection (`detect.ts`), zero-config agent discovery (`autodiscovery.ts`), structured output (`output.ts`), and error formatting (`errors.ts`); escalation levels live in `src/framework/escalation.ts`. See the [README CLI reference](README.md#cli-reference) for the full command list.
 
 ### Core Framework (`src/framework/`)
 
@@ -151,27 +151,39 @@ agent/
 
 **PostgreSQL Replication** (`pg-replication/`) — the MVP agent. Has a full live client that queries real `pg_stat_replication`.
 
-**Redis Memory** (`redis/`) — cache recovery agent. Simulator complete, live client not yet built.
+**Redis Memory** (`redis/`) — cache recovery agent. Live client complete; execute-verified via the torture harness.
 
 **etcd Recovery** (`etcd/`) — consensus cluster recovery. Handles leader election loops, NOSPACE alarms, member failures. Simulator complete.
 
 **Kafka Recovery** (`kafka/`) — broker recovery agent. Handles under-replicated partitions, leader imbalance, consumer lag cascades. Simulator complete.
 
-**Kubernetes Recovery** (`kubernetes/`) — cluster recovery agent. Handles node failures, pod crash loops, stuck deployments, PVC issues. Simulator complete.
+**Kubernetes Recovery** (`kubernetes/`) — cluster recovery agent. Handles node failures, pod crash loops, stuck deployments, PVC issues. Live client complete.
 
 **Ceph Storage** (`ceph/`) — distributed storage recovery. Handles OSD failures, degraded placement groups, pool near-full conditions. Simulator complete.
 
 **Flink Stream Processing** (`flink/`) — stream job recovery. Handles checkpoint failure cascades, savepoint corruption, backpressure. Simulator complete.
 
-**AI Provider** (`ai-provider/`) — AI service failover and fallback. Handles provider failover routing, rate limit management. Simulator complete.
+**AI Provider** (`ai-provider/`) — AI service failover and fallback. Handles provider failover routing, rate limit management. Live client complete.
 
-**Config Drift** (`config-drift/`) — configuration drift detection and remediation. Handles drift detection, compliance enforcement. Simulator complete.
+**Config Drift** (`config-drift/`) — configuration drift detection and remediation. Handles drift detection, compliance enforcement. Live client complete; diagnosis validated in dry-run via the torture harness.
 
-**DB Migration** (`db-migration/`) — database migration safety. Handles migration safety checks, rollback orchestration. Simulator complete.
+**DB Migration** (`db-migration/`) — database migration safety. Handles migration safety checks, rollback orchestration. Live client complete; diagnosis validated in dry-run via the torture harness.
 
-**Deploy Rollback** (`deploy-rollback/`) — deployment rollback orchestration. Handles rollback coordination, canary failure response. Simulator complete.
+**Deploy Rollback** (`deploy-rollback/`) — deployment rollback orchestration (Vercel, requires `VERCEL_TOKEN`). Handles rollback coordination, canary failure response. Live client complete.
 
-**Queue Backlog** (`queue-backlog/`) — queue backlog and lag recovery. Handles backlog reduction, consumer lag recovery. Simulator complete.
+**Queue Backlog** (`queue-backlog/`) — queue backlog and lag recovery. Handles backlog reduction, consumer lag recovery. Live client complete; diagnosis validated in dry-run via the torture harness.
+
+**AWS S3 / DynamoDB / RDS** (`aws-s3/`, `aws-dynamodb/`, `aws-rds/`) — AWS backup verification and recovery (bucket versioning/lifecycle, PITR status, backup retention and snapshot recency). Live clients validated in dry-run against real AWS.
+
+**DNS** (`dns/`) — DNS resolution failure recovery. Live diagnosis plus local cache flush.
+
+**TLS** (`tls/`) — certificate expiry and chain health. Live diagnosis only.
+
+**Disk** (`disk/`) — local disk exhaustion detection. Live diagnosis only.
+
+**Backup Verification** (`backup/`) — backup verification and DR readiness across pluggable providers (filesystem, `aws_s3`, `aws_rds`). Live diagnosis only.
+
+See `src/config/builtin-agents.ts` for the authoritative roster (19 agents) and the README status tables for what is execute-verified versus dry-run validated.
 
 ### Type System (`src/types/`)
 

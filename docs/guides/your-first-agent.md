@@ -659,7 +659,7 @@ The simulator powers the demo command:
 npx tsx src/cli/index.ts demo
 ```
 
-Select your agent from the list to see the full diagnosis-plan-execute cycle running against simulated data.
+The demo command runs the built-in PostgreSQL replication walkthrough — it does not select other agents. To exercise *your* agent against its simulator, point a target at the simulator host in `crisismode.yaml` (`host: simulator`) and run `scan`/`diagnose`, or drive it directly through unit tests (next section).
 
 ### Write unit tests
 
@@ -730,31 +730,44 @@ pnpm run typecheck       # Verify type safety
 
 Once your agent works against the simulator, you can add a live client that talks to real infrastructure. Create `src/agent/website/live-client.ts` implementing `WebsiteBackend` with real HTTP calls.
 
-Update `registration.ts` to use the live client when a real target is available:
+Update `registration.ts` to use the `createLiveRegistration` helper from
+`src/config/live-registration.ts` — it owns the simulator-vs-live policy in
+one place:
 
 ```typescript
-async createAgent(target) {
-  const { WebsiteHealthAgent } = await import('./agent.js');
+import { createLiveRegistration } from '../../config/live-registration.js';
+import { websiteManifest } from './manifest.js';
 
-  const hasLiveTarget = target.primary.host !== 'simulator'
-    && target.primary.host !== 'default'
-    && target.primary.host !== '';
-
-  if (hasLiveTarget) {
-    try {
-      const { WebsiteLiveClient } = await import('./live-client.js');
-      const backend = new WebsiteLiveClient(target.primary.host, target.primary.port);
-      return { agent: new WebsiteHealthAgent(backend), backend, target };
-    } catch {
-      // Fall back to simulator
-    }
-  }
-
-  const { WebsiteSimulator } = await import('./simulator.js');
-  const backend = new WebsiteSimulator();
-  return { agent: new WebsiteHealthAgent(backend), backend, target };
-},
+export const websiteRecoveryRegistration = createLiveRegistration({
+  kind: 'website',
+  name: 'website-health-recovery',
+  manifest: websiteManifest,
+  loadAgent: async () => {
+    const { WebsiteHealthAgent } = await import('./agent.js');
+    return WebsiteHealthAgent as never;
+  },
+  loadSimulator: async () => {
+    const { WebsiteSimulator } = await import('./simulator.js');
+    return WebsiteSimulator as never;
+  },
+  buildLiveBackend: async (target) => {
+    const { WebsiteLiveClient } = await import('./live-client.js');
+    const backend = new WebsiteLiveClient(target.primary.host, target.primary.port);
+    await backend.connect(); // throw on failure — never swallow
+    return backend;
+  },
+});
 ```
+
+(See `src/agent/redis/registration.ts` for a real example of this pattern.)
+
+Two rules the helper enforces (and that you must not work around):
+
+- Explicit simulator targets (`host: simulator`, or no primary) get the
+  simulator backend. Everything else gets the live backend.
+- Live connection failures **propagate** so `scan` reports an honest "could
+  not connect" finding. Never catch a live-client error and silently fall
+  back to simulated data — that reports fake health for a real system.
 
 Update the manifest's `plugin.maturity` from `"simulator_only"` to `"beta"` once the live client is working.
 

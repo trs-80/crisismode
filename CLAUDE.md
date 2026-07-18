@@ -83,6 +83,12 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `playbook dry-run` | Preview compiled recovery plan |
 | `agent list` | List all registered agents |
 | `agent info` | Show agent details |
+| `bundle ingest` | Read-only AI diagnosis of an SRE evidence bundle (v1) |
+| `bundle respond` | Emit AdapterResponse v1 (ranked hypotheses, policy-gated actions) |
+| `bundle execute` | Translate a bundle into a RecoveryPlan (dry-run) |
+| `registry list` / `search` / `install` | Discover and install check plugins |
+| `mcp` | Start MCP server on stdio — 7 read-only diagnosis tools (`src/mcp/server.ts`); the MCP surface never mutates infrastructure |
+| `completions` | Generate bash/zsh/fish shell completions |
 
 ### Output Modes
 
@@ -100,7 +106,7 @@ Five progressive escalation levels surface in scan output and recovery proposals
 4. **Repair (safe)** — execute routine/elevated risk actions
 5. **Repair (destructive)** — execute high/critical risk actions
 
-Supporting modules: `detect.ts` (system detection), `autodiscovery.ts` (zero-config agent detection), `output.ts` (structured output formatting), `errors.ts` (error formatting), `escalation.ts` (five-level escalation model).
+Supporting modules: `detect.ts` (system detection), `autodiscovery.ts` (zero-config agent detection), `output.ts` (structured output formatting), `errors.ts` (error formatting), `status-presentation.ts` (single source for status → presentation mappings). The five-level escalation model lives in `src/framework/escalation.ts`.
 
 ## Agent Pattern
 
@@ -187,7 +193,8 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
 | `src/cli/index.ts` | Unified CLI entry point |
-| `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch) |
+| `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch, agent, playbook, bundle, registry, completions) |
+| `src/mcp/server.ts` | MCP server — 7 read-only diagnosis tools exposed via `crisismode mcp` |
 | `src/framework/escalation.ts` | Five-level progressive escalation model |
 | `src/agent/pg-replication/` | Reference agent implementation (PostgreSQL) |
 | `src/agent/redis/` | Redis memory pressure recovery agent |
@@ -205,6 +212,9 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/agent/tls/` | TLS certificate health and expiry agent |
 | `src/agent/disk/` | Local disk exhaustion detection agent |
 | `src/agent/backup/` | Backup verification and DR readiness agent |
+| `src/agent/aws-s3/` | AWS S3 backup configuration agent |
+| `src/agent/aws-dynamodb/` | AWS DynamoDB PITR verification agent |
+| `src/agent/aws-rds/` | AWS RDS backup and snapshot agent |
 | `src/config/builtin-agents.ts` | Built-in agent registration |
 | `src/config/agent-registry.ts` | Global agent registry |
 | `src/integrations/` | External integrations (GitHub, Sentry) |

@@ -174,7 +174,7 @@ CrisisMode supports three plugin types:
 
 ### Check Plugins
 
-Health checks, diagnosis scripts, and plan generators distributed as standalone executables or scripts. Discovered from `~/.crisismode/checks/`, `./checks/`, or `$CRISISMODE_CHECKS`. Multiple formats supported: shell scripts, compiled binaries, and Node.js scripts.
+Health checks, diagnosis scripts, and plan generators distributed as standalone executables or scripts. Discovered from `~/.crisismode/checks/`, `./checks/`, or `$CRISISMODE_CHECK_PATH` (colon-separated). Multiple formats supported: shell scripts, compiled binaries, and Node.js scripts.
 
 ### Agent Plugins
 

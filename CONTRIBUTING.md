@@ -24,15 +24,16 @@ Choose based on what you need and how much time you have:
 
 ### Prerequisites
 
-- Node.js 20+
-- pnpm 9+
+- Node.js >= 18
+- pnpm 10+ (the repo pins the exact version via `packageManager` in `package.json`)
 
 ### Quick start
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/trs-80/crisismode.git
 cd crisismode
 pnpm install
+pnpm run build        # Compile to dist/ (also builds the agent-sdk workspace)
 pnpm run typecheck    # Verify types
 pnpm test             # Run unit tests
 ```
@@ -63,7 +64,9 @@ See [GETTING_STARTED.md](GETTING_STARTED.md) for full setup instructions.
 
 Check plugins are standalone shell scripts. No TypeScript needed.
 
-1. Create a directory in `checks/` with a `manifest.json` and a `check.sh`
+1. Scaffold with `crisismode init --agent <name>` (creates the directory,
+   `manifest.json`, and a stub `check.sh`), or create a directory in `checks/`
+   by hand with a `manifest.json` and a `check.sh`
 2. Test with `crisismode scan`
 3. Submit a PR
 
@@ -120,6 +123,36 @@ See the [Your First Agent](docs/guides/your-first-agent.md) tutorial for a step-
 - Build the simulator first -- it enables testing without real infrastructure
 - Use the agent test harness (`src/framework/agent-test-harness.ts`) for standardized agent testing
 - Follow existing test patterns in `src/__tests__/`
+
+## Validation Beyond Unit Tests
+
+Two harnesses validate CrisisMode against realistic incidents. Changes to
+diagnosis, `bundle respond`, or agent behavior should be checked against them:
+
+### Diagnosis eval (14 incident families)
+
+Runs the [sre-incident-agent-skills](https://github.com/Dbochman/sre-incident-agent-skills)
+compatibility benchmark against the real CLI:
+
+```bash
+# Requires a sibling checkout (or set SRE_SKILLS_REPO to its path)
+# and ANTHROPIC_API_KEY for AI-powered runs
+pnpm run eval:diagnosis          # Full run, writes eval/reports/
+pnpm run eval:diagnosis:gate     # Fails below the 13/14 score gate
+```
+
+Re-run the gate after any change to `bundle respond`, diagnosis prompts, or
+agent routing. The eval families are defined by the external benchmark — to
+add one, contribute to that repo.
+
+### Torture harness (real degraded infrastructure)
+
+Disaster scenarios (inject a real failure, verify detection → diagnosis →
+recovery) live in the separate
+[crisismode-torture](https://github.com/trs-80/crisismode-torture) repo. To
+add a scenario, see "Writing a Scenario" in its README. Reports distinguish
+dry-run passes from execute-verified recoveries — a blocked execution is
+never counted as a recovery.
 
 ## PR Review Expectations
 
