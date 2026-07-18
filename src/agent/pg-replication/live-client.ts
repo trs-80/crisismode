@@ -13,6 +13,7 @@ import pg, { type Pool as PoolType } from 'pg';
 import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import type { TableStat, StatementStat } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
 const { Pool } = pg;
@@ -176,6 +177,50 @@ export class PgLiveClient implements PgBackend {
       };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Per-table scan stats from pg_stat_user_tables — feeds the readiness
+   * missing-index rule. Returns null on query failure rather than throwing.
+   */
+  async queryTableStats(): Promise<TableStat[] | null> {
+    try {
+      const result = await this.primaryPool.query<{
+        relname: string; n_live_tup: number; seq_scan: number; idx_scan: number | null;
+      }>(`
+        SELECT relname, n_live_tup::int, seq_scan::int, COALESCE(idx_scan, 0)::int AS idx_scan
+        FROM pg_stat_user_tables
+        ORDER BY n_live_tup DESC
+        LIMIT 50
+      `);
+      return result.rows.map((r) => ({
+        table: r.relname,
+        rowEstimate: r.n_live_tup,
+        seqScans: r.seq_scan,
+        idxScans: r.idx_scan ?? 0,
+      }));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Per-statement timing from pg_stat_statements — feeds the readiness
+   * slow-queries rule. Returns null when the extension is absent or the
+   * caller lacks privilege.
+   */
+  async queryStatementStats(): Promise<StatementStat[] | null> {
+    try {
+      const result = await this.primaryPool.query<{ query: string; calls: number; mean_ms: number }>(`
+        SELECT query, calls::int, mean_exec_time AS mean_ms
+        FROM pg_stat_statements
+        ORDER BY mean_exec_time DESC
+        LIMIT 20
+      `);
+      return result.rows.map((r) => ({ query: r.query, calls: r.calls, meanMs: r.mean_ms }));
+    } catch {
+      return null; // extension absent or no privilege — rule reports unknown
     }
   }
 

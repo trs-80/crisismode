@@ -2,6 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { ExecutionBackend } from '../../framework/backend.js';
+import type { TableStat, StatementStat } from '../../readiness/types.js';
 
 /**
  * PgBackend — the interface that both the simulator and the live client implement.
@@ -70,6 +71,18 @@ export interface PgBackend extends ExecutionBackend {
    * Returns null when the query fails (e.g. connection unavailable).
    */
   queryConnectionUsage(): Promise<ConnectionUsage | null>;
+
+  /**
+   * Per-table scan stats from pg_stat_user_tables (readiness: missing-index
+   * rule). Optional: test doubles may omit; null means unavailable.
+   */
+  queryTableStats?(): Promise<TableStat[] | null>;
+
+  /**
+   * Per-statement timing from pg_stat_statements (readiness: slow-queries
+   * rule). Null when the extension is not installed.
+   */
+  queryStatementStats?(): Promise<StatementStat[] | null>;
 
   /** Transition state (simulator) or no-op (live) */
   transition(to: string): void;
