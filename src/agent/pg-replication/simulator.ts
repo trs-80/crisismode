@@ -4,6 +4,7 @@
 import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage, IdleInTransactionSession } from './backend.js';
 import type { Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import type { TableStat, StatementStat } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
@@ -18,6 +19,8 @@ export class PgSimulator implements PgBackend {
   private replayPaused = false;
   private idleInTxSessions: IdleInTransactionSession[] = [];
   private otherActiveConnections = 4;
+  private tableStats: TableStat[] = [];
+  private statementStats: StatementStat[] | null = null;
 
   getState(): SimulatorState {
     return this.state;
@@ -55,6 +58,24 @@ export class PgSimulator implements PgBackend {
       applicationName: 'checkout-worker',
     }));
     this.otherActiveConnections = otherActiveConnections;
+  }
+
+  /** Configure the fixture rows returned by queryTableStats(). */
+  setTableStats(rows: TableStat[]): void {
+    this.tableStats = rows;
+  }
+
+  /** Configure the fixture rows returned by queryStatementStats(); null simulates the extension being absent. */
+  setStatementStats(rows: StatementStat[] | null): void {
+    this.statementStats = rows;
+  }
+
+  async queryTableStats(): Promise<TableStat[] | null> {
+    return this.tableStats;
+  }
+
+  async queryStatementStats(): Promise<StatementStat[] | null> {
+    return this.statementStats;
   }
 
   async queryConnectionUsage(): Promise<ConnectionUsage | null> {
