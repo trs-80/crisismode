@@ -36,6 +36,10 @@ describe('connectionHeadroomRule', () => {
     const f = await connectionHeadroomRule.evaluate(sources(usage({ total: 85 })), ctx);
     expect(f.status).toBe('blocking');
   });
+  it('blocking at exact 80% boundary (usage >= 0.8)', async () => {
+    const f = await connectionHeadroomRule.evaluate(sources(usage({ total: 80 })), ctx);
+    expect(f.status).toBe('blocking');
+  });
   it('unknown with reason when usage unavailable', async () => {
     const f = await connectionHeadroomRule.evaluate(sources(null), ctx);
     expect(f.status).toBe('unknown');
@@ -46,6 +50,10 @@ describe('connectionHeadroomRule', () => {
 describe('connectionLimitTierRule', () => {
   it('warns on small max_connections (free-tier shaped)', async () => {
     const f = await connectionLimitTierRule.evaluate(sources(usage({ max: 20 })), ctx);
+    expect(f.status).toBe('at_risk');
+  });
+  it('at_risk at exact 25 max_connections boundary (max_connections <= 25)', async () => {
+    const f = await connectionLimitTierRule.evaluate(sources(usage({ max: 25 })), ctx);
     expect(f.status).toBe('at_risk');
   });
   it('ready on generous max_connections', async () => {
@@ -60,6 +68,11 @@ describe('longTransactionsRule', () => {
       sources(usage({ idleInTransactionOldest: [{ pid: 1, ageSeconds: 300 }] })), ctx);
     expect(f.status).toBe('at_risk');
     expect(f.evidence.join(' ')).toContain('300');
+  });
+  it('at_risk at exact 60s boundary (ageSeconds >= 60)', async () => {
+    const f = await longTransactionsRule.evaluate(
+      sources(usage({ idleInTransactionOldest: [{ pid: 1, ageSeconds: 60 }] })), ctx);
+    expect(f.status).toBe('at_risk');
   });
   it('ready when none exceed the threshold', async () => {
     const f = await longTransactionsRule.evaluate(
