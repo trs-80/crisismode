@@ -91,19 +91,42 @@ export interface ExplanationContext {
 
 const DEFAULT_EXPLANATION_CONTEXT: ExplanationContext = { serverless: false };
 
+const SERVERLESS_POOLING_APPEND =
+  ' In a serverless deploy, each function invocation opens its own database connection — traffic spikes become connection spikes. Use a pooled connection string (or pgbouncer) for serverless functions.';
+
 /** Scaling attributions layered onto base explanations when context matches. */
 const ATTRIBUTIONS: Array<{ match: RegExp; when: (ctx: ExplanationContext) => boolean; append: string }> = [
   {
-    match: /^pg_connection|connection_pool|pool_exhaust/,
+    match: /^pg_connection/,
     when: (ctx) => ctx.serverless,
-    append:
-      ' In a serverless deploy, each function invocation opens its own database connection — traffic spikes become connection spikes. Use a pooled connection string (or pgbouncer) for serverless functions.',
+    append: SERVERLESS_POOLING_APPEND,
   },
   {
     match: /queue|consumer|lag_/,
     when: (ctx) => ctx.serverless,
     append:
       ' On serverless platforms, background work competes with request traffic for the same concurrency limits — a burst of requests can starve your workers and grow the backlog.',
+  },
+];
+
+/**
+ * Attributions keyed by finding kind (scenario) + environment context, not
+ * source string — needed when the diagnosing scenario disambiguates a source
+ * that multiple unrelated diagnoses share (e.g. `pg_stat_activity` is emitted
+ * by connection-pool-exhaustion, replay-paused, and db-migration diagnoses
+ * alike; only the first should carry pooling advice).
+ */
+const SCENARIO_ATTRIBUTIONS: Array<{
+  scenario: string;
+  match: RegExp;
+  when: (ctx: ExplanationContext) => boolean;
+  append: string;
+}> = [
+  {
+    scenario: 'connection_pool_exhaustion',
+    match: /^pg_stat_activity/,
+    when: (ctx) => ctx.serverless,
+    append: SERVERLESS_POOLING_APPEND,
   },
 ];
 
@@ -136,7 +159,13 @@ export function enrichDiagnosis(diagnosis: DiagnosisResult, ctx: ExplanationCont
     findings: diagnosis.findings.map((f) => {
       if (f.explanation || f.learnMoreUrl) return f;
       const e = explainSourceInContext(f.source, ctx);
-      return e ? { ...f, ...e } : f;
+      if (!e) return f;
+      const scenarioExtra = SCENARIO_ATTRIBUTIONS.filter(
+        (a) => a.scenario === diagnosis.scenario && a.match.test(f.source) && a.when(ctx),
+      )
+        .map((a) => a.append)
+        .join('');
+      return scenarioExtra ? { ...f, ...e, explanation: e.explanation + scenarioExtra } : { ...f, ...e };
     }),
   };
 }
