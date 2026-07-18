@@ -29,6 +29,26 @@ describe('missingIndexRule', () => {
     const f = await missingIndexRule.evaluate(sources(null, null), ctx);
     expect(f.status).toBe('unknown');
   });
+  it('boundary: flags at exactly rowEstimate >= 10_000', async () => {
+    const f = await missingIndexRule.evaluate(
+      sources([{ table: 't', rowEstimate: 10_000, seqScans: 9_999_999, idxScans: 0 }], null), ctx);
+    expect(f.status).toBe('at_risk');
+  });
+  it('boundary: ready just below rowEstimate >= 10_000', async () => {
+    const f = await missingIndexRule.evaluate(
+      sources([{ table: 't', rowEstimate: 9_999, seqScans: 9_999_999, idxScans: 0 }], null), ctx);
+    expect(f.status).toBe('ready');
+  });
+  it('boundary: ratio at exactly 10x (50 is NOT > 5*10)', async () => {
+    const f = await missingIndexRule.evaluate(
+      sources([{ table: 't', rowEstimate: 10_000, seqScans: 50, idxScans: 5 }], null), ctx);
+    expect(f.status).toBe('ready');
+  });
+  it('boundary: ratio exceeds 10x (51 > 5*10)', async () => {
+    const f = await missingIndexRule.evaluate(
+      sources([{ table: 't', rowEstimate: 10_000, seqScans: 51, idxScans: 5 }], null), ctx);
+    expect(f.status).toBe('at_risk');
+  });
 });
 
 describe('slowQueriesRule', () => {
@@ -45,6 +65,16 @@ describe('slowQueriesRule', () => {
   it('ready when all tracked queries are fast', async () => {
     const f = await slowQueriesRule.evaluate(
       sources(null, [{ query: 'SELECT 1', calls: 10_000, meanMs: 2 }]), ctx);
+    expect(f.status).toBe('ready');
+  });
+  it('boundary: flags at exactly meanMs >= 250', async () => {
+    const f = await slowQueriesRule.evaluate(
+      sources(null, [{ query: 'q', calls: 1, meanMs: 250 }]), ctx);
+    expect(f.status).toBe('at_risk');
+  });
+  it('boundary: ready just below meanMs >= 250', async () => {
+    const f = await slowQueriesRule.evaluate(
+      sources(null, [{ query: 'q', calls: 1, meanMs: 249 }]), ctx);
     expect(f.status).toBe('ready');
   });
 });
