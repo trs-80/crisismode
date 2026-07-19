@@ -128,15 +128,21 @@ function loadConfigFile(filePath: string): SiteConfig {
   }
 
   if (config.network !== undefined) {
-    validateNetwork(config.network as Record<string, unknown>);
+    validateNetwork(config.network);
   }
 
   return config as unknown as SiteConfig;
 }
 
-function validateNetwork(network: Record<string, unknown>): void {
-  if (network.egressMbps !== undefined) {
-    const egressMbps = network.egressMbps;
+function validateNetwork(network: unknown): void {
+  if (typeof network !== 'object' || network === null || Array.isArray(network)) {
+    throw new Error(
+      'config error: network must be a mapping (e.g. network:\n  egressMbps: 100)',
+    );
+  }
+
+  const { egressMbps } = network as Record<string, unknown>;
+  if (egressMbps !== undefined) {
     if (typeof egressMbps !== 'number' || !Number.isFinite(egressMbps) || egressMbps <= 0) {
       throw new Error(
         'network.egressMbps must be a finite number greater than 0.\n' +
