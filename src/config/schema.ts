@@ -123,6 +123,12 @@ export interface SiteConfig {
     mode: ExecutionMode;
   };
 
+  /** Declared infrastructure facts that cannot be probed (capacity ceilings). */
+  network?: {
+    /** Declared egress link speed in Mbps — used as a declared ceiling, never measured. */
+    egressMbps?: number;
+  } | undefined;
+
   targets: TargetConfig[];
 }
 
