@@ -220,8 +220,19 @@ export async function connectAndRunReadiness(
       return { ...buildReport(findings) };
     }
   } finally {
-    await client?.close();
-    await redisClient?.close();
+    // Each close is guarded independently: a rejected close must neither
+    // skip the other client's cleanup nor replace the returned report
+    // (a throw inside finally overrides the return value).
+    try {
+      await client?.close();
+    } catch {
+      // cleanup failure must not override the report
+    }
+    try {
+      await redisClient?.close();
+    } catch {
+      // cleanup failure must not override the report
+    }
   }
 }
 
