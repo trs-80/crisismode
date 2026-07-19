@@ -168,14 +168,21 @@ export async function connectAndRunReadiness(
 
     const redisTarget = options.redisTarget;
     if (redisTarget?.primary) {
-      const redisCredentials = resolveCredentials(redisTarget.credentials);
-      const redisConfig: RedisConnectionConfig = {
-        host: redisTarget.primary.host,
-        port: redisTarget.primary.port,
-        password: redisCredentials.password,
-        connectTimeoutMs: 2000,
-      };
-      redisClient = (options.createRedisClient ?? defaultRedisClientFactory)(redisConfig);
+      try {
+        const redisCredentials = resolveCredentials(redisTarget.credentials);
+        const redisConfig: RedisConnectionConfig = {
+          host: redisTarget.primary.host,
+          port: redisTarget.primary.port,
+          password: redisCredentials.password,
+          connectTimeoutMs: 2000,
+        };
+        redisClient = (options.createRedisClient ?? defaultRedisClientFactory)(redisConfig);
+      } catch {
+        // A throwing credential ref or client factory must not fail the whole
+        // report — proceed with no Redis client; the ceiling is simply omitted,
+        // same as a query-time failure.
+        redisClient = undefined;
+      }
     }
     const activeRedisClient = redisClient;
 
@@ -203,9 +210,15 @@ export async function connectAndRunReadiness(
     };
     const findings = await runRules(allRules, sources, ctx);
 
-    const { ceilings, omitted } = await computeCeilings(sources, ctx);
-    const weakLink = rankWeakLink({ ceilings, omitted });
-    return { ...buildReport(findings), ceilings, ceilingsOmitted: omitted, weakLink };
+    try {
+      const { ceilings, omitted } = await computeCeilings(sources, ctx);
+      const weakLink = rankWeakLink({ ceilings, omitted });
+      return { ...buildReport(findings), ceilings, ceilingsOmitted: omitted, weakLink };
+    } catch {
+      // Ceilings/weak-link are report CONTEXT, not the report itself — a bug
+      // computing them must never discard findings already gathered above.
+      return { ...buildReport(findings) };
+    }
   } finally {
     await client?.close();
     await redisClient?.close();
