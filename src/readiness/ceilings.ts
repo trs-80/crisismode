@@ -21,6 +21,7 @@ const BYTES_PER_MBPS = 125_000;
 /** Cited community range for a single Node.js instance on light handlers. */
 const NODE_TYPICAL_LOW_RPS = 1_000;
 const NODE_TYPICAL_HIGH_RPS = 5_000;
+/** package.json frameworks that imply a Node.js runtime for the app tier. */
 const NODE_FRAMEWORKS = new Set(['express', 'fastify', 'next', 'remix', 'nest']);
 
 export async function computeCeilings(
@@ -72,7 +73,7 @@ export async function computeCeilings(
       title: 'Redis memory',
       value: redis.maxmemoryBytes,
       unit: 'bytes',
-      evidenceClasses: ['declared'],
+      evidenceClasses: ['declared', 'measured'],
       evidence: [
         `maxmemory = ${redis.maxmemoryBytes} bytes (declared)`,
         `used_memory = ${redis.usedMemoryBytes} bytes (measured)`,
@@ -84,7 +85,7 @@ export async function computeCeilings(
       title: 'Redis client connections',
       value: redis.maxclients,
       unit: 'connections',
-      evidenceClasses: ['declared'],
+      evidenceClasses: ['declared', 'measured'],
       evidence: [
         `maxclients = ${redis.maxclients} (declared)`,
         `connected_clients = ${redis.connectedClients} (measured)`,
@@ -142,7 +143,7 @@ export async function computeCeilings(
       evidence: [
         `framework = ${fw}; typical single-instance Node.js HTTP throughput for light handlers (community benchmarks) — NOT a measurement of this system`,
       ],
-      caveat: 'Cited range only; CPU-bound handlers serialize on the event loop and land far lower.',
+      caveat: 'Cited community range — not an upper bound and not a measurement of this system; CPU-bound handlers serialize on the event loop and land far lower.',
     });
   }
 
