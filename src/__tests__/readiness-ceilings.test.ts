@@ -48,6 +48,13 @@ describe('computeCeilings', () => {
     expect(omitted.find((o) => o.id === 'db-throughput')?.reason).toContain('pg_stat_statements');
   });
 
+  it('db-throughput omitted with reason when meanMs is zero', async () => {
+    const { ceilings, omitted } = await computeCeilings(
+      sources({ statementAggregate: async () => ({ meanMs: 0, calls: 5 }) }), ctx());
+    expect(ceilings.some((x) => x.id === 'db-throughput')).toBe(false);
+    expect(omitted.find((o) => o.id === 'db-throughput')?.reason).toContain('pg_stat_statements');
+  });
+
   it('redis ceilings from limits probe', async () => {
     const { ceilings } = await computeCeilings(
       sources({ redisLimits: async () => ({ maxmemoryBytes: 1024, usedMemoryBytes: 512, maxclients: 10000, connectedClients: 5 }) }), ctx());
