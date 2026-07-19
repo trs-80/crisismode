@@ -65,6 +65,28 @@ function cantAssess(reason: string): ReadinessFinding {
 }
 
 /**
+ * Human-readable reason for a connect failure. node-postgres surfaces
+ * dual-stack localhost ECONNREFUSED as an AggregateError whose own message is
+ * empty — fall back to the aggregated errors' messages, then the error code,
+ * so the can't-assess finding's reason always carries the real connection
+ * error (the honesty contract's carrier for why coverage degraded).
+ */
+function connectFailureReason(err: unknown): string {
+  if (err instanceof Error) {
+    if (err.message) return err.message;
+    if (err instanceof AggregateError) {
+      const nested = err.errors
+        .map((e) => (e instanceof Error ? e.message : String(e)))
+        .filter((m) => m.length > 0);
+      if (nested.length > 0) return [...new Set(nested)].join('; ');
+    }
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === 'string' && code.length > 0) return code;
+  }
+  return String(err);
+}
+
+/**
  * Narrow surface `connectAndRunReadiness` needs from the pg client. PgLiveClient
  * satisfies this structurally; tests substitute a fake without having to fake its
  * private pool fields.
@@ -163,7 +185,7 @@ export async function connectAndRunReadiness(
       // a connection failure now rather than mid-rule.
       await activeClient.queryConnectionCount();
     } catch (err) {
-      return buildReport([cantAssess(err instanceof Error ? err.message : String(err))]);
+      return buildReport([cantAssess(connectFailureReason(err))]);
     }
 
     const redisTarget = options.redisTarget;
@@ -257,13 +279,36 @@ function queryFdLimit(): number | null {
   }
 }
 
+/**
+ * Pick the readiness pg/redis targets. Explicit crisismode.yaml targets win
+ * over discovered env-hint targets — the config is deliberate user intent,
+ * matching how scan/diagnose treat it (and matching the can't-assess
+ * message's advice to "configure crisismode.yaml").
+ *
+ * Only a `source: 'file'` config participates: with no config file,
+ * loadConfigWithDetection synthesizes a legacy localhost/crisismode target
+ * (`buildLegacyConfig`) — a fallback default, not user intent, and letting it
+ * shadow a DATABASE_URL-derived target would point readiness at the wrong
+ * database with the wrong credentials.
+ */
+export function resolveReadinessTargets(
+  loaded: { config: { targets?: TargetConfig[] | undefined } | null; source: 'file' | 'env-fallback' | 'none' },
+  derivedTargets: TargetConfig[],
+): { pgTarget: TargetConfig | undefined; redisTarget: TargetConfig | undefined } {
+  const configTargets = loaded.source === 'file' ? loaded.config?.targets : undefined;
+  const pick = (kind: string): TargetConfig | undefined =>
+    configTargets?.find((t) => t.kind === kind) ?? derivedTargets.find((t) => t.kind === kind);
+  return { pgTarget: pick('postgresql'), redisTarget: pick('redis') };
+}
+
 export async function runReadiness(): Promise<ReadinessReport> {
   const stack = await discoverStack();
   const serverless =
     stack.platform.platform === 'vercel' || stack.vercelProject !== undefined;
 
-  const pgTarget = stack.derivedTargets.find((t) => t.kind === 'postgresql');
-  const redisTarget = stack.derivedTargets.find((t) => t.kind === 'redis');
+  const loaded = loadConfigWithDetection();
+  const { config } = loaded;
+  const { pgTarget, redisTarget } = resolveReadinessTargets(loaded, stack.derivedTargets);
   const ctx: ReadinessContext = {
     stack,
     serverless,
@@ -276,7 +321,6 @@ export async function runReadiness(): Promise<ReadinessReport> {
     return buildReport([cantAssess('no PostgreSQL target found (set DATABASE_URL or configure crisismode.yaml)')]);
   }
 
-  const { config } = loadConfigWithDetection();
   const egressMbps = config?.network?.egressMbps ?? null;
 
   return connectAndRunReadiness(pgTarget, ctx, undefined, { redisTarget, egressMbps });
