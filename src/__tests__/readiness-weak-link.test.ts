@@ -43,4 +43,28 @@ describe('rankWeakLink', () => {
     const v = rankWeakLink(result([ceiling({ id: 'db-throughput', value: 300, unit: 'queries/s' })]));
     expect(v.note).toContain('next');
   });
+
+  it('multi-ceiling min-selection: weakest link binds across all assumptions', () => {
+    const v = rankWeakLink(result([
+      ceiling({ id: 'db-throughput', value: 2000, unit: 'queries/s', evidenceClasses: ['declared'] }),
+      ceiling({ id: 'api-throughput', value: 500, unit: 'queries/s', evidenceClasses: ['measured'] }),
+    ]));
+    expect(v.binding).toBe('api-throughput');
+    expect(v.conditional).toEqual([
+      { queriesPerRequest: 1, bindingCeilingId: 'api-throughput', requestsPerSec: 500 },
+      { queriesPerRequest: 3, bindingCeilingId: 'api-throughput', requestsPerSec: 167 },
+      { queriesPerRequest: 10, bindingCeilingId: 'api-throughput', requestsPerSec: 50 },
+    ]);
+    expect(v.conditional.every((c) => c.bindingCeilingId === 'api-throughput')).toBe(true);
+  });
+
+  it('typical-class is excluded even when smaller than non-typical', () => {
+    const v = rankWeakLink(result([
+      ceiling({ id: 'typical-ceiling', value: 100, unit: 'queries/s', evidenceClasses: ['typical'] }),
+      ceiling({ id: 'db-throughput', value: 2000, unit: 'queries/s', evidenceClasses: ['declared'] }),
+    ]));
+    expect(v.binding).toBe('db-throughput');
+    expect(v.conditional.every((c) => c.bindingCeilingId !== 'typical-ceiling')).toBe(true);
+    expect(v.conditional.every((c) => c.bindingCeilingId === 'db-throughput')).toBe(true);
+  });
 });
