@@ -196,7 +196,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/cli/index.ts` | Unified CLI entry point |
 | `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch, readiness, agent, playbook, bundle, registry, completions) |
 | `src/mcp/server.ts` | MCP server — 8 read-only diagnosis tools exposed via `crisismode mcp` |
-| `src/readiness/` | Scale-readiness rule registry (readiness command + MCP tool) |
+| `src/readiness/` | Scale-readiness rule registry + capacity ceilings/weak-link (readiness command + MCP tool) |
 | `src/framework/escalation.ts` | Five-level progressive escalation model |
 | `src/agent/pg-replication/` | Reference agent implementation (PostgreSQL) |
 | `src/agent/redis/` | Redis memory pressure recovery agent |
