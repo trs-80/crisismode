@@ -13,7 +13,7 @@ import pg, { type Pool as PoolType } from 'pg';
 import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
-import type { TableStat, StatementStat } from '../../readiness/types.js';
+import type { TableStat, StatementStat, StatementAggregate } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
 const { Pool } = pg;
@@ -221,6 +221,21 @@ export class PgLiveClient implements PgBackend {
       return result.rows.map((r) => ({ query: r.query, calls: r.calls, meanMs: r.mean_ms }));
     } catch {
       return null; // extension absent or no privilege — rule reports unknown
+    }
+  }
+
+  async queryStatementAggregate(): Promise<StatementAggregate | null> {
+    try {
+      const result = await this.primaryPool.query<{ mean_ms: number | null; calls: number | null }>(`
+        SELECT sum(total_exec_time) / NULLIF(sum(calls), 0) AS mean_ms,
+               sum(calls)::float8 AS calls
+        FROM pg_stat_statements
+      `);
+      const row = result.rows[0];
+      if (!row || row.mean_ms === null || row.calls === null) return null;
+      return { meanMs: row.mean_ms, calls: row.calls };
+    } catch {
+      return null; // extension absent or no privilege — ceiling reports omitted
     }
   }
 

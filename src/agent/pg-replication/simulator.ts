@@ -4,7 +4,7 @@
 import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage, IdleInTransactionSession } from './backend.js';
 import type { Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
-import type { TableStat, StatementStat } from '../../readiness/types.js';
+import type { TableStat, StatementStat, StatementAggregate } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
@@ -21,6 +21,7 @@ export class PgSimulator implements PgBackend {
   private otherActiveConnections = 4;
   private tableStats: TableStat[] = [];
   private statementStats: StatementStat[] | null = null;
+  private statementAggregate: StatementAggregate | null = null;
 
   getState(): SimulatorState {
     return this.state;
@@ -70,6 +71,8 @@ export class PgSimulator implements PgBackend {
     this.statementStats = rows;
   }
 
+  setStatementAggregate(agg: StatementAggregate | null): void { this.statementAggregate = agg; }
+
   async queryTableStats(): Promise<TableStat[] | null> {
     return this.tableStats;
   }
@@ -77,6 +80,8 @@ export class PgSimulator implements PgBackend {
   async queryStatementStats(): Promise<StatementStat[] | null> {
     return this.statementStats;
   }
+
+  async queryStatementAggregate(): Promise<StatementAggregate | null> { return this.statementAggregate; }
 
   async queryConnectionUsage(): Promise<ConnectionUsage | null> {
     const idleCount = this.idleInTxSessions.length;
