@@ -189,7 +189,7 @@ export class PgLiveClient implements PgBackend {
       const result = await this.primaryPool.query<{
         relname: string; n_live_tup: number; seq_scan: number; idx_scan: number | null;
       }>(`
-        SELECT relname, n_live_tup::int, seq_scan::int, COALESCE(idx_scan, 0)::int AS idx_scan
+        SELECT relname, n_live_tup::float8, seq_scan::float8, COALESCE(idx_scan, 0)::float8 AS idx_scan
         FROM pg_stat_user_tables
         ORDER BY n_live_tup DESC
         LIMIT 50
@@ -213,7 +213,7 @@ export class PgLiveClient implements PgBackend {
   async queryStatementStats(): Promise<StatementStat[] | null> {
     try {
       const result = await this.primaryPool.query<{ query: string; calls: number; mean_ms: number }>(`
-        SELECT query, calls::int, mean_exec_time AS mean_ms
+        SELECT query, calls::float8, mean_exec_time AS mean_ms
         FROM pg_stat_statements
         ORDER BY mean_exec_time DESC
         LIMIT 20
