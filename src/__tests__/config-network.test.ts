@@ -66,4 +66,19 @@ describe('network config block', () => {
     const filePath = writeYamlConfig(tmpDir, { ...validConfig, network: { egressMbps: 'fast' } });
     expect(() => loadConfig({ configPath: filePath })).toThrow(/network\.egressMbps/);
   });
+
+  it('rejects a null network block (key present, no value)', () => {
+    const filePath = writeYamlConfig(tmpDir, { ...validConfig, network: null });
+    expect(() => loadConfig({ configPath: filePath })).toThrow(/network/);
+  });
+
+  it('rejects a non-mapping network value', () => {
+    const filePath = writeYamlConfig(tmpDir, { ...validConfig, network: 5 });
+    expect(() => loadConfig({ configPath: filePath })).toThrow(/network/);
+  });
+
+  it('rejects egressMbps: 0 (boundary)', () => {
+    const filePath = writeYamlConfig(tmpDir, { ...validConfig, network: { egressMbps: 0 } });
+    expect(() => loadConfig({ configPath: filePath })).toThrow(/network\.egressMbps/);
+  });
 });
