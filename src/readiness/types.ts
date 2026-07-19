@@ -44,11 +44,58 @@ export interface StatementStat {
   meanMs: number;
 }
 
+export type EvidenceClass = 'declared' | 'measured' | 'typical';
+
+/** Aggregate over ALL of pg_stat_statements — the true mean, not the top-N-slowest mean. */
+export interface StatementAggregate {
+  meanMs: number;
+  calls: number;
+}
+
+export interface RedisLimits {
+  maxmemoryBytes: number;
+  usedMemoryBytes: number;
+  maxclients: number;
+  connectedClients: number;
+}
+
+/**
+ * An honest upper bound on one stack component. `value` is "at most" in
+ * `unit`; typical-range ceilings carry rangeLow/rangeHigh instead of value.
+ */
+export interface CapacityCeiling {
+  id: string;
+  title: string;
+  value: number | null;
+  unit: string;
+  rangeLow?: number | undefined;
+  rangeHigh?: number | undefined;
+  evidenceClasses: EvidenceClass[];
+  /** One line per input, each naming its class: "max_connections = 100 (declared)" */
+  evidence: string[];
+  caveat: string;
+}
+
+export interface OmittedCeiling {
+  id: string;
+  reason: string;
+}
+
+export interface CeilingsResult {
+  ceilings: CapacityCeiling[];
+  omitted: OmittedCeiling[];
+}
+
 /** Narrow data-access surface rules are allowed to use. */
 export interface ReadinessSources {
   connectionUsage(): Promise<ConnectionUsage | null>;
   tableStats(): Promise<TableStat[] | null>;
   statementStats(): Promise<StatementStat[] | null>;
+  /** Optional ceiling probes — absent member ⇒ that ceiling is omitted with a reason. */
+  statementAggregate?(): Promise<StatementAggregate | null>;
+  redisLimits?(): Promise<RedisLimits | null>;
+  fdLimit?(): Promise<number | null>;
+  declaredEgressMbps?(): Promise<number | null>;
 }
 
 export interface ReadinessContext {
