@@ -378,7 +378,7 @@ export function createMcpServer(): McpServer {
     {
       title: 'Scale-readiness report',
       description:
-        'Forward-looking scale-readiness check for the detected stack (serverless + PostgreSQL): connection headroom, pooling, indexes, slow queries. Returns a scored report with plain-English findings and fixes. Read-only.',
+        'Forward-looking scale-readiness check for the detected stack (serverless + PostgreSQL): connection headroom, pooling, indexes, slow queries. Returns a scored report with plain-English findings and fixes, plus capacity ceilings (labeled upper bounds) and a conditional weak-link verdict. Read-only.',
       inputSchema: {},
       annotations: { readOnlyHint: true },
     },

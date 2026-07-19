@@ -62,6 +62,21 @@ describe('computeCeilings', () => {
     expect(ceilings.find((x) => x.id === 'redis-clients')?.value).toBe(10000);
   });
 
+  it('redis maxmemory=0 (unlimited) omits redis-memory ceiling but keeps redis-clients', async () => {
+    const { ceilings, omitted } = await computeCeilings(
+      sources({ redisLimits: async () => ({ maxmemoryBytes: 0, usedMemoryBytes: 512, maxclients: 10000, connectedClients: 5 }) }), ctx());
+    expect(ceilings.some((x) => x.id === 'redis-memory')).toBe(false);
+    expect(omitted.find((o) => o.id === 'redis-memory')?.reason).toContain('unlimited');
+    expect(ceilings.find((x) => x.id === 'redis-clients')?.value).toBe(10000);
+  });
+
+  it('redis maxmemory=1 (just above zero) reports the redis-memory ceiling', async () => {
+    const { ceilings, omitted } = await computeCeilings(
+      sources({ redisLimits: async () => ({ maxmemoryBytes: 1, usedMemoryBytes: 0, maxclients: 10000, connectedClients: 5 }) }), ctx());
+    expect(ceilings.find((x) => x.id === 'redis-memory')?.value).toBe(1);
+    expect(omitted.some((o) => o.id === 'redis-memory')).toBe(false);
+  });
+
   it('fd-limit reported for non-serverless, suppressed for serverless', async () => {
     const withFd = sources({ fdLimit: async () => 1024 });
     const local = await computeCeilings(withFd, ctx({ serverless: false }));

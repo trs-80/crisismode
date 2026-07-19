@@ -68,18 +68,25 @@ export async function computeCeilings(
 
   const redis = (await sources.redisLimits?.()) ?? null;
   if (redis) {
-    ceilings.push({
-      id: 'redis-memory',
-      title: 'Redis memory',
-      value: redis.maxmemoryBytes,
-      unit: 'bytes',
-      evidenceClasses: ['declared', 'measured'],
-      evidence: [
-        `maxmemory = ${redis.maxmemoryBytes} bytes (declared)`,
-        `used_memory = ${redis.usedMemoryBytes} bytes (measured)`,
-      ],
-      caveat: AT_MOST_CAVEAT,
-    });
+    if (redis.maxmemoryBytes > 0) {
+      ceilings.push({
+        id: 'redis-memory',
+        title: 'Redis memory',
+        value: redis.maxmemoryBytes,
+        unit: 'bytes',
+        evidenceClasses: ['declared', 'measured'],
+        evidence: [
+          `maxmemory = ${redis.maxmemoryBytes} bytes (declared)`,
+          `used_memory = ${redis.usedMemoryBytes} bytes (measured)`,
+        ],
+        caveat: AT_MOST_CAVEAT,
+      });
+    } else {
+      omitted.push({
+        id: 'redis-memory',
+        reason: 'maxmemory = 0 (unlimited) — bounded by host memory, not a declared limit',
+      });
+    }
     ceilings.push({
       id: 'redis-clients',
       title: 'Redis client connections',
