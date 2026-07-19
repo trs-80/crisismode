@@ -29,6 +29,32 @@ export function renderReadinessReport(report: ReadinessReport): string[] {
       lines.push(`    Learn more: ${f.learnMoreUrl}`);
     }
   }
+  if (report.ceilings) {
+    lines.push('');
+    lines.push('Capacity ceilings (upper bounds — real capacity is lower):');
+    for (const c of report.ceilings) {
+      const label = `[${c.evidenceClasses.join('×')}: ${c.evidence.join('; ')}]`;
+      if (c.value !== null) {
+        lines.push(`  ${c.title}: at most ${c.value} ${c.unit} ${label}`);
+      } else {
+        lines.push(`  ${c.title}: typically ${c.rangeLow}–${c.rangeHigh} ${c.unit} (cited range, not a measurement) ${label}`);
+      }
+    }
+    for (const o of report.ceilingsOmitted ?? []) {
+      lines.push(`  Could not assess: ${o.id} — ${o.reason}`);
+    }
+    const wl = report.weakLink;
+    if (wl) {
+      if (wl.conditional.length > 0) {
+        const parts = wl.conditional.map((c) => `${c.queriesPerRequest} → ~${c.requestsPerSec} req/s (${c.bindingCeilingId})`);
+        const prefix = wl.binding === null ? 'varies by assumption: ' : '';
+        lines.push(`Weak link (conditional — fan-out assumed, not measured): ${prefix}queries/request ${parts.join('; ')}`);
+        lines.push(`  ${wl.note}`);
+      } else {
+        lines.push(`Weak link: ${wl.note}`);
+      }
+    }
+  }
   return lines;
 }
 
