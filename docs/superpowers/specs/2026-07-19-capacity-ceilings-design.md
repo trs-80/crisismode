@@ -62,7 +62,7 @@ contract as the readiness rules.
 | Redis memory | declared | `CONFIG GET maxmemory` + current usage | bytes, % used |
 | Redis clients | declared | `CONFIG GET maxclients` | connections |
 | File descriptors | declared | local `ulimit -n`; reported only when the app runs on this host (suppressed for serverless platforms, where it is not the app's limit) | sockets |
-| Network egress | declared×measured | declared link/instance baseline (config/user-supplied) ÷ measured mean response bytes | responses/s |
+| Network egress | declared | `network.egressMbps` (declared in crisismode.yaml) × 125,000 | bytes/s |
 | Node single-instance | typical | cited range only, shown when Node app detected | req/s range |
 
 Network link speed is included **only** when declared (crisismode.yaml field
@@ -85,10 +85,11 @@ measured from the operator's machine, which says nothing about prod egress.
 
 Extends `src/readiness/` — no new module:
 
-- `src/readiness/ceilings.ts` — `CapacityCeiling { id, value, unit,
-  evidenceClass: 'declared' | 'measured' | 'typical', source, littleInputs? }`
-  and `computeCeilings(sources, ctx): Promise<CapacityCeiling[]>`
-- `src/readiness/weak-link.ts` — pure `rankWeakLink(ceilings, fanouts):
+- `src/readiness/ceilings.ts` — `CapacityCeiling { id, title, value, unit,
+  rangeLow?, rangeHigh?, evidenceClasses: EvidenceClass[], evidence, caveat }`
+  and `computeCeilings(sources, ctx): Promise<CeilingsResult>` (ceilings +
+  omitted-with-reason entries)
+- `src/readiness/weak-link.ts` — pure `rankWeakLink(result: CeilingsResult):
   WeakLinkVerdict` (conditional table when fan-outs unmeasured)
 - `ReadinessSources` gains the extra probes (redis config, ulimit, declared
   network) following the existing optional-method + null-on-unavailable

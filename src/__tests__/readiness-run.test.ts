@@ -179,4 +179,21 @@ describe('connectAndRunReadiness', () => {
     expect(report.ceilingsOmitted).toBeUndefined();
     expect(report.weakLink).toBeUndefined();
   });
+
+  it('a rejecting pg close neither loses the report nor skips redis cleanup', async () => {
+    const redisClose = vi.fn(async () => {});
+    const pgClient = {
+      ...okFakePgClient(),
+      close: async () => { throw new Error('close failed'); },
+    };
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => pgClient, {
+      createRedisClient: () => ({
+        queryServerLimits: async () => null,
+        close: redisClose,
+      }),
+      redisTarget: REDIS_TARGET,
+    });
+    expect(report.verdict).toBeDefined();
+    expect(redisClose).toHaveBeenCalledTimes(1);
+  });
 });
