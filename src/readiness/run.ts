@@ -11,14 +11,18 @@
 
 import { discoverStack } from '../cli/autodiscovery.js';
 import { resolveCredentials } from '../config/credentials.js';
+import { loadConfigWithDetection } from '../config/loader.js';
 import { PgLiveClient, type PgConnectionConfig } from '../agent/pg-replication/live-client.js';
+import { RedisLiveClient, type RedisConnectionConfig } from '../agent/redis/live-client.js';
 import type { ConnectionUsage } from '../agent/pg-replication/backend.js';
 import type { TargetConfig } from '../config/schema.js';
 import { buildReport } from './report.js';
+import { computeCeilings } from './ceilings.js';
+import { rankWeakLink } from './weak-link.js';
 import { allRules } from './rules/index.js';
 import type {
   ReadinessContext, ReadinessFinding, ReadinessReport, ReadinessRule, ReadinessSources,
-  TableStat, StatementStat,
+  TableStat, StatementStat, StatementAggregate, RedisLimits,
 } from './types.js';
 
 export async function runRules(
@@ -70,12 +74,38 @@ interface ReadinessPgClient {
   queryConnectionUsage(): Promise<ConnectionUsage | null>;
   queryTableStats(): Promise<TableStat[] | null>;
   queryStatementStats(): Promise<StatementStat[] | null>;
+  queryStatementAggregate(): Promise<StatementAggregate | null>;
   close(): Promise<void>;
 }
 
 type PgClientFactory = (primary: PgConnectionConfig, replica?: PgConnectionConfig) => ReadinessPgClient;
 
 const defaultClientFactory: PgClientFactory = (primary, replica) => new PgLiveClient(primary, replica);
+
+/**
+ * Narrow surface for the optional Redis ceiling probe. `RedisLiveClient`
+ * satisfies this structurally. Unlike the pg client, connecting is lazy:
+ * ioredis's `lazyConnect` defers the TCP handshake until the first command,
+ * which `queryServerLimits()` issues — so no connection is attempted unless
+ * a rule/ceiling actually calls `sources.redisLimits()`.
+ */
+interface ReadinessRedisClient {
+  queryServerLimits(): Promise<RedisLimits | null>;
+  close(): Promise<void>;
+}
+
+type RedisClientFactory = (config: RedisConnectionConfig) => ReadinessRedisClient;
+
+const defaultRedisClientFactory: RedisClientFactory = (config) => new RedisLiveClient(config);
+
+export interface ConnectAndRunReadinessOptions {
+  /** Derived target for the optional Redis ceiling probe; absent ⇒ ceiling omitted. */
+  redisTarget?: TargetConfig | undefined;
+  /** Injectable Redis client factory; defaults to the real RedisLiveClient. */
+  createRedisClient?: RedisClientFactory | undefined;
+  /** Declared egress link speed (crisismode.yaml `network.egressMbps`), loaded by the caller. */
+  egressMbps?: number | null | undefined;
+}
 
 /**
  * Builds the pg connection config for `pgTarget` — mirrors
@@ -95,6 +125,7 @@ export async function connectAndRunReadiness(
   pgTarget: TargetConfig,
   ctx: ReadinessContext,
   createClient: PgClientFactory = defaultClientFactory,
+  options: ConnectAndRunReadinessOptions = {},
 ): Promise<ReadinessReport> {
   const primary = pgTarget.primary;
   if (!primary) {
@@ -121,6 +152,7 @@ export async function connectAndRunReadiness(
     : undefined;
 
   let client: ReadinessPgClient | undefined;
+  let redisClient: ReadinessRedisClient | undefined;
   try {
     const activeClient = createClient(primaryConfig, replicaConfig);
     client = activeClient;
@@ -134,15 +166,66 @@ export async function connectAndRunReadiness(
       return buildReport([cantAssess(err instanceof Error ? err.message : String(err))]);
     }
 
+    const redisTarget = options.redisTarget;
+    if (redisTarget?.primary) {
+      const redisCredentials = resolveCredentials(redisTarget.credentials);
+      const redisConfig: RedisConnectionConfig = {
+        host: redisTarget.primary.host,
+        port: redisTarget.primary.port,
+        password: redisCredentials.password,
+        connectTimeoutMs: 2000,
+      };
+      redisClient = (options.createRedisClient ?? defaultRedisClientFactory)(redisConfig);
+    }
+    const activeRedisClient = redisClient;
+
     const sources: ReadinessSources = {
       connectionUsage: () => activeClient.queryConnectionUsage(),
       tableStats: () => activeClient.queryTableStats(),
       statementStats: () => activeClient.queryStatementStats(),
+      statementAggregate: () => activeClient.queryStatementAggregate(),
+      fdLimit: async () => queryFdLimit(),
+      declaredEgressMbps: async () => options.egressMbps ?? null,
+      // exactOptionalPropertyTypes forbids assigning `undefined` to an optional
+      // method member — omit the key entirely when there's no Redis target.
+      ...(activeRedisClient
+        ? {
+            redisLimits: async () => {
+              try {
+                return await activeRedisClient.queryServerLimits();
+              } catch {
+                // A Redis probe failure omits the ceiling — it must never fail the report.
+                return null;
+              }
+            },
+          }
+        : {}),
     };
     const findings = await runRules(allRules, sources, ctx);
-    return buildReport(findings);
+
+    const { ceilings, omitted } = await computeCeilings(sources, ctx);
+    const weakLink = rankWeakLink({ ceilings, omitted });
+    return { ...buildReport(findings), ceilings, ceilingsOmitted: omitted, weakLink };
   } finally {
     await client?.close();
+    await redisClient?.close();
+  }
+}
+
+/**
+ * Soft open-file descriptor limit for this machine (declared, not measured).
+ * `process.report` is Node-internal and its shape is not exhaustively typed;
+ * any surprise (missing report, non-numeric/'unlimited' soft limit) must
+ * fall back to null rather than throw or fabricate a number.
+ */
+function queryFdLimit(): number | null {
+  try {
+    const soft = (
+      process.report?.getReport() as { userLimits?: { open_files?: { soft?: number | string } } }
+    )?.userLimits?.open_files?.soft;
+    return typeof soft === 'number' ? soft : null;
+  } catch {
+    return null;
   }
 }
 
@@ -152,6 +235,7 @@ export async function runReadiness(): Promise<ReadinessReport> {
     stack.platform.platform === 'vercel' || stack.vercelProject !== undefined;
 
   const pgTarget = stack.derivedTargets.find((t) => t.kind === 'postgresql');
+  const redisTarget = stack.derivedTargets.find((t) => t.kind === 'redis');
   const ctx: ReadinessContext = {
     stack,
     serverless,
@@ -164,5 +248,8 @@ export async function runReadiness(): Promise<ReadinessReport> {
     return buildReport([cantAssess('no PostgreSQL target found (set DATABASE_URL or configure crisismode.yaml)')]);
   }
 
-  return connectAndRunReadiness(pgTarget, ctx);
+  const { config } = loadConfigWithDetection();
+  const egressMbps = config?.network?.egressMbps ?? null;
+
+  return connectAndRunReadiness(pgTarget, ctx, undefined, { redisTarget, egressMbps });
 }

@@ -2,16 +2,44 @@
 // Copyright 2026 CrisisMode Contributors
 import { describe, it, expect, vi } from 'vitest';
 import { runRules, connectAndRunReadiness } from '../readiness/run.js';
+import { buildReport } from '../readiness/report.js';
 import { allRules } from '../readiness/rules/index.js';
 import type { ReadinessRule, ReadinessSources, ReadinessContext } from '../readiness/types.js';
 import type { TargetConfig } from '../config/schema.js';
 
-const ctx = { serverless: false, target: { host: 'db', port: 5432 } } as ReadinessContext;
+const ctx = {
+  serverless: false,
+  target: { host: 'db', port: 5432 },
+  stack: { appStack: { framework: null } },
+} as ReadinessContext;
 const sources: ReadinessSources = {
   connectionUsage: async () => ({ max: 100, total: 10, byState: {}, idleInTransactionOldest: [] }),
   tableStats: async () => [],
   statementStats: async () => null,
 };
+
+const PG_TARGET: TargetConfig = {
+  name: 'reachable',
+  kind: 'postgresql',
+  primary: { host: 'db', port: 5432 },
+};
+
+const REDIS_TARGET: TargetConfig = {
+  name: 'redis',
+  kind: 'redis',
+  primary: { host: 'redis-host', port: 6379 },
+};
+
+function okFakePgClient() {
+  return {
+    queryConnectionCount: async () => 1,
+    queryConnectionUsage: async () => ({ max: 100, total: 10, byState: {}, idleInTransactionOldest: [] }),
+    queryTableStats: async () => [],
+    queryStatementStats: async () => null,
+    queryStatementAggregate: async () => null,
+    close: async () => {},
+  };
+}
 
 describe('runRules', () => {
   it('skips rules whose applicable() is false', async () => {
@@ -53,6 +81,7 @@ describe('connectAndRunReadiness', () => {
       queryConnectionUsage: async () => null,
       queryTableStats: async () => null,
       queryStatementStats: async () => null,
+      queryStatementAggregate: async () => null,
       close: closeSpy,
     }));
 
@@ -63,20 +92,44 @@ describe('connectAndRunReadiness', () => {
 
   it('closes the pg client after a successful run', async () => {
     const closeSpy = vi.fn(async () => {});
-    const target: TargetConfig = {
-      name: 'reachable',
-      kind: 'postgresql',
-      primary: { host: 'db', port: 5432 },
-    };
 
-    await connectAndRunReadiness(target, ctx, () => ({
+    await connectAndRunReadiness(PG_TARGET, ctx, () => ({
       queryConnectionCount: async () => 1,
       queryConnectionUsage: async () => ({ max: 100, total: 10, byState: {}, idleInTransactionOldest: [] }),
       queryTableStats: async () => [],
       queryStatementStats: async () => null,
+      queryStatementAggregate: async () => null,
       close: closeSpy,
     }));
 
     expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('report carries ceilings and weakLink without affecting score', async () => {
+    const closeSpy = vi.fn(async () => {});
+    const fake = {
+      queryConnectionCount: async () => 1,
+      queryConnectionUsage: async () => ({ max: 100, total: 10, byState: {}, idleInTransactionOldest: [] }),
+      queryTableStats: async () => null,
+      queryStatementStats: async () => null,
+      queryStatementAggregate: async () => ({ meanMs: 50, calls: 1000 }),
+      close: closeSpy,
+    };
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => fake);
+    expect(report.ceilings?.find((c) => c.id === 'db-throughput')?.value).toBe(2000);
+    expect(report.weakLink?.binding).toBe('db-throughput');
+    expect(report.score).toBe(buildReport(report.findings).score); // ceilings never move the score
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('redis probe failure omits the ceiling without failing the report', async () => {
+    const redisClose = vi.fn(async () => {});
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => okFakePgClient(), {
+      createRedisClient: () => ({ queryServerLimits: async () => { throw new Error('conn refused'); }, close: redisClose }),
+      redisTarget: REDIS_TARGET,
+    });
+    expect(report.verdict).not.toBe(undefined);
+    expect(report.ceilingsOmitted?.some((o) => o.id === 'redis-limits')).toBe(true);
+    expect(redisClose).toHaveBeenCalledTimes(1);
   });
 });
