@@ -127,7 +127,23 @@ function loadConfigFile(filePath: string): SiteConfig {
     validateTarget(target);
   }
 
+  if (config.network !== undefined) {
+    validateNetwork(config.network as Record<string, unknown>);
+  }
+
   return config as unknown as SiteConfig;
+}
+
+function validateNetwork(network: Record<string, unknown>): void {
+  if (network.egressMbps !== undefined) {
+    const egressMbps = network.egressMbps;
+    if (typeof egressMbps !== 'number' || !Number.isFinite(egressMbps) || egressMbps <= 0) {
+      throw new Error(
+        'network.egressMbps must be a finite number greater than 0.\n' +
+        '  Example: network: { egressMbps: 100 }',
+      );
+    }
+  }
 }
 
 function validateTarget(target: Record<string, unknown>): void {

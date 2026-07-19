@@ -36,6 +36,10 @@ webhook:
 execution:
   mode: dry-run  # dry-run | execute
 
+# Declared infrastructure facts that cannot be probed (capacity ceilings).
+# network:
+#   egressMbps: 100  # declared egress link speed — a ceiling, never measured
+
 # Infrastructure targets
 targets:
   - name: main-postgres
