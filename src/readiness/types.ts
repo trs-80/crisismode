@@ -9,6 +9,7 @@
 
 import type { ConnectionUsage } from '../agent/pg-replication/backend.js';
 import type { StackProfile } from '../cli/autodiscovery.js';
+import type { WeakLinkVerdict } from './weak-link.js';
 
 export type ReadinessStatus = 'ready' | 'at_risk' | 'blocking' | 'unknown';
 
@@ -119,4 +120,8 @@ export interface ReadinessReport {
   evaluated: number;
   unknown: number;
   findings: ReadinessFinding[];
+  /** Capacity ceilings — report CONTEXT only; never affects score or verdict. */
+  ceilings?: CapacityCeiling[] | undefined;
+  ceilingsOmitted?: OmittedCeiling[] | undefined;
+  weakLink?: WeakLinkVerdict | undefined;
 }
