@@ -61,8 +61,7 @@ contract as the readiness rules.
 | DB throughput | declared×measured | Little: binding connections ÷ mean query ms | queries/s |
 | Redis memory | declared | `CONFIG GET maxmemory` + current usage | bytes, % used |
 | Redis clients | declared | `CONFIG GET maxclients` | connections |
-| Kafka consumer parallelism | declared | partition count vs consumer count | consumers |
-| File descriptors | declared | `ulimit -n` on the probed host | sockets |
+| File descriptors | declared | local `ulimit -n`; reported only when the app runs on this host (suppressed for serverless platforms, where it is not the app's limit) | sockets |
 | Network egress | declared×measured | declared link/instance baseline (config/user-supplied) ÷ measured mean response bytes | responses/s |
 | Node single-instance | typical | cited range only, shown when Node app detected | req/s range |
 
@@ -120,6 +119,10 @@ fabricated; a report with zero computable ceilings says exactly that.
 
 ## Out of scope
 
+Kafka partition-vs-consumer parallelism ceiling — a real declared ceiling, but
+the repo has no live Kafka client to read topic metadata from (simulator
+only); deferred until one exists rather than shipping a probe that always
+reports "could not assess."
 Load generation / empirical capacity measurement (torture-harness territory);
 speed-testing the operator's machine; cloud-provider API probes for instance
 network baselines (future, behind the same declared-only rule); USL
