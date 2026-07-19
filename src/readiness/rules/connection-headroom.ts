@@ -27,7 +27,12 @@ export const connectionHeadroomRule: ReadinessRule = {
     }
     const used = usage.total / usage.max;
     const headroom = 1 - used;
-    const status = used >= BLOCKING_USAGE ? 'blocking' : used >= AT_RISK_USAGE ? 'at_risk' : 'ready';
+    let status: 'blocking' | 'at_risk' | 'ready' = 'ready';
+    if (used >= BLOCKING_USAGE) {
+      status = 'blocking';
+    } else if (used >= AT_RISK_USAGE) {
+      status = 'at_risk';
+    }
     return {
       ...base,
       status,
