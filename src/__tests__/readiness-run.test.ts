@@ -180,6 +180,14 @@ describe('connectAndRunReadiness', () => {
     expect(report.weakLink).toBeUndefined();
   });
 
+  it('connectionUsage is queried once per run and shared by rules and ceilings', async () => {
+    const usageSpy = vi.fn(async () => ({ max: 100, total: 10, byState: {}, idleInTransactionOldest: [] }));
+    const fake = { ...okFakePgClient(), queryConnectionUsage: usageSpy };
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => fake);
+    expect(report.ceilings?.some((c) => c.id === 'db-connections')).toBe(true);
+    expect(usageSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('a rejecting pg close neither loses the report nor skips redis cleanup', async () => {
     const redisClose = vi.fn(async () => {});
     const pgClient = {

@@ -186,8 +186,12 @@ export async function connectAndRunReadiness(
     }
     const activeRedisClient = redisClient;
 
+    // Memoized: four connection rules plus computeCeilings all read
+    // connectionUsage — one shared pg_stat_activity snapshot per run keeps
+    // findings and ceiling evidence consistent and avoids repeat round-trips.
+    let connectionUsagePromise: Promise<ConnectionUsage | null> | undefined;
     const sources: ReadinessSources = {
-      connectionUsage: () => activeClient.queryConnectionUsage(),
+      connectionUsage: () => (connectionUsagePromise ??= activeClient.queryConnectionUsage()),
       tableStats: () => activeClient.queryTableStats(),
       statementStats: () => activeClient.queryStatementStats(),
       statementAggregate: () => activeClient.queryStatementAggregate(),
