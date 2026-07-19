@@ -12,6 +12,7 @@ import { Redis as RedisClient } from 'ioredis';
 import type { RedisBackend, RedisInfo, RedisSlaveInfo, RedisSlowlogEntry, RedisClusterInfo, RedisClusterNodeInfo } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import type { RedisLimits } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export interface RedisConnectionConfig {
@@ -201,6 +202,27 @@ export class RedisLiveClient implements RedisBackend {
       clusterSize: parseInt(fields['cluster_size'] ?? '0', 10),
       nodes,
     };
+  }
+
+  async queryServerLimits(): Promise<RedisLimits | null> {
+    try {
+      const raw = await this.client.info();
+      const sections = this.parseInfo(raw);
+
+      const maxclientsReply = await this.client.config('GET', 'maxclients');
+      const maxclientsValue = Array.isArray(maxclientsReply) ? maxclientsReply[1] : maxclientsReply;
+      const maxclients = parseInt(String(maxclientsValue ?? ''), 10);
+      if (!Number.isFinite(maxclients)) return null;
+
+      return {
+        maxmemoryBytes: parseInt(sections['maxmemory'] ?? '0', 10),
+        usedMemoryBytes: parseInt(sections['used_memory'] ?? '0', 10),
+        maxclients,
+        connectedClients: parseInt(sections['connected_clients'] ?? '0', 10),
+      };
+    } catch {
+      return null;
+    }
   }
 
   async executeCommand(command: Command): Promise<unknown> {

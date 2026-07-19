@@ -7,6 +7,7 @@
  */
 
 import type { ExecutionBackend } from '../../framework/backend.js';
+import type { RedisLimits } from '../../readiness/types.js';
 
 export interface RedisInfo {
   role: 'master' | 'slave';
@@ -85,6 +86,9 @@ export interface RedisBackend extends ExecutionBackend {
 
   /** Get cluster info (returns enabled: false for standalone instances) */
   getClusterInfo(): Promise<RedisClusterInfo>;
+
+  /** Declared server limits + current usage for capacity ceilings. Null when unreadable. */
+  queryServerLimits?(): Promise<RedisLimits | null>;
 
   /** Optional simulator-only state transitions */
   transition?(to: string): void;
