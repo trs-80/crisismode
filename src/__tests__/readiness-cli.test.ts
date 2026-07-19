@@ -22,6 +22,32 @@ const report: ReadinessReport = {
   }],
 };
 
+const reportWithCeilings: ReadinessReport = {
+  ...report,
+  ceilings: [{
+    id: 'max-connections', title: 'Max connections', value: 2000, unit: 'queries/s',
+    evidenceClasses: ['declared', 'measured'],
+    evidence: ['max_connections = 100 (declared)', '20 queries/conn (measured)'],
+    caveat: 'assumes no pooling',
+  }, {
+    id: 'redis-throughput', title: 'Redis throughput', value: null, unit: 'ops/s',
+    rangeLow: 50000, rangeHigh: 100000,
+    evidenceClasses: ['typical'],
+    evidence: ['typical for r5.large (typical)'],
+    caveat: 'not measured against this instance',
+  }],
+  ceilingsOmitted: [{ id: 'network-egress', reason: 'declaredEgressMbps source not configured' }],
+  weakLink: {
+    binding: null,
+    conditional: [
+      { queriesPerRequest: 1, bindingCeilingId: 'max-connections', requestsPerSec: 2000 },
+      { queriesPerRequest: 3, bindingCeilingId: 'max-connections', requestsPerSec: 667 },
+      { queriesPerRequest: 10, bindingCeilingId: 'max-connections', requestsPerSec: 200 },
+    ],
+    note: 'Fixing the first bottleneck promotes the next one — re-run after any change.',
+  },
+};
+
 describe('renderReadinessReport', () => {
   it('shows verdict, score, and the ran-vs-could-not-run line', () => {
     const out = renderReadinessReport(report).join('\n');
@@ -37,5 +63,38 @@ describe('renderReadinessReport', () => {
   it('shows the unknown reason', () => {
     const out = renderReadinessReport(report).join('\n');
     expect(out).toContain('pg_stat_statements is not available');
+  });
+
+  describe('capacity ceilings section', () => {
+    it('renders no "Capacity ceilings" header when report.ceilings is undefined', () => {
+      const out = renderReadinessReport(report).join('\n');
+      expect(out).not.toContain('Capacity ceilings');
+    });
+    it('shows the section header', () => {
+      const out = renderReadinessReport(reportWithCeilings).join('\n');
+      expect(out).toContain('Capacity ceilings (upper bounds — real capacity is lower):');
+    });
+    it('renders a value ceiling as an "at most" line with its evidence-class label', () => {
+      const out = renderReadinessReport(reportWithCeilings).join('\n');
+      expect(out).toContain('at most 2000 queries/s');
+      expect(out).toContain('declared×measured');
+    });
+    it('renders a range ceiling as a "typically" line, never with "at most"', () => {
+      const out = renderReadinessReport(reportWithCeilings).join('\n');
+      expect(out).toContain('cited range, not a measurement');
+      expect(out).not.toMatch(/at most 50000|at most 100000/);
+    });
+    it('renders omitted ceilings', () => {
+      const out = renderReadinessReport(reportWithCeilings).join('\n');
+      expect(out).toContain('Could not assess: network-egress');
+    });
+    it('renders the weak-link conditional line with all fan-outs and the migration note', () => {
+      const out = renderReadinessReport(reportWithCeilings).join('\n');
+      expect(out).toContain('varies by assumption:');
+      expect(out).toContain('1 →');
+      expect(out).toContain('3 →');
+      expect(out).toContain('10 →');
+      expect(out).toContain('Fixing the first bottleneck promotes the next one');
+    });
   });
 });
