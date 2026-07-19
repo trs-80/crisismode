@@ -132,4 +132,51 @@ describe('connectAndRunReadiness', () => {
     expect(report.ceilingsOmitted?.some((o) => o.id === 'redis-limits')).toBe(true);
     expect(redisClose).toHaveBeenCalledTimes(1);
   });
+
+  it('a throwing redis client factory omits the ceiling without failing the report', async () => {
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => okFakePgClient(), {
+      createRedisClient: () => { throw new Error('bad credential ref'); },
+      redisTarget: REDIS_TARGET,
+    });
+    expect(report.verdict).not.toBe(undefined);
+    expect(report.ceilingsOmitted?.some((o) => o.id === 'redis-limits')).toBe(true);
+  });
+
+  it('a working redis client produces redis ceilings and is closed once', async () => {
+    const redisClose = vi.fn(async () => {});
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => okFakePgClient(), {
+      createRedisClient: () => ({
+        queryServerLimits: async () => ({
+          maxmemoryBytes: 1_000_000,
+          usedMemoryBytes: 500_000,
+          maxclients: 100,
+          connectedClients: 10,
+        }),
+        close: redisClose,
+      }),
+      redisTarget: REDIS_TARGET,
+    });
+    expect(report.ceilings?.some((c) => c.id === 'redis-memory')).toBe(true);
+    expect(report.ceilings?.some((c) => c.id === 'redis-clients')).toBe(true);
+    expect(redisClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a ceilings-computation throw does not discard already-gathered findings', async () => {
+    // computeCeilings calls sources.connectionUsage() directly (it's a required
+    // source, not `?.()`-guarded) — a fake whose queryConnectionUsage() throws
+    // exercises the isolation guard around computeCeilings/rankWeakLink.
+    const fake = {
+      queryConnectionCount: async () => 1,
+      queryConnectionUsage: async () => { throw new Error('unexpected pool error'); },
+      queryTableStats: async () => [],
+      queryStatementStats: async () => null,
+      queryStatementAggregate: async () => null,
+      close: async () => {},
+    };
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => fake);
+    expect(report.findings.length).toBeGreaterThan(0);
+    expect(report.ceilings).toBeUndefined();
+    expect(report.ceilingsOmitted).toBeUndefined();
+    expect(report.weakLink).toBeUndefined();
+  });
 });
