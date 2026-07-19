@@ -4,6 +4,7 @@
 import type { RedisBackend, RedisInfo, RedisSlaveInfo, RedisSlowlogEntry, RedisClusterInfo } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
+import type { RedisLimits } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
@@ -11,6 +12,7 @@ export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
 export class RedisSimulator implements RedisBackend {
   private state: SimulatorState = 'degraded';
   private evictionPolicy = 'volatile-lru';
+  private serverLimits: RedisLimits | null = null;
 
   transition(to: string): void {
     this.state = to as SimulatorState;
@@ -121,6 +123,14 @@ export class RedisSimulator implements RedisBackend {
       clusterSize: 0,
       nodes: [],
     };
+  }
+
+  setServerLimits(limits: RedisLimits | null): void {
+    this.serverLimits = limits;
+  }
+
+  async queryServerLimits(): Promise<RedisLimits | null> {
+    return this.serverLimits;
   }
 
   async executeCommand(command: Command): Promise<unknown> {
