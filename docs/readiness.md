@@ -140,12 +140,14 @@ The verdict always carries this note, because a bottleneck is a moving target:
 
 ## Configuration
 
-Target resolution is **environment-hint based**. Readiness picks its PostgreSQL target from the standard connection env vars:
+Readiness resolves its targets from two sources, in order:
 
-- `DATABASE_URL`, `POSTGRES_URL`, `PG_CONNECTION_STRING`, `PGHOST` → PostgreSQL
-- `REDIS_URL`, `REDIS_TLS_URL` → Redis (used only for the Redis ceilings)
+1. **`crisismode.yaml` targets** — explicit `targets:` entries with `kind: postgresql` (and `kind: redis` for the Redis ceilings) win when present; the config is deliberate user intent, matching how `scan`/`diagnose` treat it.
+2. **Environment hints** — the standard connection env vars, discovered by stack autodiscovery:
+   - `DATABASE_URL`, `POSTGRES_URL`, `PG_CONNECTION_STRING`, `PGHOST` → PostgreSQL
+   - `REDIS_URL`, `REDIS_TLS_URL` → Redis
 
-Credentials embedded in the URL are parsed into the connection. Targets defined in `crisismode.yaml` are **not** consulted by readiness — target resolution goes through stack autodiscovery's derived targets, which are built from env hints. If no PostgreSQL env hint is set, the report is a single can't-assess finding (see below), regardless of what `crisismode.yaml` contains.
+Credentials embedded in a URL are parsed into the connection; config targets use their `credentials` block. If neither source yields a PostgreSQL target, the report is a single can't-assess finding (see below).
 
 One setting does come from `crisismode.yaml`: the declared egress link speed for the `network-egress` ceiling. It is declared-only — never measured — and must be a finite number greater than 0:
 

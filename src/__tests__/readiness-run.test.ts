@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 import { describe, it, expect, vi } from 'vitest';
-import { runRules, connectAndRunReadiness } from '../readiness/run.js';
+import { runRules, connectAndRunReadiness, resolveReadinessTargets } from '../readiness/run.js';
 import { buildReport } from '../readiness/report.js';
 import { allRules } from '../readiness/rules/index.js';
 import type { ReadinessRule, ReadinessSources, ReadinessContext } from '../readiness/types.js';
@@ -203,5 +203,90 @@ describe('connectAndRunReadiness', () => {
     });
     expect(report.verdict).toBeDefined();
     expect(redisClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('connect-failure reason survives an AggregateError with an empty message', async () => {
+    // node-postgres surfaces dual-stack localhost ECONNREFUSED as an
+    // AggregateError whose own .message is '' — the finding's reason must
+    // carry the underlying error, not an empty string (issue #77).
+    const aggregate = new AggregateError(
+      [new Error('connect ECONNREFUSED 127.0.0.1:5432'), new Error('connect ECONNREFUSED ::1:5432')],
+      '',
+    );
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => ({
+      ...okFakePgClient(),
+      queryConnectionCount: async () => {
+        throw aggregate;
+      },
+    }));
+    expect(report.verdict).toBe('unknown');
+    expect(report.findings[0]?.reason).toContain('ECONNREFUSED');
+  });
+
+  it('connect-failure reason falls back to the error code when no message exists anywhere', async () => {
+    const bare = new AggregateError([], '');
+    (bare as { code?: string }).code = 'ECONNREFUSED';
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => ({
+      ...okFakePgClient(),
+      queryConnectionCount: async () => {
+        throw bare;
+      },
+    }));
+    expect(report.findings[0]?.reason).toBe('ECONNREFUSED');
+  });
+});
+
+describe('resolveReadinessTargets', () => {
+  const CONFIG_PG: TargetConfig = {
+    name: 'config-postgres',
+    kind: 'postgresql',
+    primary: { host: 'config-db', port: 5433 },
+  };
+  const ENV_PG: TargetConfig = {
+    name: 'env-database-url',
+    kind: 'postgresql',
+    primary: { host: 'env-db', port: 5432 },
+  };
+  const CONFIG_REDIS: TargetConfig = {
+    name: 'config-redis',
+    kind: 'redis',
+    primary: { host: 'config-redis-host', port: 6380 },
+  };
+
+  function fileConfig(targets: TargetConfig[]) {
+    return { config: { targets } as never, source: 'file' as const };
+  }
+
+  it('prefers config-file targets over discovered env-hint targets', () => {
+    const { pgTarget, redisTarget } = resolveReadinessTargets(fileConfig([CONFIG_PG, CONFIG_REDIS]), [ENV_PG]);
+    expect(pgTarget?.name).toBe('config-postgres');
+    expect(redisTarget?.name).toBe('config-redis');
+  });
+
+  it('falls back to derived targets when the config has no matching kind', () => {
+    const { pgTarget, redisTarget } = resolveReadinessTargets(fileConfig([CONFIG_REDIS]), [ENV_PG]);
+    expect(pgTarget?.name).toBe('env-database-url');
+    expect(redisTarget?.name).toBe('config-redis');
+  });
+
+  it('handles an absent config (no crisismode.yaml)', () => {
+    const { pgTarget, redisTarget } = resolveReadinessTargets({ config: null, source: 'none' }, [ENV_PG]);
+    expect(pgTarget?.name).toBe('env-database-url');
+    expect(redisTarget).toBeUndefined();
+  });
+
+  it('an env-fallback synthesized config never shadows env-hint targets', () => {
+    // loadConfigWithDetection synthesizes a legacy localhost target
+    // (default-postgres, crisismode/crisismode credentials) whenever no config
+    // file exists — that is a fallback default, not user intent, and must not
+    // shadow a real DATABASE_URL-derived target.
+    const legacy: TargetConfig = {
+      name: 'default-postgres',
+      kind: 'postgresql',
+      primary: { host: 'localhost', port: 5432 },
+      credentials: { type: 'value', username: 'crisismode', password: 'crisismode' },
+    };
+    const { pgTarget } = resolveReadinessTargets({ config: { targets: [legacy] } as never, source: 'env-fallback' }, [ENV_PG]);
+    expect(pgTarget?.name).toBe('env-database-url');
   });
 });
