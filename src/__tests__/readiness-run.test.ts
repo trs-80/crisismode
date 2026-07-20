@@ -275,6 +275,15 @@ describe('resolveReadinessTargets', () => {
     expect(redisTarget).toBeUndefined();
   });
 
+  it('a config target without primary does not shadow a usable derived target', () => {
+    // TargetConfig.primary is optional — an entry can exist purely to pin an
+    // agent. Without connection info it cannot serve readiness and must not
+    // shadow a fully-specified derived target.
+    const agentPinOnly: TargetConfig = { name: 'pin-only', kind: 'postgresql', agent: 'postgresql-replication-recovery' };
+    const { pgTarget } = resolveReadinessTargets(fileConfig([agentPinOnly]), [ENV_PG]);
+    expect(pgTarget?.name).toBe('env-database-url');
+  });
+
   it('an env-fallback synthesized config never shadows env-hint targets', () => {
     // loadConfigWithDetection synthesizes a legacy localhost target
     // (default-postgres, crisismode/crisismode credentials) whenever no config
