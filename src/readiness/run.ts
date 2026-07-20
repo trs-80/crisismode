@@ -296,8 +296,10 @@ export function resolveReadinessTargets(
   derivedTargets: TargetConfig[],
 ): { pgTarget: TargetConfig | undefined; redisTarget: TargetConfig | undefined } {
   const configTargets = loaded.source === 'file' ? loaded.config?.targets : undefined;
+  // `primary` is optional on TargetConfig (an entry can exist purely to pin an
+  // agent) — only a config target with connection info can serve readiness.
   const pick = (kind: string): TargetConfig | undefined =>
-    configTargets?.find((t) => t.kind === kind) ?? derivedTargets.find((t) => t.kind === kind);
+    configTargets?.find((t) => t.kind === kind && t.primary) ?? derivedTargets.find((t) => t.kind === kind);
   return { pgTarget: pick('postgresql'), redisTarget: pick('redis') };
 }
 
