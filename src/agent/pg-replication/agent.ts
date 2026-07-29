@@ -148,6 +148,48 @@ export class PgReplicationAgent implements RecoveryAgent {
       };
     }
 
+    // Connection-pool exhaustion is a direct measurement (pg_stat_activity
+    // vs. max_connections) and a primary-refusing-connections risk, so it
+    // outranks replication topology — including the no-replica unknown
+    // below: a saturated primary-only target must scan as unhealthy, not
+    // "unknown". Same predicate as diagnose()'s ground-truth check #1.
+    const connUsage = await this.backend.queryConnectionUsage().catch(() => null);
+    if (connUsage && this.isConnectionPoolExhausted(connUsage)) {
+      const utilizationPct = Math.round((connUsage.total / connUsage.max) * 100);
+      const staleCount = connUsage.idleInTransactionOldest.filter(
+        (s) => s.ageSeconds >= IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS,
+      ).length;
+      return {
+        status: 'unhealthy',
+        confidence: 0.95,
+        summary:
+          `PostgreSQL connection pool is exhausted: ${connUsage.total}/${connUsage.max} connections ` +
+          `in use (${utilizationPct}%), with ${staleCount} idle-in-transaction session(s) older than ` +
+          `${IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS}s holding slots new clients need.`,
+        observedAt,
+        signals: [
+          {
+            source: 'pg_stat_activity',
+            status: 'critical',
+            detail: `${connUsage.total}/${connUsage.max} connections in use (${utilizationPct}%) on the primary.`,
+            observedAt,
+          },
+          {
+            source: 'pg_stat_activity',
+            status: 'critical',
+            detail:
+              `${staleCount} idle-in-transaction session(s) held open longer than ` +
+              `${IDLE_IN_TRANSACTION_TERMINATE_THRESHOLD_SECONDS}s are consuming connection slots.`,
+            observedAt,
+          },
+        ],
+        recommendedActions: [
+          'Run crisismode diagnose to confirm connection_pool_exhaustion and generate a recovery plan.',
+          'Identify the client leaking idle-in-transaction sessions (see application_name in pg_stat_activity).',
+        ],
+      };
+    }
+
     if (replicas.length === 0) {
       return {
         status: 'unknown',

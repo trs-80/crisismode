@@ -97,6 +97,43 @@ describe('PgReplicationAgent — connection_pool_exhaustion', () => {
     });
   });
 
+  describe('assessHealth', () => {
+    it('reports unhealthy when the pool is exhausted and no replicas are configured (primary-only)', async () => {
+      const simulator = new PgSimulator();
+      simulator.setConnectionPoolExhausted();
+      simulator.queryReplicationStatus = async () => [];
+      const agent = new PgReplicationAgent(simulator);
+
+      const health = await agent.assessHealth(makeContext(agent));
+
+      expect(health.status).toBe('unhealthy');
+      expect(health.summary.toLowerCase()).toContain('connection');
+      expect(health.signals.some((s) => s.status === 'critical')).toBe(true);
+    });
+
+    it('reports unhealthy when the pool is exhausted even with healthy replicas', async () => {
+      const simulator = new PgSimulator();
+      simulator.transition('recovered');
+      simulator.setConnectionPoolExhausted();
+      const agent = new PgReplicationAgent(simulator);
+
+      const health = await agent.assessHealth(makeContext(agent));
+
+      expect(health.status).toBe('unhealthy');
+      expect(health.summary.toLowerCase()).toContain('connection');
+    });
+
+    it('still reports unknown for a primary-only target under normal load', async () => {
+      const simulator = new PgSimulator();
+      simulator.queryReplicationStatus = async () => [];
+      const agent = new PgReplicationAgent(simulator);
+
+      const health = await agent.assessHealth(makeContext(agent));
+
+      expect(health.status).toBe('unknown');
+    });
+  });
+
   describe('plan', () => {
     it('generates a distinct, all-SQL, validator-passing plan with honest elevated risk terminate step', async () => {
       const simulator = new PgSimulator();
