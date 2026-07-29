@@ -16,6 +16,7 @@ export default tseslint.config(
       'site/',
       'scripts/',
       '.pnpm-store/',
+      '.remember/',
     ],
   },
   js.configs.recommended,
