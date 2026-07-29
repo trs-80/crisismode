@@ -9,6 +9,7 @@
  * not "scenario identifier".
  */
 
+import { formatDurationMs } from './format-helpers.js';
 import type { ForensicRecord, ExecutionLogEntry } from '../types/forensic-record.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { HealthAssessment, OperatorSummary } from '../types/health.js';
@@ -52,7 +53,7 @@ export function generateIncidentReport(record: ForensicRecord): IncidentReport {
     `**Record:** ${record.recordId}  \n` +
     `**Started:** ${formatTimestamp(record.createdAt)}  \n` +
     `**Completed:** ${formatTimestamp(record.completedAt)}  \n` +
-    `**Duration:** ${formatDuration(record.summary.totalDurationMs)}\n`;
+    `**Duration:** ${formatDurationMs(record.summary.totalDurationMs)}\n`;
 
   return {
     markdown: `${header}\n${markdown}`,
@@ -97,7 +98,7 @@ export function generateDiagnosisReport(
 function buildIncidentSummary(record: ForensicRecord): ReportSection {
   const outcome = describeOutcome(record.summary.outcome);
   const scenario = record.diagnosis?.scenario ?? 'Unknown';
-  const duration = formatDuration(record.summary.totalDurationMs);
+  const duration = formatDurationMs(record.summary.totalDurationMs);
   const stepsRun = record.summary.totalSteps;
   const stepsSucceeded = record.summary.completedSteps;
   const stepsFailed = record.summary.failedSteps;
@@ -202,7 +203,7 @@ function buildActionsSection(record: ForensicRecord): ReportSection {
     const result = record.stepResults[i]!;
     const step = result.step;
     const status = describeStepStatus(result.status);
-    const duration = formatDuration(result.durationMs);
+    const duration = formatDurationMs(result.durationMs);
     const description = ('description' in step && step.description) ? step.description : step.name;
 
     content += `${i + 1}. **${description}** — ${status} (${duration})\n`;
@@ -413,14 +414,6 @@ function formatTimestamp(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  return `${minutes}m ${seconds}s`;
 }
 
 function formatConfidence(confidence: number): string {

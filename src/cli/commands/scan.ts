@@ -401,7 +401,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
  * Scoring: each finding contributes equally.
  *   healthy = 100%, recovering = 60%, unknown = 30%, unhealthy = 0%
  */
-function computeHealthScore(findings: ScanFinding[]): number {
+export function computeHealthScore(findings: Array<Pick<ScanFinding, 'status'>>): number {
   if (findings.length === 0) return 100;
 
   const weights: Record<string, number> = {

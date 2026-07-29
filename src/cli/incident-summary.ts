@@ -10,6 +10,7 @@
  */
 
 import chalk from 'chalk';
+import { formatDurationMs } from '../framework/format-helpers.js';
 import type { ScanFinding, ScanResult } from './output.js';
 import type { HealthStatus } from '../types/health.js';
 
@@ -130,7 +131,7 @@ export function printIncidentSummary(summary: IncidentSummary): void {
   console.log(chalk.bold('  --- Incident Summary (paste into Slack/incident channel) ---'));
   console.log('');
   console.log(chalk.dim(`  Time: ${summary.timestamp}`));
-  console.log(chalk.dim(`  Scan completed in ${formatDuration(summary.durationMs)}`));
+  console.log(chalk.dim(`  Scan completed in ${formatDurationMs(summary.durationMs)}`));
   console.log('');
 
   // Headline
@@ -182,7 +183,7 @@ export function formatIncidentSummaryText(summary: IncidentSummary): string {
   const lines: string[] = [];
 
   lines.push(`--- CrisisMode Scan Summary ---`);
-  lines.push(`Time: ${summary.timestamp} (${formatDuration(summary.durationMs)})`);
+  lines.push(`Time: ${summary.timestamp} (${formatDurationMs(summary.durationMs)})`);
   lines.push(`${summary.headline}`);
   lines.push('');
 
@@ -216,12 +217,4 @@ export function formatIncidentSummaryText(summary: IncidentSummary): string {
   }
 
   return lines.join('\n');
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  return `${minutes}m ${seconds}s`;
 }

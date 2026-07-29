@@ -12,6 +12,15 @@ export function formatBytes(bytes: number): string {
   return `${bytes}B`;
 }
 
+/** Format a duration in milliseconds as a human-readable string (e.g. "850ms", "4.2s", "2m 5s"). */
+export function formatDurationMs(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  return `${minutes}m ${seconds}s`;
+}
+
 /** Format a duration in seconds as a human-readable string (e.g. "4.2h", "30m"). */
 export function formatDuration(seconds: number): string {
   if (seconds >= 86400) return `${(seconds / 86400).toFixed(1)}d`;

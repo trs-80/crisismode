@@ -2,6 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { computeHealthScore } from '../cli/commands/scan.js';
 import type * as OutputModule from '../cli/output.js';
 
 // ── Output mode tests ──
@@ -73,21 +74,6 @@ describe('Scan finding IDs', () => {
 // ── Health score computation ──
 
 describe('Health score computation', () => {
-  function computeHealthScore(findings: Array<{ status: string }>): number {
-    if (findings.length === 0) return 100;
-    const weights: Record<string, number> = {
-      healthy: 1.0,
-      recovering: 0.6,
-      unknown: 0.3,
-      unhealthy: 0.0,
-    };
-    let total = 0;
-    for (const f of findings) {
-      total += weights[f.status] ?? 0;
-    }
-    return Math.round((total / findings.length) * 100);
-  }
-
   it('returns 100 for empty findings', () => {
     expect(computeHealthScore([])).toBe(100);
   });
