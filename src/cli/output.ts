@@ -61,8 +61,15 @@ export function configure(opts: Partial<OutputOptions>): void {
   }
 }
 
-/** Alias for `configure` — merges option updates into the current output options. */
-export { configure as setOutputOptions };
+/**
+ * Merge additional output options without touching mode resolution.
+ * Unlike `configure`, this never recomputes `mode` from `json`/`mode`/TTY —
+ * use it for options (like `terse`) that don't select json/pipe/human mode,
+ * so a mode already set via `configure({ json: true })` isn't clobbered.
+ */
+export function setOutputOptions(opts: Partial<OutputOptions>): void {
+  outputOptions = { ...outputOptions, ...opts };
+}
 
 /** Get the current output mode. */
 export function getOutputMode(): OutputMode {
