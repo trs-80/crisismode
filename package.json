@@ -57,12 +57,12 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.111.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "@crisismode/agent-sdk": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
-    "@langchain/core": "^1.2.2",
-    "@langchain/langgraph": "^1.4.7",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@langchain/core": "^1.2.3",
+    "@langchain/langgraph": "^1.4.8",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "chalk": "^5.3.0",
     "ioredis": "^5.11.1",
     "pg": "^8.22.0",
@@ -71,10 +71,10 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1086.0",
-    "@aws-sdk/client-rds": "^3.1086.0",
-    "@aws-sdk/client-s3": "^3.1086.0",
-    "@aws-sdk/client-sts": "^3.1086.0"
+    "@aws-sdk/client-dynamodb": "^3.1097.0",
+    "@aws-sdk/client-rds": "^3.1097.0",
+    "@aws-sdk/client-s3": "^3.1097.0",
+    "@aws-sdk/client-sts": "^3.1097.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -83,14 +83,14 @@
     "@types/semver": "^7.7.1",
     "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.28.1",
-    "eslint": "10.7.0",
+    "eslint": "10.8.0",
     "fast-check": "^4.9.0",
-    "globals": "^17.7.0",
+    "globals": "^17.8.0",
     "husky": "^9.1.7",
     "postject": "^1.0.0-alpha.6",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
-    "typescript-eslint": "8.64.0",
+    "typescript-eslint": "8.65.0",
     "vitest": "^4.1.10"
   }
 }
