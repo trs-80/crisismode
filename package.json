@@ -9,6 +9,7 @@
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
+    "dist/**/*.json",
     "README.md",
     "LICENSE",
     "NOTICE"
@@ -34,7 +35,7 @@
   "homepage": "https://crisismode.ai",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "pnpm --filter @crisismode/agent-sdk run build && tsc",
+    "build": "pnpm --filter @crisismode/agent-sdk run build && tsc && node scripts/copy-json-assets.mjs",
     "build:bundle": "node scripts/esbuild.config.mjs",
     "build:binary": "bash scripts/build-binary.sh",
     "start": "node dist/index.js",

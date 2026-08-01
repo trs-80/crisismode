@@ -9,11 +9,9 @@
  * the bundled local copy (for offline use).
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { get } from 'node:https';
 import { get as httpGet } from 'node:http';
+import bundledRegistry from './check-registry.json' with { type: 'json' };
 
 // ── Types ──
 
@@ -60,24 +58,20 @@ const FETCH_TIMEOUT_MS = 10_000;
 
 // ── Functions ──
 
-/** Load the bundled registry index from disk (offline fallback). */
+/**
+ * The bundled registry index (offline fallback for fetchRegistry).
+ *
+ * Imported rather than read from disk. The previous implementation walked
+ * three candidate paths, every one of them relative to the source tree, so it
+ * only worked when running from a checkout: `tsc` does not copy JSON to
+ * outDir, the esbuild bundle resolves those paths outside its own directory,
+ * and a standalone binary is a single file that can have no sibling JSON at
+ * all. A static import is inlined by esbuild and bun, and resolves next to the
+ * emitted module for `tsc` — so the fallback exists on every distribution
+ * surface instead of just one.
+ */
 export function loadLocalRegistry(): CheckRegistry {
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const registryPath = resolve(__dirname, '../../src/config/check-registry.json');
-
-  // Try source location first, then bundled dist location
-  try {
-    return JSON.parse(readFileSync(registryPath, 'utf-8')) as CheckRegistry;
-  } catch {
-    const distPath = resolve(__dirname, '../config/check-registry.json');
-    try {
-      return JSON.parse(readFileSync(distPath, 'utf-8')) as CheckRegistry;
-    } catch {
-      // Last resort: look relative to current file
-      const localPath = resolve(__dirname, 'check-registry.json');
-      return JSON.parse(readFileSync(localPath, 'utf-8')) as CheckRegistry;
-    }
-  }
+  return bundledRegistry as CheckRegistry;
 }
 
 /** Fetch the latest registry index from GitHub. Falls back to local on failure. */
