@@ -257,3 +257,59 @@ jobs:
             'chmod +x crisismode' './crisismode scan' '```' '' '---' > /tmp/release-notes.md
           printf '%s' "$EXISTING_NOTES" >> /tmp/release-notes.md
           gh release edit "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
+
+  publish-npm:
+    # Publish only after the GitHub release exists, so a failed binary build
+    # never leaves npm ahead of the release page.
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # OIDC token for npm Trusted Publishing — no NPM_TOKEN secret involved.
+      # Both packages trust this exact workflow file (release.yml); renaming it
+      # requires re-running `npm trust github` for each package.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      # Node 24, not 22: Trusted Publishing needs npm >= 11.5.1 and Node 22
+      # bundles npm 10.x. registry-url writes the .npmrc that `npm publish`
+      # exchanges the OIDC token against.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          # No dependency cache here on purpose: npm's trusted-publishing docs
+          # say not to cache in the job that publishes.
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Publish packages
+        run: |
+          # Publish the tarball from `pnpm pack`, never the directory: npm does
+          # not rewrite `workspace:*` dependencies, pnpm pack does. Order
+          # matters — the root package depends on agent-sdk at an exact
+          # version, so agent-sdk goes first. Versions already on the registry
+          # are skipped, since agent-sdk does not bump on every release.
+          publish_if_new() {
+            local dir="$1"
+            local name version
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already on the registry — skipping"
+              return 0
+            fi
+            local tarball="$RUNNER_TEMP/$(echo "$name" | tr '/@' '--').tgz"
+            (cd "$dir" && pnpm pack --out "$tarball")
+            npm publish "$tarball"
+            echo "Published ${name}@${version}"
+          }
+          publish_if_new packages/agent-sdk
+          publish_if_new .
