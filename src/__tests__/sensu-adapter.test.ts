@@ -401,8 +401,8 @@ describe('sensuToDiagnoseResult', () => {
     expect(finding.evidence).toEqual({
       value: 6800,
       uom: 'MB',
-      warn: 5765,
-      crit: 6456,
+      warn: '5765',
+      crit: '6456',
     });
   });
 

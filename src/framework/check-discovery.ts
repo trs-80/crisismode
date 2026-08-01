@@ -194,6 +194,9 @@ async function readManifest(pluginDir: string): Promise<CheckPluginManifest> {
     ...(typeof m.sensuMetricFormat === 'string'
       ? { sensuMetricFormat: m.sensuMetricFormat as NonNullable<CheckPluginManifest['sensuMetricFormat']> }
       : {}),
+    ...(Array.isArray(m.args) && m.args.every((a): a is string => typeof a === 'string')
+      ? { args: m.args }
+      : {}),
     ...(m.maxRiskLevel !== undefined
       ? { maxRiskLevel: m.maxRiskLevel as NonNullable<CheckPluginManifest['maxRiskLevel']> }
       : {}),

@@ -6,9 +6,14 @@ import {
   parsePerfDataItem,
   parsePerfData,
   parseNagiosOutput,
+  parseNagiosRange,
+  rangeViolated,
   nagiosToHealthResult,
   nagiosToDiagnoseResult,
 } from '../framework/nagios-adapter.js';
+
+/** A plain ceiling threshold: alert when the value leaves 0..end. */
+const ceiling = (raw: string, end: number) => ({ raw, inside: false, start: 0, end });
 
 describe('parsePerfDataItem', () => {
   it('parses a simple value', () => {
@@ -30,8 +35,8 @@ describe('parsePerfDataItem', () => {
       label: '/',
       value: 2643,
       uom: 'MB',
-      warn: 5765,
-      crit: 6456,
+      warn: ceiling('5765', 5765),
+      crit: ceiling('6456', 6456),
       min: 0,
       max: 7180,
     });
@@ -43,8 +48,8 @@ describe('parsePerfDataItem', () => {
       label: 'cpu_usage',
       value: 85,
       uom: '%',
-      warn: 80,
-      crit: 90,
+      warn: ceiling('80', 80),
+      crit: ceiling('90', 90),
       min: 0,
       max: 100,
     });
@@ -56,8 +61,8 @@ describe('parsePerfDataItem', () => {
       label: 'time',
       value: 0.006,
       uom: 's',
-      warn: 15,
-      crit: 30,
+      warn: ceiling('15.000', 15),
+      crit: ceiling('30.000', 30),
       min: null,
       max: null,
     });
@@ -69,8 +74,8 @@ describe('parsePerfDataItem', () => {
       label: 'disk /var',
       value: 45,
       uom: '%',
-      warn: 80,
-      crit: 90,
+      warn: ceiling('80', 80),
+      crit: ceiling('90', 90),
       min: 0,
       max: 100,
     });
@@ -102,13 +107,15 @@ describe('parsePerfDataItem', () => {
   });
 
   it('handles negative values', () => {
+    // '0' is the range 0..0; '-10' is 0..-10 which is inverted and therefore
+    // invalid per the Nagios plugin dev guidelines - it parses to null.
     const item = parsePerfDataItem('temp=-5.2C;0;-10;-40;50');
     expect(item).toEqual({
       label: 'temp',
       value: -5.2,
       uom: 'C',
-      warn: 0,
-      crit: -10,
+      warn: ceiling('0', 0),
+      crit: null,
       min: -40,
       max: 50,
     });
@@ -134,8 +141,8 @@ describe('parsePerfData', () => {
       label: '/',
       value: 2643,
       uom: 'MB',
-      warn: 5765,
-      crit: 6456,
+      warn: ceiling('5765', 5765),
+      crit: ceiling('6456', 6456),
       min: 0,
       max: 7180,
     });
@@ -288,8 +295,8 @@ describe('nagiosToDiagnoseResult', () => {
     expect(finding.evidence).toEqual({
       value: 5900,
       uom: 'MB',
-      warn: 5765,
-      crit: 6456,
+      warn: '5765',
+      crit: '6456',
     });
   });
 
@@ -333,5 +340,122 @@ describe('nagiosToDiagnoseResult', () => {
 
     expect(result.healthy).toBe(true);
     expect(result.findings).toHaveLength(0);
+  });
+});
+
+// ── Nagios range semantics ──
+
+describe('parseNagiosRange', () => {
+  it('parses a bare number as the range 0..n (alert outside)', () => {
+    expect(parseNagiosRange('10')).toEqual({ raw: '10', inside: false, start: 0, end: 10 });
+  });
+
+  it('parses "n:" as n..infinity', () => {
+    expect(parseNagiosRange('10:')).toEqual({ raw: '10:', inside: false, start: 10, end: Infinity });
+  });
+
+  it('parses "~:n" as -infinity..n', () => {
+    expect(parseNagiosRange('~:10')).toEqual({ raw: '~:10', inside: false, start: -Infinity, end: 10 });
+  });
+
+  it('parses "a:b" as a bounded range', () => {
+    expect(parseNagiosRange('10:20')).toEqual({ raw: '10:20', inside: false, start: 10, end: 20 });
+  });
+
+  it('parses "@a:b" as an inverted range (alert inside)', () => {
+    expect(parseNagiosRange('@10:20')).toEqual({ raw: '@10:20', inside: true, start: 10, end: 20 });
+  });
+
+  it('parses ":n" with an implicit start of 0', () => {
+    expect(parseNagiosRange(':10')).toEqual({ raw: ':10', inside: false, start: 0, end: 10 });
+  });
+
+  it('returns null for empty or non-numeric input', () => {
+    expect(parseNagiosRange('')).toBeNull();
+    expect(parseNagiosRange('abc')).toBeNull();
+  });
+
+  it('returns null for an inverted start/end pair', () => {
+    expect(parseNagiosRange('20:10')).toBeNull();
+  });
+});
+
+describe('rangeViolated', () => {
+  it('ceiling range alerts outside 0..end, bounds inclusive', () => {
+    const r = parseNagiosRange('10')!;
+    expect(rangeViolated(r, 5)).toBe(false);
+    expect(rangeViolated(r, 10)).toBe(false);
+    expect(rangeViolated(r, 11)).toBe(true);
+    expect(rangeViolated(r, -1)).toBe(true);
+  });
+
+  it('floor range "n:" alerts below n', () => {
+    const r = parseNagiosRange('10:')!;
+    expect(rangeViolated(r, 5)).toBe(true);
+    expect(rangeViolated(r, 10)).toBe(false);
+    expect(rangeViolated(r, 1e9)).toBe(false);
+  });
+
+  it('"~:n" alerts only above n', () => {
+    const r = parseNagiosRange('~:10')!;
+    expect(rangeViolated(r, -50)).toBe(false);
+    expect(rangeViolated(r, 10)).toBe(false);
+    expect(rangeViolated(r, 11)).toBe(true);
+  });
+
+  it('inverted "@a:b" alerts inside the range, bounds inclusive', () => {
+    const r = parseNagiosRange('@10:20')!;
+    expect(rangeViolated(r, 15)).toBe(true);
+    expect(rangeViolated(r, 10)).toBe(true);
+    expect(rangeViolated(r, 20)).toBe(true);
+    expect(rangeViolated(r, 9)).toBe(false);
+    expect(rangeViolated(r, 21)).toBe(false);
+  });
+});
+
+describe('range semantics end to end', () => {
+  it('flags a value below a floor threshold ("too few" checks)', () => {
+    // check_pgsql-style: warn if connections drop below 10, crit below 5
+    const parsed = parseNagiosOutput('CONN CRITICAL - 2 connections|conns=2;10:;5:', 2);
+    const result = nagiosToHealthResult(parsed);
+
+    expect(result.signals).toHaveLength(1);
+    expect(result.signals![0]!.status).toBe('critical');
+  });
+
+  it('flags a value inside an inverted range', () => {
+    const parsed = parseNagiosOutput('PROC WARNING - 15 procs|procs=15;@10:20', 1);
+    const result = nagiosToHealthResult(parsed);
+
+    expect(result.signals).toHaveLength(1);
+    expect(result.signals![0]!.status).toBe('warning');
+  });
+
+  it('keeps plain ceiling thresholds working', () => {
+    const parsed = parseNagiosOutput('DISK WARNING|/=5900MB;5765;6456', 1);
+    const result = nagiosToHealthResult(parsed);
+
+    expect(result.signals![0]!.status).toBe('warning');
+  });
+
+  it('renders the raw range text in signal details', () => {
+    const parsed = parseNagiosOutput('CONN CRITICAL|conns=2;10:;5:', 2);
+    const result = nagiosToHealthResult(parsed);
+
+    expect(result.signals![0]!.detail).toContain('warn: 10:');
+    expect(result.signals![0]!.detail).toContain('crit: 5:');
+  });
+
+  it('reports raw range text in diagnose evidence', () => {
+    const parsed = parseNagiosOutput('CONN CRITICAL|conns=2;10:;5:', 2);
+    const result = nagiosToDiagnoseResult(parsed);
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]!.evidence).toEqual({
+      value: 2,
+      uom: '',
+      warn: '10:',
+      crit: '5:',
+    });
   });
 });

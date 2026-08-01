@@ -33,7 +33,7 @@ import type {
   CheckExitStatus,
 } from './check-plugin.js';
 import { exitCodeToStatus, exitStatusToHealth } from './check-plugin.js';
-import { parseNagiosOutput } from './nagios-adapter.js';
+import { parseNagiosOutput, parseNagiosRange, rangeViolated } from './nagios-adapter.js';
 import type { NagiosPerfDataItem } from './nagios-adapter.js';
 
 // ── Sensu metric types ──
@@ -283,8 +283,8 @@ export function parseSensuMetrics(stdout: string, format: SensuMetricFormat): Se
 function perfDataToMetricPoint(item: NagiosPerfDataItem): SensuMetricPoint {
   const tags: Array<{ name: string; value: string }> = [];
   if (item.uom) tags.push({ name: 'uom', value: item.uom });
-  if (item.warn !== null) tags.push({ name: 'warn', value: String(item.warn) });
-  if (item.crit !== null) tags.push({ name: 'crit', value: String(item.crit) });
+  if (item.warn !== null) tags.push({ name: 'warn', value: item.warn.raw });
+  if (item.crit !== null) tags.push({ name: 'crit', value: item.crit.raw });
 
   return {
     name: item.label,
@@ -362,18 +362,18 @@ export function sensuToHealthResult(parsed: SensuParseResult): CheckHealthResult
     for (const metric of parsed.metrics) {
       const warnTag = metric.tags.find((t) => t.name === 'warn');
       const critTag = metric.tags.find((t) => t.name === 'crit');
-      const warn = warnTag ? parseFloat(warnTag.value) : null;
-      const crit = critTag ? parseFloat(critTag.value) : null;
+      const warn = warnTag ? parseNagiosRange(warnTag.value) : null;
+      const crit = critTag ? parseNagiosRange(critTag.value) : null;
 
       let status: CheckSignal['status'] = 'healthy';
-      if (crit !== null && metric.value >= crit) status = 'critical';
-      else if (warn !== null && metric.value >= warn) status = 'warning';
+      if (crit !== null && rangeViolated(crit, metric.value)) status = 'critical';
+      else if (warn !== null && rangeViolated(warn, metric.value)) status = 'warning';
 
       const uomTag = metric.tags.find((t) => t.name === 'uom');
       const uom = uomTag?.value ?? '';
       let detail = `${metric.name}=${metric.value}${uom}`;
-      if (warn !== null) detail += ` (warn: ${warn}${uom})`;
-      if (crit !== null) detail += ` (crit: ${crit}${uom})`;
+      if (warn !== null) detail += ` (warn: ${warn.raw})`;
+      if (crit !== null) detail += ` (crit: ${crit.raw})`;
 
       signals.push({ source: metric.name, status, detail });
     }
@@ -444,12 +444,12 @@ export function sensuToDiagnoseResult(parsed: SensuParseResult): CheckDiagnoseRe
     for (const metric of parsed.metrics) {
       const warnTag = metric.tags.find((t) => t.name === 'warn');
       const critTag = metric.tags.find((t) => t.name === 'crit');
-      const warn = warnTag ? parseFloat(warnTag.value) : null;
-      const crit = critTag ? parseFloat(critTag.value) : null;
+      const warn = warnTag ? parseNagiosRange(warnTag.value) : null;
+      const crit = critTag ? parseNagiosRange(critTag.value) : null;
 
       let sigStatus: 'healthy' | 'warning' | 'critical' = 'healthy';
-      if (crit !== null && metric.value >= crit) sigStatus = 'critical';
-      else if (warn !== null && metric.value >= warn) sigStatus = 'warning';
+      if (crit !== null && rangeViolated(crit, metric.value)) sigStatus = 'critical';
+      else if (warn !== null && rangeViolated(warn, metric.value)) sigStatus = 'warning';
 
       if (sigStatus === 'healthy') continue;
 
@@ -460,12 +460,12 @@ export function sensuToDiagnoseResult(parsed: SensuParseResult): CheckDiagnoseRe
         id: `sensu-${metric.name.replace(/[^a-zA-Z0-9]/g, '-')}`,
         severity: sigStatus,
         title: `${metric.name} threshold exceeded`,
-        detail: `${metric.name}=${metric.value}${uom} (warn: ${warn}${uom}, crit: ${crit}${uom})`,
+        detail: `${metric.name}=${metric.value}${uom} (warn: ${warn?.raw ?? 'n/a'}, crit: ${crit?.raw ?? 'n/a'})`,
         evidence: {
           value: metric.value,
           uom,
-          warn,
-          crit,
+          warn: warn?.raw ?? null,
+          crit: crit?.raw ?? null,
         },
       });
     }

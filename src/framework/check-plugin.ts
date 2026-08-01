@@ -124,6 +124,16 @@ export interface CheckPluginManifest {
   format?: 'crisismode' | 'nagios' | 'goss' | 'sensu';
   /** Sensu metric output format (only used when format is 'sensu'). Default: 'nagios_perfdata'. */
   sensuMetricFormat?: SensuMetricFormat;
+  /**
+   * Command-line arguments for nagios/goss/sensu-format plugins (crisismode-
+   * format plugins receive everything over stdin instead). Placeholders are
+   * interpolated from the check target at execution time:
+   *   {name} {kind} {host} {port} {metadata.<key>}
+   * e.g. ["-H", "{host}", "-p", "{port}", "-w", "2", "-c", "5"].
+   * A placeholder the target cannot fill fails the check as `unknown` rather
+   * than running the plugin with a broken command line.
+   */
+  args?: string[];
   /** Max risk level of any plan step this plugin can generate */
   maxRiskLevel?: RiskLevel;
   /** Timeout in ms (default: 10000) */
@@ -158,6 +168,61 @@ export function exitStatusToHealth(status: CheckExitStatus): HealthStatus {
     case 'critical': return 'unhealthy';
     default: return 'unknown';
   }
+}
+
+// ── Argument interpolation ──
+
+/** A manifest arg referenced a placeholder the target cannot fill. */
+export class CheckArgInterpolationError extends Error {
+  constructor(placeholder: string, reason: string) {
+    super(`Cannot interpolate ${placeholder}: ${reason}`);
+    this.name = 'CheckArgInterpolationError';
+  }
+}
+
+const ARG_PLACEHOLDER = /\{([a-zA-Z][a-zA-Z0-9_.-]*)\}/g;
+
+function resolvePlaceholder(token: string, target: CheckTargetInfo): string {
+  switch (token) {
+    case 'name': return target.name;
+    case 'kind': return target.kind;
+    case 'host':
+      if (target.host === undefined) {
+        throw new CheckArgInterpolationError('{host}', 'target has no host');
+      }
+      return target.host;
+    case 'port':
+      if (target.port === undefined) {
+        throw new CheckArgInterpolationError('{port}', 'target has no port');
+      }
+      return String(target.port);
+    default: {
+      if (token.startsWith('metadata.')) {
+        const key = token.slice('metadata.'.length);
+        const value = target.metadata?.[key];
+        if (value === undefined) {
+          throw new CheckArgInterpolationError(`{${token}}`, `target metadata has no '${key}'`);
+        }
+        if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+          throw new CheckArgInterpolationError(`{${token}}`, `metadata '${key}' is not a primitive`);
+        }
+        return String(value);
+      }
+      throw new CheckArgInterpolationError(`{${token}}`, 'unknown placeholder');
+    }
+  }
+}
+
+/**
+ * Fill manifest arg placeholders from the check target.
+ *
+ * Values are substituted as whole argv entries — plugins are spawned without a
+ * shell, so target-supplied strings can never become shell syntax.
+ */
+export function interpolateCheckArgs(args: readonly string[], target: CheckTargetInfo): string[] {
+  return args.map((arg) =>
+    arg.replace(ARG_PLACEHOLDER, (_match, token: string) => resolvePlaceholder(token, target)),
+  );
 }
 
 // ── Plugin sandboxing ──
@@ -560,19 +625,42 @@ export function executeSensuPlugin(
  * Centralises the format-to-executor mapping so callers don't need to branch.
  */
 export function dispatchPluginExecution(
-  plugin: { executablePath: string; manifest: Pick<CheckPluginManifest, 'format' | 'sensuMetricFormat'> },
+  plugin: { executablePath: string; manifest: Pick<CheckPluginManifest, 'format' | 'sensuMetricFormat' | 'args'> },
   verb: CheckVerb,
   options?: { timeoutMs?: number; cwd?: string; env?: Record<string, string> },
   request?: CheckRequest,
 ): Promise<PluginExecutionResult> {
-  switch (plugin.manifest.format) {
+  const format = plugin.manifest.format;
+
+  // Manifest args only apply to argv-driven formats; the crisismode JSON
+  // protocol carries everything over stdin.
+  let args: string[] | undefined;
+  if (plugin.manifest.args?.length && format && format !== 'crisismode') {
+    const target = request?.target ?? { name: 'check', kind: 'generic' };
+    try {
+      args = interpolateCheckArgs(plugin.manifest.args, target);
+    } catch (err) {
+      // A broken command line must not run: report the check as unknown.
+      return Promise.resolve({
+        exitStatus: 'unknown',
+        exitCode: 3,
+        result: null,
+        stderr: err instanceof Error ? err.message : String(err),
+        durationMs: 0,
+      });
+    }
+  }
+
+  const argOptions = { ...options, ...(args !== undefined ? { args } : {}) };
+
+  switch (format) {
     case 'nagios':
-      return executeNagiosPlugin(plugin.executablePath, verb, options);
+      return executeNagiosPlugin(plugin.executablePath, verb, argOptions);
     case 'goss':
-      return executeGossPlugin(plugin.executablePath, verb, options);
+      return executeGossPlugin(plugin.executablePath, verb, argOptions);
     case 'sensu':
       return executeSensuPlugin(plugin.executablePath, verb, {
-        ...options,
+        ...argOptions,
         ...(plugin.manifest.sensuMetricFormat !== undefined
           ? { sensuMetricFormat: plugin.manifest.sensuMetricFormat }
           : {}),

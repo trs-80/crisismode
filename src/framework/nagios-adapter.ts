@@ -31,14 +31,90 @@ import type {
 } from './check-plugin.js';
 import { exitCodeToStatus, exitStatusToHealth } from './check-plugin.js';
 
+// ── Nagios range/threshold types ──
+
+/**
+ * A Nagios threshold range, per the plugin development guidelines.
+ *
+ * Syntax: [@]start:end — `start:` may be omitted (defaults to 0), `~` means
+ * negative infinity, an empty end means positive infinity, and a bare number
+ * `n` is shorthand for `0:n`. A plain range alerts when the value falls
+ * OUTSIDE start..end; the `@` prefix inverts that, alerting when the value is
+ * INSIDE the range (bounds inclusive in both cases).
+ */
+export interface NagiosRange {
+  /** The original threshold text, for display and evidence */
+  raw: string;
+  /** True for `@` ranges: alert when the value is inside the range */
+  inside: boolean;
+  /** Range start; -Infinity for `~` */
+  start: number;
+  /** Range end; Infinity when omitted */
+  end: number;
+}
+
+/**
+ * Parse a Nagios threshold range. Returns null for an empty, non-numeric, or
+ * inverted (start > end) specification — an absent threshold and a malformed
+ * one both mean "nothing to alert on".
+ */
+export function parseNagiosRange(raw: string): NagiosRange | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const inside = trimmed.startsWith('@');
+  const body = inside ? trimmed.slice(1) : trimmed;
+  if (!body) return null;
+
+  let start: number;
+  let end: number;
+
+  const colonIdx = body.indexOf(':');
+  if (colonIdx < 0) {
+    // Bare number: shorthand for 0..n
+    start = 0;
+    end = parseFloat(body);
+    if (isNaN(end)) return null;
+  } else {
+    const startStr = body.slice(0, colonIdx).trim();
+    const endStr = body.slice(colonIdx + 1).trim();
+
+    if (startStr === '~') {
+      start = -Infinity;
+    } else if (startStr === '') {
+      start = 0;
+    } else {
+      start = parseFloat(startStr);
+      if (isNaN(start)) return null;
+    }
+
+    if (endStr === '') {
+      end = Infinity;
+    } else {
+      end = parseFloat(endStr);
+      if (isNaN(end)) return null;
+    }
+  }
+
+  if (start > end) return null;
+
+  return { raw: trimmed, inside, start, end };
+}
+
+/** True when the value triggers an alert for this range. */
+export function rangeViolated(range: NagiosRange, value: number): boolean {
+  const insideRange = value >= range.start && value <= range.end;
+  return range.inside ? insideRange : !insideRange;
+}
+
 // ── Nagios perfdata types ──
 
 export interface NagiosPerfDataItem {
   label: string;
   value: number;
   uom: string;
-  warn: number | null;
-  crit: number | null;
+  warn: NagiosRange | null;
+  crit: NagiosRange | null;
   min: number | null;
   max: number | null;
 }
@@ -86,13 +162,10 @@ export function parsePerfDataItem(raw: string): NagiosPerfDataItem | null {
 
   const uom = valueMatch[2] || '';
 
-  const parseThreshold = (s: string | undefined): number | null => {
+  // min and max are plain numbers, not ranges
+  const parseBound = (s: string | undefined): number | null => {
     if (!s || s.trim() === '') return null;
-    // Strip range notation (e.g., @10:20 → just use the end value)
-    const cleaned = s.replace(/^[@~]/, '').trim();
-    const colonIdx = cleaned.indexOf(':');
-    const numStr = colonIdx >= 0 ? cleaned.slice(colonIdx + 1) : cleaned;
-    const n = parseFloat(numStr);
+    const n = parseFloat(s.trim());
     return isNaN(n) ? null : n;
   };
 
@@ -100,10 +173,10 @@ export function parsePerfDataItem(raw: string): NagiosPerfDataItem | null {
     label,
     value,
     uom,
-    warn: parseThreshold(parts[1]),
-    crit: parseThreshold(parts[2]),
-    min: parseThreshold(parts[3]),
-    max: parseThreshold(parts[4]),
+    warn: parseNagiosRange(parts[1] ?? ''),
+    crit: parseNagiosRange(parts[2] ?? ''),
+    min: parseBound(parts[3]),
+    max: parseBound(parts[4]),
   };
 }
 
@@ -162,8 +235,8 @@ export function parseNagiosOutput(stdout: string, exitCode: number): NagiosParse
  * Derive signal status from a perfdata item's value relative to its thresholds.
  */
 function perfDataSignalStatus(item: NagiosPerfDataItem): CheckSignal['status'] {
-  if (item.crit !== null && item.value >= item.crit) return 'critical';
-  if (item.warn !== null && item.value >= item.warn) return 'warning';
+  if (item.crit !== null && rangeViolated(item.crit, item.value)) return 'critical';
+  if (item.warn !== null && rangeViolated(item.warn, item.value)) return 'warning';
   return 'healthy';
 }
 
@@ -172,8 +245,8 @@ function perfDataSignalStatus(item: NagiosPerfDataItem): CheckSignal['status'] {
  */
 function perfDataDetail(item: NagiosPerfDataItem): string {
   let detail = `${item.label}=${item.value}${item.uom}`;
-  if (item.warn !== null) detail += ` (warn: ${item.warn}${item.uom})`;
-  if (item.crit !== null) detail += ` (crit: ${item.crit}${item.uom})`;
+  if (item.warn !== null) detail += ` (warn: ${item.warn.raw})`;
+  if (item.crit !== null) detail += ` (crit: ${item.crit.raw})`;
   return detail;
 }
 
@@ -230,8 +303,8 @@ export function nagiosToDiagnoseResult(parsed: NagiosParseResult): CheckDiagnose
       evidence: {
         value: item.value,
         uom: item.uom,
-        warn: item.warn,
-        crit: item.crit,
+        warn: item.warn?.raw ?? null,
+        crit: item.crit?.raw ?? null,
       },
     });
   }

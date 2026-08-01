@@ -416,9 +416,28 @@ OK - Load 0.85 (16 CPUs), up 5d 3h | load=0.85;32;64;0; uptime=445736s;;;;
 
 Exit codes: 0=OK, 1=WARNING, 2=CRITICAL, 3=UNKNOWN.
 
-The adapter parses the text output and performance data into CrisisMode health signals and diagnose findings automatically. Performance data items that exceed their warn/crit thresholds become findings.
+The adapter parses the text output and performance data into CrisisMode health signals and diagnose findings automatically. Performance data items whose warn/crit thresholds are violated become findings. Threshold ranges follow the full Nagios syntax: a bare `n` alerts outside `0..n`, `n:` alerts below `n`, `~:n` alerts above `n`, `a:b` alerts outside the range, and `@a:b` alerts *inside* it.
 
 See `checks/example-nagios-uptime/` for a complete working example.
+
+### Passing Arguments
+
+Real Nagios plugins are parameterized on the command line (`check_http -H api.example.com -w 2 -c 5`). Declare arguments with `args` in the manifest; placeholders are filled from the check target at execution time:
+
+```json
+{
+  "name": "check-api-http",
+  "description": "HTTP reachability via the stock check_http plugin",
+  "version": "1.0.0",
+  "targetKinds": ["application"],
+  "verbs": ["health", "diagnose"],
+  "executable": "/usr/lib/nagios/plugins/check_http",
+  "format": "nagios",
+  "args": ["-H", "{host}", "-p", "{port}", "-w", "2", "-c", "5"]
+}
+```
+
+Available placeholders: `{name}`, `{kind}`, `{host}`, `{port}`, and `{metadata.<key>}`. If the target cannot fill a placeholder, the check reports `unknown` instead of running with a broken command line. `args` applies to all argv-driven formats (`nagios`, `goss`, `sensu`); crisismode-format plugins receive target details over stdin instead. Plugins are spawned without a shell, so interpolated values can never become shell syntax.
 
 ### Goss YAML Assertion Format
 
