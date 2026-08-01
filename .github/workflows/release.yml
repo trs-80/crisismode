@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
 
@@ -38,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
@@ -77,6 +81,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
@@ -182,16 +188,13 @@ jobs:
       # lookup below silently produced an empty string.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Validate version matches package.json
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
-          TAG_VERSION="${{ steps.version.outputs.version }}"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
           if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
             echo "ERROR: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)" >&2
             exit 1
@@ -231,21 +234,21 @@ jobs:
 
           if [ -n "$PREV_TAG" ]; then
             echo "Generating notes since ${PREV_TAG}"
-            gh release create "${{ github.ref_name }}" \
-              --title "CrisisMode ${{ github.ref_name }}" \
+            gh release create "$GITHUB_REF_NAME" \
+              --title "CrisisMode $GITHUB_REF_NAME" \
               --generate-notes \
               --notes-start-tag "$PREV_TAG" \
               release/*
           else
             echo "No prior tag found — generating notes from the full history"
-            gh release create "${{ github.ref_name }}" \
-              --title "CrisisMode ${{ github.ref_name }}" \
+            gh release create "$GITHUB_REF_NAME" \
+              --title "CrisisMode $GITHUB_REF_NAME" \
               --generate-notes \
               release/*
           fi
 
           # Prepend install instructions to the generated notes
-          EXISTING_NOTES=$(gh release view "${{ github.ref_name }}" --json body --jq .body)
+          EXISTING_NOTES=$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)
           printf '%s\n' '## Install' '' '**Linux:**' '```bash' \
             'curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-linux-x64 -o crisismode' \
             'chmod +x crisismode' './crisismode scan' '```' '' \
@@ -253,4 +256,4 @@ jobs:
             'curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-darwin-arm64 -o crisismode' \
             'chmod +x crisismode' './crisismode scan' '```' '' '---' > /tmp/release-notes.md
           printf '%s' "$EXISTING_NOTES" >> /tmp/release-notes.md
-          gh release edit "${{ github.ref_name }}" --notes-file /tmp/release-notes.md
+          gh release edit "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
