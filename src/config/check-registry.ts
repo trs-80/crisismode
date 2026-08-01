@@ -91,25 +91,118 @@ export function matchEntries(checks: CheckRegistryEntry[], query: string): Check
 
 // ── Internal helpers ──
 
-/** Fetch a URL as a string, following redirects. */
-export function fetchUrl(url: string): Promise<string> {
+/** Redirect hops allowed before a chain is treated as a loop. */
+const MAX_REDIRECTS = 5;
+
+/**
+ * Response size ceiling. Check plugins are a few KB of script; this is a
+ * guard against a hostile server streaming without end, not a real limit.
+ */
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+export interface FetchOptions {
+  /** Override the response size ceiling (bytes). */
+  maxBytes?: number;
+  /** Override the redirect hop limit. */
+  maxRedirects?: number;
+}
+
+/**
+ * Resolve a redirect Location against the URL that produced it, rejecting
+ * unsafe hops.
+ *
+ * Location may legitimately be relative (GitHub's raw host does this), so it
+ * is resolved rather than used verbatim. Two hops are refused outright: any
+ * non-HTTP scheme, and HTTPS→HTTP, which would silently drop a fetch of
+ * executable plugin code onto plaintext.
+ */
+export function resolveRedirectTarget(from: string, location: string): URL {
+  let target: URL;
+  try {
+    target = new URL(location, from);
+  } catch {
+    throw new Error(`Invalid redirect Location "${location}" while fetching ${from}`);
+  }
+
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    throw new Error(
+      `Refusing to follow redirect to unsupported scheme "${target.protocol}" (from ${from})`,
+    );
+  }
+
+  if (new URL(from).protocol === 'https:' && target.protocol === 'http:') {
+    throw new Error(`Refusing HTTPS→HTTP downgrade redirect: ${from} → ${target.href}`);
+  }
+
+  return target;
+}
+
+/** Fetch a URL as a Buffer with redirect, scheme, and size limits enforced. */
+function fetchRaw(url: string, options?: FetchOptions, hopsLeft?: number): Promise<Buffer> {
+  const maxBytes = options?.maxBytes ?? MAX_RESPONSE_BYTES;
+  const maxRedirects = options?.maxRedirects ?? MAX_REDIRECTS;
+  const remaining = hopsLeft ?? maxRedirects;
+
   return new Promise((resolve, reject) => {
-    const client = url.startsWith('https') ? get : httpGet;
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      reject(new Error(`Invalid URL: ${url}`));
+      return;
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      reject(new Error(`Unsupported URL scheme "${parsed.protocol}" for ${url}`));
+      return;
+    }
+
+    const client = parsed.protocol === 'https:' ? get : httpGet;
     const req = client(url, { timeout: FETCH_TIMEOUT_MS }, (res) => {
-      // Follow redirects
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        fetchUrl(res.headers.location).then(resolve, reject);
+      const status = res.statusCode ?? 0;
+
+      if (status >= 300 && status < 400 && res.headers.location) {
+        res.resume(); // drain the redirect body
+        if (remaining <= 0) {
+          reject(new Error(`Too many redirects (>${maxRedirects}) fetching ${url}`));
+          return;
+        }
+        let target: URL;
+        try {
+          target = resolveRedirectTarget(url, res.headers.location);
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        fetchRaw(target.href, options, remaining - 1).then(resolve, reject);
         return;
       }
 
-      if (res.statusCode && res.statusCode >= 400) {
-        reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
+      if (status >= 400) {
+        res.resume();
+        reject(new Error(`HTTP ${status} fetching ${url}`));
         return;
       }
 
       const chunks: Buffer[] = [];
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+      let size = 0;
+      let aborted = false;
+
+      res.on('data', (chunk: Buffer) => {
+        if (aborted) return;
+        size += chunk.length;
+        if (size > maxBytes) {
+          aborted = true;
+          reject(new Error(`Response exceeded the ${maxBytes} byte size limit fetching ${url}`));
+          res.destroy();
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk);
+      });
+      res.on('end', () => {
+        if (!aborted) resolve(Buffer.concat(chunks));
+      });
       res.on('error', reject);
     });
     req.on('error', reject);
@@ -120,30 +213,12 @@ export function fetchUrl(url: string): Promise<string> {
   });
 }
 
-/** Fetch a URL as a Buffer, following redirects. */
-export function fetchBuffer(url: string): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const client = url.startsWith('https') ? get : httpGet;
-    const req = client(url, { timeout: FETCH_TIMEOUT_MS }, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        fetchBuffer(res.headers.location).then(resolve, reject);
-        return;
-      }
+/** Fetch a URL as a string, following redirects within policy. */
+export function fetchUrl(url: string, options?: FetchOptions): Promise<string> {
+  return fetchRaw(url, options).then((buf) => buf.toString('utf-8'));
+}
 
-      if (res.statusCode && res.statusCode >= 400) {
-        reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
-    });
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error(`Timeout fetching ${url}`));
-    });
-  });
+/** Fetch a URL as a Buffer, following redirects within policy. */
+export function fetchBuffer(url: string, options?: FetchOptions): Promise<Buffer> {
+  return fetchRaw(url, options);
 }
