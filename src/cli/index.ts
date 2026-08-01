@@ -58,7 +58,7 @@ const HELP = `
     --config <path>     Path to crisismode.yaml
     --target <name>     Target name from config
     --category <kinds>  Comma-separated service kinds to scan (scan only)
-    --terse             Suppress plain-language explanations (scan)
+    --terse             Suppress plain-language explanations and risk framing
     --execute           Enable mutations (recover/webhook only)
     --health-only       Health check only, no diagnosis (recover only)
     --local             Install to ./checks/ instead of ~/.crisismode/checks/
@@ -114,6 +114,7 @@ async function main(): Promise<void> {
     noColor: values['no-color'] as boolean,
     verbose: values.verbose as boolean,
   });
+  setOutputOptions({ terse: args.includes('--terse') });
 
   // Help
   if (values.help || subcommand === 'help') {
@@ -145,13 +146,10 @@ async function main(): Promise<void> {
     case 'scan': {
       const { runScan } = await import('./commands/scan.js');
       const categoryStr = values.category as string | undefined;
-      const terse = args.includes('--terse');
-      setOutputOptions({ terse });
       await runScan({
         configPath: values.config as string | undefined,
         category: categoryStr ? categoryStr.split(',').map((s) => s.trim()) : undefined,
         verbose: values.verbose as boolean,
-        terse,
       });
       break;
     }
@@ -318,13 +316,10 @@ async function main(): Promise<void> {
       // No subcommand — default to scan (zero-config health scan)
       const { runScan: runDefaultScan } = await import('./commands/scan.js');
       const defaultCategoryStr = values.category as string | undefined;
-      const defaultTerse = args.includes('--terse');
-      setOutputOptions({ terse: defaultTerse });
       await runDefaultScan({
         configPath: values.config as string | undefined,
         category: defaultCategoryStr ? defaultCategoryStr.split(',').map((s) => s.trim()) : undefined,
         verbose: values.verbose as boolean,
-        terse: defaultTerse,
       });
       break;
     }
