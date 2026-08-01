@@ -34,7 +34,19 @@ export interface CheckRegistryEntry {
   license?: string;
   source: 'builtin' | 'community';
   url: string;
+  /**
+   * Legacy digest — sha256 of the sorted file contents concatenated.
+   * Kept accurate so already-released clients keep verifying; new clients
+   * prefer sha256v2. For `community` (tarball) entries this is the digest of
+   * the downloaded archive itself, not of the extracted files.
+   */
   sha256: string;
+  /**
+   * Manifest-bound digest — sha256 over `<sha256>  <name>\n` lines, sorted by
+   * name. Binds filenames and file boundaries, which sha256 does not.
+   * Preferred whenever present.
+   */
+  sha256v2?: string;
   /** For builtin source: individual files to download from the url base path. */
   files?: string[];
 }
