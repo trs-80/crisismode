@@ -21,6 +21,7 @@ import type { PlainEnglishSummary } from './ai-summary.js';
 import { enrichHealth, enrichDiagnosis } from '../framework/signal-explanations.js';
 import type { ExplanationContext } from '../framework/signal-explanations.js';
 import type { VisibilityReport } from './visibility.js';
+import { buildRiskFraming } from './risk-framing.js';
 
 /**
  * Three output modes:
@@ -253,6 +254,13 @@ export function printPlan(plan: RecoveryPlan): void {
       ? riskBadge(s.riskLevel)
       : chalk.dim('-'.padEnd(12));
     console.log(chalk.dim('  ') + num + type + risk + s.name);
+
+    const framing = outputOptions.mode === 'human' && !outputOptions.terse ? buildRiskFraming(s) : null;
+    if (framing) {
+      console.log(chalk.dim(`       what:  ${framing.does}`));
+      console.log(chalk.yellow(`       risk:  `) + chalk.dim(framing.couldGoWrong));
+      console.log(chalk.dim(`       undo:  ${framing.undo}`));
+    }
   }
   console.log('');
 }
