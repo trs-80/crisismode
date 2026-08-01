@@ -20,6 +20,7 @@ import type { EscalationLevel } from '../framework/escalation.js';
 import type { PlainEnglishSummary } from './ai-summary.js';
 import { enrichHealth, enrichDiagnosis } from '../framework/signal-explanations.js';
 import type { ExplanationContext } from '../framework/signal-explanations.js';
+import type { VisibilityReport } from './visibility.js';
 
 /**
  * Three output modes:
@@ -454,6 +455,8 @@ export interface ScanResult {
   summary?: string;
   /** Plain-English AI-generated or fallback summary. */
   aiSummary?: string;
+  /** What CrisisMode can see, what it found but can't check, and what's invisible by design. */
+  visibility?: VisibilityReport;
 }
 
 export function printScanSummary(result: ScanResult): void {
@@ -554,6 +557,27 @@ function printFindingGroup(findings: ScanFinding[]): void {
 function healthStatusIcon(status: HealthStatus): string {
   const label = status === 'healthy' ? 'OK' : status.toUpperCase();
   return healthStatusColor(status)(label);
+}
+
+export function printVisibility(report: VisibilityReport): void {
+  if (outputOptions.mode === 'machine') {
+    jsonOut('visibility', { ...report });
+    return;
+  }
+  if (outputOptions.mode === 'pipe' || outputOptions.terse) return;
+
+  console.log(chalk.bold('  What CrisisMode can see'));
+  for (const e of report.watching) {
+    console.log(chalk.green('    watching  ') + `${e.label} ` + chalk.dim(`— ${e.detail}`));
+  }
+  for (const e of report.blocked) {
+    console.log(chalk.yellow('    found     ') + `${e.label} ` + chalk.dim(`— ${e.detail}`));
+    if (e.hint) console.log(chalk.dim(`              ${e.hint}`));
+  }
+  for (const e of report.invisible) {
+    console.log(chalk.dim(`    invisible ${e.label} — ${e.detail}`));
+  }
+  console.log('');
 }
 
 // ── Plain-English summary ──
