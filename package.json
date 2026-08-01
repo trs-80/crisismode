@@ -52,7 +52,7 @@
   },
   "packageManager": "pnpm@10.30.3",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.111.0",
