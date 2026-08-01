@@ -237,7 +237,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   };
 
   // Run health checks in parallel with per-agent timeout
-  const healthPromises = targets.map(async (target): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string; health: HealthAssessment | null }> => {
+  const healthPromises = targets.map(async (target): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string; health: HealthAssessment | null; agentAvailable: boolean }> => {
     let instance: AgentInstance | undefined;
     try {
       instance = await registry.createForTarget(target.name);
@@ -274,6 +274,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
       return {
         kind: target.kind,
         health,
+        agentAvailable: true,
         finding: {
           service: `${target.kind} (${target.name})`,
           status: health.status,
@@ -290,6 +291,10 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
       return {
         kind: target.kind,
         health: null,
+        // instance is only ever assigned once registry.createForTarget resolves,
+        // so its absence here means no agent exists for this kind (as opposed to
+        // an agent that was found but failed during the health check itself).
+        agentAvailable: instance !== undefined,
         finding: {
           service: `${target.kind} (${target.name})`,
           status: 'unknown',
@@ -396,8 +401,8 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   const incidentSummary = buildIncidentSummary(result);
   result.summary = formatIncidentSummaryText(incidentSummary);
 
-  // What CrisisMode can see, what it found but can't check, and what's invisible by design
-  const ranKinds = [...new Set(agentResults.map((r) => r.kind))];
+  // What CrisisMode can see, what it found but can't check, and what's invisible by design.
+  const ranKinds = watchedKinds(agentResults);
   result.visibility = buildVisibilityReport(stackProfile, ranKinds, configSource);
 
   // Generate plain-English AI summary (non-blocking — falls back gracefully)
@@ -430,6 +435,17 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   }
 
   return result;
+}
+
+/**
+ * Kinds actually watched by a real agent this scan — the input to the
+ * visibility report's "watching" bucket. A target whose kind has no
+ * registered agent (`agentAvailable: false`, e.g. "No agent registered for
+ * kind ...") is a detected-but-unmonitored service, not a watched one; the
+ * visibility report puts those in "blocked" instead.
+ */
+export function watchedKinds(agentResults: Array<{ kind: string; agentAvailable: boolean }>): string[] {
+  return [...new Set(agentResults.filter((r) => r.agentAvailable).map((r) => r.kind))];
 }
 
 /**

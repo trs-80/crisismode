@@ -94,7 +94,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 ### Output Modes
 
 Three output modes are supported:
-- **human** (default for TTY): colored, interactive, emoji severity indicators
+- **human** (default for TTY): colored, interactive, emoji severity indicators; plain-language explanations on by default (suppress with --terse)
 - **pipe** (auto-detected when stdout is not a TTY): plain text, no ANSI, tab-separated
 - **machine** (`--json`): structured JSON/JSONL with metadata
 
