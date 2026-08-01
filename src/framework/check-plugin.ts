@@ -160,6 +160,114 @@ export function exitStatusToHealth(status: CheckExitStatus): HealthStatus {
   }
 }
 
+// ── Plugin sandboxing ──
+
+/**
+ * Environment variables a check plugin legitimately needs.
+ *
+ * Plugins are third-party executables installed from a remote registry, so
+ * they are given a constructed environment rather than the operator's. The
+ * parent process holds ANTHROPIC_API_KEY, database and AWS credentials, and
+ * kubeconfig paths; none of that is a plugin's business. Target details reach
+ * plugins over stdin (or argv for nagios/goss/sensu formats), never via env.
+ *
+ * PATH and the locale/tmp variables stay because plugins shell out to curl,
+ * openssl, dig and friends.
+ */
+const ENV_ALLOWLIST = [
+  'PATH',
+  'HOME',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TZ',
+  'TMPDIR',
+  'TERM',
+  'SHELL',
+  // Windows equivalents
+  'SystemRoot',
+  'SystemDrive',
+  'PATHEXT',
+  'COMSPEC',
+  'WINDIR',
+  'TEMP',
+  'TMP',
+  'USERPROFILE',
+] as const;
+
+/** Build the plugin environment: allowlisted parent vars plus explicit caller additions. */
+export function buildPluginEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ENV_ALLOWLIST) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...extra };
+}
+
+/**
+ * Per-stream output cap. A check result is a few KB of JSON; anything beyond
+ * this is a runaway or hostile plugin, and buffering it without bound would
+ * blow the spoke's 256Mi memory target.
+ */
+export const MAX_PLUGIN_OUTPUT_BYTES = 1024 * 1024;
+
+interface PluginOutput {
+  stdout(): string;
+  stderr(): string;
+  overflowed(): boolean;
+}
+
+/**
+ * Attach capped stdout/stderr collectors to a spawned plugin.
+ *
+ * Both streams stop accumulating at the cap but keep draining, so the child
+ * never blocks on backpressure. Overflowing stdout additionally kills the
+ * plugin — a result that large is unparseable anyway, so there is nothing to
+ * wait for.
+ */
+function collectOutput(
+  child: { stdout: NodeJS.ReadableStream | null; stderr: NodeJS.ReadableStream | null; kill(signal?: NodeJS.Signals): boolean },
+  limit: number = MAX_PLUGIN_OUTPUT_BYTES,
+): PluginOutput {
+  const notes: string[] = [];
+  let outText = '';
+  let outSize = 0;
+  let errText = '';
+  let errSize = 0;
+  let killed = false;
+
+  child.stdout?.on('data', (data: Buffer) => {
+    outSize += data.length;
+    if (outSize <= limit) {
+      outText += data.toString();
+      return;
+    }
+    if (!killed) {
+      killed = true;
+      notes.push(`stdout exceeded the ${limit} byte output limit — plugin terminated`);
+      child.kill('SIGKILL');
+    }
+  });
+
+  child.stderr?.on('data', (data: Buffer) => {
+    errSize += data.length;
+    if (errSize <= limit) {
+      errText += data.toString();
+      return;
+    }
+    if (!notes.some((n) => n.startsWith('stderr'))) {
+      notes.push(`stderr exceeded the ${limit} byte output limit — output truncated`);
+    }
+  });
+
+  return {
+    stdout: () => outText,
+    stderr: () => (notes.length ? [errText, ...notes].filter(Boolean).join('\n') : errText),
+    overflowed: () => notes.length > 0,
+  };
+}
+
 // ── Plugin executor ──
 
 export interface PluginExecutionResult {
@@ -185,29 +293,23 @@ export function executeCheckPlugin(
 
   return new Promise((resolve) => {
     const startTime = Date.now();
-    let stdout = '';
-    let stderr = '';
     let settled = false;
 
     const child = spawn(executablePath, [], {
       cwd: options?.cwd,
-      env: { ...process.env, ...options?.env },
+      env: buildPluginEnv(options?.env),
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: timeoutMs,
     });
 
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-    });
+    const output = collectOutput(child);
 
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
 
+      const stdout = output.stdout();
+      let stderr = output.stderr();
       const exitCode = code ?? 3;
       const exitStatus = exitCodeToStatus(exitCode);
       const durationMs = Date.now() - startTime;
@@ -265,29 +367,23 @@ export function executeNagiosPlugin(
 
   return new Promise((resolve) => {
     const startTime = Date.now();
-    let stdout = '';
-    let stderr = '';
     let settled = false;
 
     const child = spawn(executablePath, options?.args ?? [], {
       cwd: options?.cwd,
-      env: { ...process.env, ...options?.env },
+      env: buildPluginEnv(options?.env),
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: timeoutMs,
     });
 
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-    });
+    const output = collectOutput(child);
 
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
 
+      const stdout = output.stdout();
+      const stderr = output.stderr();
       const exitCode = code ?? 3;
       const exitStatus = exitCodeToStatus(exitCode);
       const durationMs = Date.now() - startTime;
@@ -340,29 +436,23 @@ export function executeGossPlugin(
 
   return new Promise((resolve) => {
     const startTime = Date.now();
-    let stdout = '';
-    let stderr = '';
     let settled = false;
 
     const child = spawn(executablePath, options?.args ?? [], {
       cwd: options?.cwd,
-      env: { ...process.env, ...options?.env },
+      env: buildPluginEnv(options?.env),
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: timeoutMs,
     });
 
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-    });
+    const output = collectOutput(child);
 
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
 
+      const stdout = output.stdout();
+      const stderr = output.stderr();
       const exitCode = code ?? 3;
       const exitStatus = exitCodeToStatus(exitCode);
       const durationMs = Date.now() - startTime;
@@ -415,29 +505,23 @@ export function executeSensuPlugin(
 
   return new Promise((resolve) => {
     const startTime = Date.now();
-    let stdout = '';
-    let stderr = '';
     let settled = false;
 
     const child = spawn(executablePath, options?.args ?? [], {
       cwd: options?.cwd,
-      env: { ...process.env, ...options?.env },
+      env: buildPluginEnv(options?.env),
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: timeoutMs,
     });
 
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data: Buffer) => {
-      stderr += data.toString();
-    });
+    const output = collectOutput(child);
 
     child.on('close', (code) => {
       if (settled) return;
       settled = true;
 
+      const stdout = output.stdout();
+      const stderr = output.stderr();
       const exitCode = code ?? 3;
       const exitStatus = exitCodeToStatus(exitCode);
       const durationMs = Date.now() - startTime;
