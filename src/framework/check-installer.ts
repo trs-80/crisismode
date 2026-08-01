@@ -10,7 +10,7 @@
  */
 
 import { mkdirSync, writeFileSync, existsSync, readFileSync, renameSync, rmSync, chmodSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, basename, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -61,11 +61,48 @@ export function getInstalledVersion(name: string, searchDirs?: string[]): string
   return null;
 }
 
+/**
+ * Reject plugin filenames that are anything other than plain basenames.
+ *
+ * `entry.files` arrives from the registry index — off the machine — and each
+ * name is joined onto the staging directory and written before any checksum
+ * is verified. A name containing `..`, a separator, or an absolute path would
+ * therefore write outside the staging area, and verifying integrity afterwards
+ * cannot undo a write that already landed. Plugin layouts are flat
+ * (manifest.json + the executable), so basenames are the whole legitimate
+ * surface.
+ */
+export function assertSafePluginFiles(files: string[]): void {
+  for (const name of files) {
+    const unsafe =
+      !name ||
+      name === '.' ||
+      name === '..' ||
+      name.includes('/') ||
+      name.includes('\\') ||
+      name.includes('\0') ||
+      isAbsolute(name) ||
+      basename(name) !== name;
+
+    if (unsafe) {
+      throw new Error(
+        `Unsafe plugin filename ${JSON.stringify(name)} in registry entry — ` +
+          `files must be plain basenames with no path separators or traversal.`,
+      );
+    }
+  }
+}
+
 /** Install a check plugin from the registry. */
 export async function installCheck(
   entry: CheckRegistryEntry,
   options?: InstallOptions,
 ): Promise<InstallResult> {
+  // Validate before anything is fetched or written: the write is the damage.
+  if (entry.files) {
+    assertSafePluginFiles(entry.files);
+  }
+
   const baseDir = getInstallDir(options);
   const destDir = join(baseDir, entry.name);
 
@@ -146,7 +183,17 @@ async function downloadAndExtractTarball(entry: CheckRegistryEntry, destDir: str
   // Extract tarball
   const tarballPath = join(destDir, 'download.tar.gz');
   writeFileSync(tarballPath, data);
-  execFileSync('tar', ['xzf', tarballPath, '-C', destDir, '--strip-components=1']);
+  // --no-same-owner: never let archive-declared ownership survive extraction
+  // (matters when the spoke runs as root in a container). tar refuses `..`
+  // members by default, which covers traversal inside the archive itself.
+  execFileSync('tar', [
+    'xzf',
+    tarballPath,
+    '-C',
+    destDir,
+    '--strip-components=1',
+    '--no-same-owner',
+  ]);
   rmSync(tarballPath);
 
   // List extracted files
