@@ -1,5 +1,10 @@
+# Root-anchored patterns do not match nested paths, so the ** forms are needed
+# to keep host build output out of the context now that packages/ is copied.
 node_modules
+**/node_modules
 dist
+**/dist
+**/*.tsbuildinfo
 output
 .git
 *.md
