@@ -59,6 +59,8 @@ const HELP = `
     --target <name>     Target name from config
     --category <kinds>  Comma-separated service kinds to scan (scan only)
     --terse             Suppress plain-language explanations and risk framing
+                        (affects human output only; machine/--json always
+                        carries the full data)
     --execute           Enable mutations (recover/webhook only)
     --health-only       Health check only, no diagnosis (recover only)
     --local             Install to ./checks/ instead of ~/.crisismode/checks/

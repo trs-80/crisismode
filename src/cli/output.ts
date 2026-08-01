@@ -255,7 +255,7 @@ export function printPlan(plan: RecoveryPlan): void {
       : chalk.dim('-'.padEnd(12));
     console.log(chalk.dim('  ') + num + type + risk + s.name);
 
-    const framing = outputOptions.mode === 'human' && !outputOptions.terse ? buildRiskFraming(s) : null;
+    const framing = outputOptions.mode === 'human' && !outputOptions.terse ? buildRiskFraming(s, plan.rollbackStrategy) : null;
     if (framing) {
       console.log(chalk.dim(`       what:  ${framing.does}`));
       console.log(chalk.yellow(`       risk:  `) + chalk.dim(framing.couldGoWrong));

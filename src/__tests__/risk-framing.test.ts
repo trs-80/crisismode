@@ -42,6 +42,18 @@ describe('buildRiskFraming', () => {
     expect(framing!.undo).toContain('captured');
   });
 
+  it('falls back to the plan-level rollback strategy when the step has none', () => {
+    const planRollback = { type: 'stepwise' as const, description: 'Each step is independently reversible via the plan rollback strategy.' };
+    const framing = buildRiskFraming(systemStep({ rollback: undefined }) as never, planRollback);
+    expect(framing!.undo).toBe('Each step is independently reversible via the plan rollback strategy.');
+  });
+
+  it('prefers step-level rollback over the plan-level rollback strategy', () => {
+    const planRollback = { type: 'stepwise' as const, description: 'Plan-level fallback text.' };
+    const framing = buildRiskFraming(systemStep() as never, planRollback);
+    expect(framing!.undo).toContain('Re-add the replica');
+  });
+
   it('returns null for routine risk', () => {
     expect(buildRiskFraming(systemStep({ riskLevel: 'routine' }) as never)).toBeNull();
   });

@@ -162,14 +162,21 @@ export interface HealthCheckRegistry {
  * blocked); the second means it IS being watched and produced a real
  * down/unknown finding (visibility: watching). Checking supportedKinds() up
  * front, independent of connection state, is what distinguishes them.
+ *
+ * `supportedKinds()` itself is called inside the try block: a registry
+ * implementation whose `supportedKinds()` throws must still produce an
+ * `unknown` finding here rather than rejecting and aborting the whole
+ * `Promise.all` in `runScan`. If it throws, we can't know whether an agent
+ * was available, so `agentAvailable` falls back to `false`.
  */
 export async function checkTargetHealth(
   target: TargetConfig,
   registry: HealthCheckRegistry,
 ): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string; health: HealthAssessment | null; agentAvailable: boolean }> {
-  const agentAvailable = registry.supportedKinds().includes(target.kind);
+  let agentAvailable = false;
   let instance: AgentInstance | undefined;
   try {
+    agentAvailable = registry.supportedKinds().includes(target.kind);
     instance = await registry.createForTarget(target.name);
     const { agent, backend } = instance;
 
