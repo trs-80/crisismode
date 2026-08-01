@@ -544,6 +544,10 @@ function printFindingGroup(findings: ScanFinding[]): void {
       f.service +
       chalk.dim(` — ${f.summary}`),
     );
+    if (!outputOptions.terse && f.explanation) {
+      console.log(chalk.dim(`      ${f.explanation}`));
+      if (f.learnMoreUrl) console.log(chalk.dim(`      Learn more: ${f.learnMoreUrl}`));
+    }
   }
 }
 
