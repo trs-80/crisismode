@@ -27,4 +27,25 @@ describe('terse output option', () => {
     expect(outputOptions.mode).toBe('machine');
     expect(outputOptions.terse).toBe(true);
   });
+
+  /**
+   * `crisismode` parses --terse once in main() (`args.includes('--terse')`)
+   * before routing to a subcommand, so every command — not just scan —
+   * gets the flag. Exercise that same argv-scanning logic directly for the
+   * commands that render risk framing (recover, demo) and the ones that
+   * don't need it, since index.ts's main() runs as a top-level side effect
+   * and can't be invoked directly from a unit test.
+   */
+  it.each([
+    [['demo', '--terse'], true],
+    [['recover', '--terse'], true],
+    [['scan', '--terse'], true],
+    [['--terse'], true],
+    [['demo'], false],
+    [['recover'], false],
+    [[], false],
+  ] as const)('argv %j resolves terse to %s, matching main()', (argv, expected) => {
+    setOutputOptions({ terse: (argv as readonly string[]).includes('--terse') });
+    expect(outputOptions.terse).toBe(expected);
+  });
 });
