@@ -15,7 +15,8 @@
  * the presence of a particular listener function.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import pg from 'pg';
 import { PgLiveClient } from '../agent/pg-replication/live-client.js';
 import { DbMigrationLiveClient } from '../agent/db-migration/live-client.js';
 
@@ -32,6 +33,10 @@ function idleClientError(): Error {
 }
 
 describe('pg pool idle-client error handling', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('does not throw when the primary pool emits an idle-client error', async () => {
     const client = new PgLiveClient(CONN);
     const pool = (client as unknown as { primaryPool: EmittingPool }).primaryPool;
@@ -59,22 +64,25 @@ describe('pg pool idle-client error handling', () => {
     await client.close();
   });
 
-  it('keeps the pool usable for later queries after an idle-client error', async () => {
+  it('keeps the same pool serving queries after an idle-client error', async () => {
+    // Spy on the prototype rather than swapping the field, so the query is
+    // answered by the *real* pool instance — the one carrying the listener.
+    // Replacing client.primaryPool would assert on a stand-in that never saw
+    // the error, which proves nothing about the pool surviving.
+    const query = vi
+      .spyOn(pg.Pool.prototype, 'query')
+      .mockResolvedValue({ rows: [{ server_version: '16.2' }], rowCount: 1 });
+
     const client = new PgLiveClient(CONN);
     const pool = (client as unknown as { primaryPool: EmittingPool }).primaryPool;
 
     pool.emit('error', idleClientError());
 
-    // The pool object must survive the event — node-postgres discards the
-    // broken client internally and the pool goes on serving new checkouts.
-    const swapped = client as unknown as {
-      primaryPool: { query(sql: string): Promise<unknown>; end(): Promise<void> };
-    };
-    swapped.primaryPool = {
-      query: async () => ({ rows: [{ server_version: '16.2' }] }),
-      end: async () => {},
-    };
+    // node-postgres discards the broken client internally; the pool itself
+    // goes on serving new checkouts.
     await expect(client.discoverVersion()).resolves.toBe('16.2');
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.instances[0]).toBe(pool);
 
     await client.close();
   });
