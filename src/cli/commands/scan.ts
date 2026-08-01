@@ -42,6 +42,7 @@ export interface ScanOptions {
   configPath?: string | undefined;
   category?: string[] | undefined;
   verbose?: boolean;
+  terse?: boolean;
 }
 
 /** Per-agent timeout for health checks during scan (ms). */

@@ -19,7 +19,7 @@
  */
 
 import { parseArgs } from 'node:util';
-import { configure } from './output.js';
+import { configure, setOutputOptions } from './output.js';
 import { formatError } from './errors.js';
 
 const HELP = `
@@ -58,6 +58,7 @@ const HELP = `
     --config <path>     Path to crisismode.yaml
     --target <name>     Target name from config
     --category <kinds>  Comma-separated service kinds to scan (scan only)
+    --terse             Suppress plain-language explanations (scan)
     --execute           Enable mutations (recover/webhook only)
     --health-only       Health check only, no diagnosis (recover only)
     --local             Install to ./checks/ instead of ~/.crisismode/checks/
@@ -144,10 +145,13 @@ async function main(): Promise<void> {
     case 'scan': {
       const { runScan } = await import('./commands/scan.js');
       const categoryStr = values.category as string | undefined;
+      const terse = args.includes('--terse');
+      setOutputOptions({ terse });
       await runScan({
         configPath: values.config as string | undefined,
         category: categoryStr ? categoryStr.split(',').map((s) => s.trim()) : undefined,
         verbose: values.verbose as boolean,
+        terse,
       });
       break;
     }
@@ -314,10 +318,13 @@ async function main(): Promise<void> {
       // No subcommand — default to scan (zero-config health scan)
       const { runScan: runDefaultScan } = await import('./commands/scan.js');
       const defaultCategoryStr = values.category as string | undefined;
+      const defaultTerse = args.includes('--terse');
+      setOutputOptions({ terse: defaultTerse });
       await runDefaultScan({
         configPath: values.config as string | undefined,
         category: defaultCategoryStr ? defaultCategoryStr.split(',').map((s) => s.trim()) : undefined,
         verbose: values.verbose as boolean,
+        terse: defaultTerse,
       });
       break;
     }

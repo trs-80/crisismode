@@ -35,9 +35,11 @@ export interface OutputOptions {
   noColor: boolean;
   verbose: boolean;
   mode: OutputMode;
+  /** Suppress plain-language explanations, rendering only raw signals. */
+  terse: boolean;
 }
 
-let outputOptions: OutputOptions = { json: false, noColor: false, verbose: false, mode: 'human' };
+export let outputOptions: OutputOptions = { json: false, noColor: false, verbose: false, mode: 'human', terse: false };
 
 export function configure(opts: Partial<OutputOptions>): void {
   outputOptions = { ...outputOptions, ...opts };
@@ -58,6 +60,9 @@ export function configure(opts: Partial<OutputOptions>): void {
     chalk.level = 0;
   }
 }
+
+/** Alias for `configure` — merges option updates into the current output options. */
+export { configure as setOutputOptions };
 
 /** Get the current output mode. */
 export function getOutputMode(): OutputMode {
