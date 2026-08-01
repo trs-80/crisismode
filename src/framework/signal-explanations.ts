@@ -73,6 +73,46 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://docs.aws.amazon.com/aws-backup/latest/devguide/whatisbackup.html',
   },
   {
+    match: /^resolver_|^dns_/,
+    explanation: 'DNS translates names like db.example.com into IP addresses. If this machine cannot reach a DNS resolver, everything that uses names appears down even when services are healthy.',
+    learnMoreUrl: 'https://www.cloudflare.com/learning/dns/what-is-dns/',
+  },
+  {
+    match: /^flink|_checkpoint/,
+    explanation: 'Flink runs continuous stream-processing jobs with periodic checkpoints. A failing job or stalled checkpoints means data is not being processed and recovery to a recent point may not be possible.',
+    learnMoreUrl: 'https://nightlies.apache.org/flink/flink-docs-stable/docs/ops/state/checkpoints/',
+  },
+  {
+    match: /^ceph|_osd|placement_group/,
+    explanation: 'Ceph is distributed storage: data is spread across many disks (OSDs) with copies. Degraded health means some copies are missing — another failure could make data unavailable.',
+    learnMoreUrl: 'https://docs.ceph.com/en/latest/rados/operations/monitoring/',
+  },
+  {
+    match: /^environment_variables|^config_|drift/,
+    explanation: 'Configuration drift: what is running no longer matches what was declared (env vars, config files). Drift makes incidents confusing — the system misbehaves in ways the config says it should not.',
+    learnMoreUrl: 'https://www.hashicorp.com/resources/what-is-configuration-drift',
+  },
+  {
+    match: /^schema_migrations|^migration_/,
+    explanation: 'Database migrations change the schema your application expects. A half-applied or failed migration means the app and database disagree about structure — queries start failing.',
+    learnMoreUrl: 'https://www.prisma.io/dataguide/types/relational/what-are-database-migrations',
+  },
+  {
+    match: /^deploy_|^release_/,
+    explanation: 'Deployment health: whether the most recent release is running correctly. If problems started right after a deploy, rolling back to the previous version is usually the fastest fix.',
+    learnMoreUrl: 'https://docs.aws.amazon.com/whitepapers/latest/practicing-continuous-integration-continuous-delivery/deployment-methods.html',
+  },
+  {
+    match: /^provider_health|^ai_provider|model_availability/,
+    explanation: 'AI provider health: whether the LLM API your app depends on is reachable and responding. Provider outages and rate limits look like app bugs unless checked directly.',
+    learnMoreUrl: 'https://docs.claude.com/en/api/errors',
+  },
+  {
+    match: /^s3_|^bucket_/,
+    explanation: 'S3 bucket protection settings (versioning, lifecycle, public access). Wrong settings quietly remove your safety net — deleted or overwritten objects may be unrecoverable.',
+    learnMoreUrl: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html',
+  },
+  {
     match: /queue|consumer|lag_/,
     explanation: 'Queue backlog: messages are arriving faster than consumers process them. Growing backlog delays downstream work and can exhaust storage.',
     learnMoreUrl: 'https://www.cloudflare.com/learning/serverless/glossary/message-queue/',

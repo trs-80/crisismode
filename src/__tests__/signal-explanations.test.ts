@@ -70,3 +70,25 @@ describe('enrichment', () => {
     expect(enrichDiagnosis(d).findings[0]!.learnMoreUrl).toMatch(/^https:\/\//);
   });
 });
+
+describe('knowledge map covers all built-in agent sources', () => {
+  const REPRESENTATIVE_SOURCES = [
+    'resolver_reachability',        // dns agent — /^dns/ does NOT match this today
+    'flink_job_status',             // flink
+    'ceph_cluster_health',          // ceph
+    'environment_variables',        // config-drift
+    'schema_migrations',            // db-migration
+    'deploy_status',                // deploy-rollback
+    'provider_health_status',       // ai-provider
+    's3_versioning',                // aws-s3
+  ];
+
+  for (const source of REPRESENTATIVE_SOURCES) {
+    it(`explains '${source}'`, () => {
+      const hit = explainSource(source);
+      expect(hit, `no EXPLANATIONS entry matches '${source}'`).toBeDefined();
+      expect(hit!.explanation.length).toBeGreaterThan(40);
+      expect(hit!.learnMoreUrl).toMatch(/^https:/);
+    });
+  }
+});
