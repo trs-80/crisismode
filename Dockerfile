@@ -23,6 +23,8 @@ RUN pnpm install --frozen-lockfile
 COPY tsconfig.base.json tsconfig.json ./
 COPY packages/ packages/
 COPY src/ src/
+# `pnpm build` runs scripts/copy-json-assets.mjs to stage JSON assets into dist/.
+COPY scripts/ scripts/
 RUN pnpm build
 
 # --- Production stage ---
