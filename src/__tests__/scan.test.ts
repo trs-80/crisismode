@@ -2,7 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { computeHealthScore } from '../cli/commands/scan.js';
+import { computeHealthScore, watchedKinds } from '../cli/commands/scan.js';
 import type * as OutputModule from '../cli/output.js';
 
 // ── Output mode tests ──
@@ -106,6 +106,42 @@ describe('Health score computation', () => {
       { status: 'recovering' },
       { status: 'unhealthy' },
     ])).toBe(53);
+  });
+});
+
+// ── Watched-kinds derivation (visibility "watching" input) ──
+
+describe('watchedKinds', () => {
+  it('includes kinds whose health check ran against a real agent', () => {
+    const results = [
+      { kind: 'postgresql', agentAvailable: true },
+      { kind: 'dns', agentAvailable: true },
+    ];
+    expect(watchedKinds(results)).toEqual(['postgresql', 'dns']);
+  });
+
+  it('excludes a kind with no registered agent, even though a target was attempted', () => {
+    // Mirrors what happens for an env-detected service like MONGODB_URI:
+    // scan.ts still produces an agentResults entry (status "unknown", the
+    // "No agent registered" error), but agentAvailable is false because
+    // registry.createForTarget never resolved.
+    const results = [
+      { kind: 'postgresql', agentAvailable: true },
+      { kind: 'mongodb', agentAvailable: false },
+    ];
+    expect(watchedKinds(results)).toEqual(['postgresql']);
+  });
+
+  it('de-duplicates repeated kinds', () => {
+    const results = [
+      { kind: 'postgresql', agentAvailable: true },
+      { kind: 'postgresql', agentAvailable: true },
+    ];
+    expect(watchedKinds(results)).toEqual(['postgresql']);
+  });
+
+  it('returns an empty array when nothing was actually watched', () => {
+    expect(watchedKinds([{ kind: 'mongodb', agentAvailable: false }])).toEqual([]);
   });
 });
 

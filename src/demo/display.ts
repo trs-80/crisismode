@@ -3,6 +3,8 @@
 
 import chalk from 'chalk';
 import { healthStatusColor, signalStatusColor } from '../cli/status-presentation.js';
+import { outputOptions } from '../cli/output.js';
+import { buildRiskFraming } from '../cli/risk-framing.js';
 import type { RecoveryStep, SystemActionStep, HumanApprovalStep } from '../types/step-types.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { AgentContext } from '../types/agent-context.js';
@@ -199,6 +201,13 @@ export function displayPlanTable(plan: RecoveryPlan): void {
         ? riskBadge(s.riskLevel)
         : chalk.dim('—'.padEnd(12));
     console.log(chalk.dim('     ') + num + type + risk + s.name);
+
+    const framing = outputOptions.mode === 'human' && !outputOptions.terse ? buildRiskFraming(s) : null;
+    if (framing) {
+      console.log(chalk.dim(`          what:  ${framing.does}`));
+      console.log(chalk.yellow(`          risk:  `) + chalk.dim(framing.couldGoWrong));
+      console.log(chalk.dim(`          undo:  ${framing.undo}`));
+    }
   }
   console.log('');
 
