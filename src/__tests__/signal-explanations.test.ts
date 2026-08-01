@@ -44,6 +44,12 @@ describe('explainSource', () => {
   it('returns undefined for unknown sources', () => {
     expect(explainSource('bogus_source_xyz')).toBeUndefined();
   });
+
+  it('gives s3_backup_assessment the s3 explanation, not the generic backup explanation', () => {
+    const hit = explainSource('s3_backup_assessment');
+    expect(hit?.learnMoreUrl).toContain('AmazonS3');
+    expect(hit?.explanation).toContain('bucket');
+  });
 });
 
 describe('enrichment', () => {

@@ -68,6 +68,11 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/',
   },
   {
+    match: /^s3_|^bucket_/,
+    explanation: 'S3 bucket protection settings (versioning, lifecycle, public access). Wrong settings quietly remove your safety net — deleted or overwritten objects may be unrecoverable.',
+    learnMoreUrl: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html',
+  },
+  {
     match: /backup|snapshot|pitr|restore/,
     explanation: 'Backups and point-in-time recovery are the last line of defense against data loss. A misconfigured or stale backup means recovery may be impossible when needed.',
     learnMoreUrl: 'https://docs.aws.amazon.com/aws-backup/latest/devguide/whatisbackup.html',
@@ -106,11 +111,6 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     match: /^provider_health|^ai_provider|model_availability/,
     explanation: 'AI provider health: whether the LLM API your app depends on is reachable and responding. Provider outages and rate limits look like app bugs unless checked directly.',
     learnMoreUrl: 'https://docs.claude.com/en/api/errors',
-  },
-  {
-    match: /^s3_|^bucket_/,
-    explanation: 'S3 bucket protection settings (versioning, lifecycle, public access). Wrong settings quietly remove your safety net — deleted or overwritten objects may be unrecoverable.',
-    learnMoreUrl: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html',
   },
   {
     match: /queue|consumer|lag_/,
