@@ -432,7 +432,10 @@ export interface ScanFinding {
   summary: string;
   confidence: number;
   escalationLevel: EscalationLevel;
-  signals: Array<{ status: string; detail: string }>;
+  signals: Array<{ status: string; detail: string; source?: string }>;
+  /** Plain-language explanation of the dominant signal (static knowledge map). */
+  explanation?: string;
+  learnMoreUrl?: string;
 }
 
 export interface RecentChange {
