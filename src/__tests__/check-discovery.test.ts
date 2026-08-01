@@ -206,5 +206,27 @@ describe('check-discovery', () => {
 
       await expect(loadPlugin(pluginDir)).rejects.toThrow('missing');
     });
+
+    it('preserves manifest args', async () => {
+      const parentDir = await makeTmpDir();
+      const pluginDir = await createPlugin(parentDir, 'with-args', {
+        format: 'nagios',
+        args: ['-H', '{host}', '-w', '80%'],
+      });
+
+      const plugin = await loadPlugin(pluginDir, 'project');
+      expect(plugin.manifest.args).toEqual(['-H', '{host}', '-w', '80%']);
+    });
+
+    it('drops args when any entry is not a string', async () => {
+      const parentDir = await makeTmpDir();
+      const pluginDir = await createPlugin(parentDir, 'bad-args', {
+        format: 'nagios',
+        args: ['-p', 5432],
+      });
+
+      const plugin = await loadPlugin(pluginDir, 'project');
+      expect(plugin.manifest.args).toBeUndefined();
+    });
   });
 });
