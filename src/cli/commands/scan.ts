@@ -37,6 +37,7 @@ import type { ScanFinding, ScanResult, RecentChange } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { HealthAssessment, HealthStatus } from '../../types/health.js';
 import type { AgentInstance } from '../../config/agent-registration.js';
+import type { TargetConfig } from '../../config/schema.js';
 import type { CheckRequest, CheckHealthResult } from '../../framework/check-plugin.js';
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 
@@ -142,6 +143,98 @@ export function buildScanEvidence(
   return evidence;
 }
 
+/** Minimal registry surface `checkTargetHealth` needs — narrowed for testability. */
+export interface HealthCheckRegistry {
+  supportedKinds(): string[];
+  createForTarget(name: string): Promise<AgentInstance>;
+}
+
+/**
+ * Run one target's health check and report whether a real agent was
+ * available for it.
+ *
+ * `agentAvailable` is derived from `registry.supportedKinds()`, checked
+ * *before* `createForTarget()` is called — not from whether `createForTarget`
+ * resolved. Several agents (redis, queue-backlog, db-migration, kubernetes)
+ * perform real I/O (connect/ping) inside `createForTarget()` itself, so a
+ * thrown error there can mean either "no agent registered for this kind" or
+ * "agent found, but the live connection failed." Those are very different
+ * signals: the first means the service isn't monitored (visibility:
+ * blocked); the second means it IS being watched and produced a real
+ * down/unknown finding (visibility: watching). Checking supportedKinds() up
+ * front, independent of connection state, is what distinguishes them.
+ */
+export async function checkTargetHealth(
+  target: TargetConfig,
+  registry: HealthCheckRegistry,
+): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string; health: HealthAssessment | null; agentAvailable: boolean }> {
+  const agentAvailable = registry.supportedKinds().includes(target.kind);
+  let instance: AgentInstance | undefined;
+  try {
+    instance = await registry.createForTarget(target.name);
+    const { agent, backend } = instance;
+
+    const trigger: AgentContext['trigger'] = {
+      type: 'health_check',
+      source: 'cli-scan',
+      payload: {
+        alertname: `${target.kind}ScanCheck`,
+        instance: `${target.name}`,
+        severity: 'info',
+      },
+      receivedAt: new Date().toISOString(),
+    };
+
+    const context = assembleContext(trigger, agent.manifest);
+
+    // Race health check against timeout
+    const health = await Promise.race([
+      agent.assessHealth(context),
+      timeoutPromise<HealthAssessment>(AGENT_TIMEOUT_MS, {
+        status: 'unknown',
+        confidence: 0,
+        summary: 'Health check timed out',
+        observedAt: new Date().toISOString(),
+        signals: [],
+        recommendedActions: ['Check connectivity to the service'],
+      }),
+    ]);
+
+    await backend.close();
+
+    return {
+      kind: target.kind,
+      health,
+      agentAvailable,
+      finding: {
+        service: `${target.kind} (${target.name})`,
+        status: health.status,
+        summary: health.summary,
+        confidence: health.confidence,
+        escalationLevel: health.status === 'healthy' ? 1 : 2,
+        signals: health.signals.map((s) => ({ status: s.status, detail: s.detail, source: s.source })),
+      },
+    };
+  } catch (err) {
+    if (instance) {
+      await instance.backend.close().catch(() => {});
+    }
+    return {
+      kind: target.kind,
+      health: null,
+      agentAvailable,
+      finding: {
+        service: `${target.kind} (${target.name})`,
+        status: 'unknown',
+        summary: `Error: ${err instanceof Error ? err.message : String(err)}`,
+        confidence: 0,
+        escalationLevel: 2,
+        signals: [],
+      },
+    };
+  }
+}
+
 export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   const startTime = Date.now();
   printBanner();
@@ -237,75 +330,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   };
 
   // Run health checks in parallel with per-agent timeout
-  const healthPromises = targets.map(async (target): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string; health: HealthAssessment | null; agentAvailable: boolean }> => {
-    let instance: AgentInstance | undefined;
-    try {
-      instance = await registry.createForTarget(target.name);
-      const { agent, backend } = instance;
-
-      const trigger: AgentContext['trigger'] = {
-        type: 'health_check',
-        source: 'cli-scan',
-        payload: {
-          alertname: `${target.kind}ScanCheck`,
-          instance: `${target.name}`,
-          severity: 'info',
-        },
-        receivedAt: new Date().toISOString(),
-      };
-
-      const context = assembleContext(trigger, agent.manifest);
-
-      // Race health check against timeout
-      const health = await Promise.race([
-        agent.assessHealth(context),
-        timeoutPromise<HealthAssessment>(AGENT_TIMEOUT_MS, {
-          status: 'unknown',
-          confidence: 0,
-          summary: 'Health check timed out',
-          observedAt: new Date().toISOString(),
-          signals: [],
-          recommendedActions: ['Check connectivity to the service'],
-        }),
-      ]);
-
-      await backend.close();
-
-      return {
-        kind: target.kind,
-        health,
-        agentAvailable: true,
-        finding: {
-          service: `${target.kind} (${target.name})`,
-          status: health.status,
-          summary: health.summary,
-          confidence: health.confidence,
-          escalationLevel: health.status === 'healthy' ? 1 : 2,
-          signals: health.signals.map((s) => ({ status: s.status, detail: s.detail, source: s.source })),
-        },
-      };
-    } catch (err) {
-      if (instance) {
-        await instance.backend.close().catch(() => {});
-      }
-      return {
-        kind: target.kind,
-        health: null,
-        // instance is only ever assigned once registry.createForTarget resolves,
-        // so its absence here means no agent exists for this kind (as opposed to
-        // an agent that was found but failed during the health check itself).
-        agentAvailable: instance !== undefined,
-        finding: {
-          service: `${target.kind} (${target.name})`,
-          status: 'unknown',
-          summary: `Error: ${err instanceof Error ? err.message : String(err)}`,
-          confidence: 0,
-          escalationLevel: 2,
-          signals: [],
-        },
-      };
-    }
-  });
+  const healthPromises = targets.map((target) => checkTargetHealth(target, registry));
 
   // Await plugin discovery alongside built-in health checks
   const [agentResults, discoveryResult] = await Promise.all([
