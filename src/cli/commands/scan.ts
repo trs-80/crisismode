@@ -31,6 +31,7 @@ import { buildConfigFromDetection } from '../runtime.js';
 import { synthesizeByRules } from '../../framework/root-cause-synthesis.js';
 import type { AgentEvidence } from '../../framework/root-cause-synthesis.js';
 import { healthToSignals } from '../../framework/health-to-signals.js';
+import { explainSourceInContext, type ExplanationContext } from '../../framework/signal-explanations.js';
 import type { ScanFinding, ScanResult, RecentChange } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { HealthAssessment, HealthStatus } from '../../types/health.js';
@@ -75,6 +76,31 @@ const KIND_PREFIX: Record<string, string> = {
 function findingId(kind: string, index: number): string {
   const prefix = KIND_PREFIX[kind] ?? kind.toUpperCase().slice(0, 5);
   return `${prefix}-${String(index + 1).padStart(3, '0')}`;
+}
+
+/**
+ * Attach a plain-language explanation to a finding from its dominant signal,
+ * preferring the first non-healthy signal with a knowledge-map hit and
+ * falling back to any signal with a hit. Healthy findings and findings with
+ * no matching source are returned untouched.
+ */
+export function enrichScanFinding<T extends {
+  status: string;
+  signals: Array<{ status: string; detail: string; source?: string }>;
+  explanation?: string;
+  learnMoreUrl?: string;
+}>(finding: T, ctx: ExplanationContext): T & { explanation?: string; learnMoreUrl?: string } {
+  if (finding.status === 'healthy') return finding;
+  const candidates = [
+    ...finding.signals.filter((s) => s.status !== 'healthy'),
+    ...finding.signals.filter((s) => s.status === 'healthy'),
+  ];
+  for (const signal of candidates) {
+    if (!signal.source) continue;
+    const hit = explainSourceInContext(signal.source, ctx);
+    if (hit) return { ...finding, ...hit };
+  }
+  return finding;
 }
 
 /**
@@ -205,6 +231,9 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   const findings: ScanFinding[] = [];
   let findingCounter = 0;
   let pluginFindingCounter = 0;
+  const explanationCtx: ExplanationContext = {
+    serverless: stackProfile.platform.platform === 'vercel',
+  };
 
   // Run health checks in parallel with per-agent timeout
   const healthPromises = targets.map(async (target): Promise<{ finding: Omit<ScanFinding, 'id'>; kind: string; health: HealthAssessment | null }> => {
@@ -250,7 +279,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
           summary: health.summary,
           confidence: health.confidence,
           escalationLevel: health.status === 'healthy' ? 1 : 2,
-          signals: health.signals.map((s) => ({ status: s.status, detail: s.detail })),
+          signals: health.signals.map((s) => ({ status: s.status, detail: s.detail, source: s.source })),
         },
       };
     } catch (err) {
@@ -280,7 +309,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   // Push agent findings in target order (not completion order)
   for (const { finding, kind } of agentResults) {
-    findings.push({ id: findingId(kind, findingCounter++), ...finding });
+    findings.push(enrichScanFinding({ id: findingId(kind, findingCounter++), ...finding }, explanationCtx));
   }
 
   // Cross-system root-cause correlation — only meaningful with 2+ degraded targets
@@ -318,6 +347,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
         const signals = (healthResult?.signals ?? []).map((s) => ({
           status: s.status,
           detail: s.detail,
+          source: s.source,
         }));
 
         return {
@@ -343,7 +373,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     // Await all in parallel, then push in discovery order so IDs are deterministic
     const pluginResults = await Promise.all(pluginPromises);
     for (const result of pluginResults) {
-      findings.push({ id: findingId('plugin', pluginFindingCounter++), ...result });
+      findings.push(enrichScanFinding({ id: findingId('plugin', pluginFindingCounter++), ...result }, explanationCtx));
     }
   }
 
