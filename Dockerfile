@@ -2,7 +2,7 @@
 # Multi-stage build for CrisisMode spoke
 
 # --- Build stage ---
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 # Corepack resolves pnpm from package.json#packageManager — do not pin a second
 # version here, it is silently ignored.
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
@@ -26,7 +26,7 @@ COPY src/ src/
 RUN pnpm build
 
 # --- Production stage ---
-FROM node:20-alpine
+FROM node:22-alpine
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 # Git hooks have no meaning in an image; keeps the `prepare` script quiet.
 ENV HUSKY=0
