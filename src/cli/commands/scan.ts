@@ -18,7 +18,7 @@ import { discoverStack, printOnboardingMessage } from '../autodiscovery.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
-  printBanner, printScanSummary, printNextAction,
+  printBanner, printScanSummary, printVisibility, printNextAction,
   printInfo, printDetection, getOutputMode,
   printPlainEnglishSummary, printSynthesis,
 } from '../output.js';
@@ -26,6 +26,7 @@ import {
   buildIncidentSummary, formatIncidentSummaryText,
 } from '../incident-summary.js';
 import { generatePlainEnglishSummary } from '../ai-summary.js';
+import { buildVisibilityReport } from '../visibility.js';
 import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
 import { buildConfigFromDetection } from '../runtime.js';
 import { synthesizeByRules } from '../../framework/root-cause-synthesis.js';
@@ -395,11 +396,16 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   const incidentSummary = buildIncidentSummary(result);
   result.summary = formatIncidentSummaryText(incidentSummary);
 
+  // What CrisisMode can see, what it found but can't check, and what's invisible by design
+  const ranKinds = [...new Set(agentResults.map((r) => r.kind))];
+  result.visibility = buildVisibilityReport(stackProfile, ranKinds, configSource);
+
   // Generate plain-English AI summary (non-blocking — falls back gracefully)
-  const plainEnglish = await generatePlainEnglishSummary(incidentSummary, result.recentChanges);
+  const plainEnglish = await generatePlainEnglishSummary(incidentSummary, result.recentChanges, result.visibility);
   result.aiSummary = plainEnglish.text;
 
   printScanSummary(result);
+  printVisibility(result.visibility);
 
   // Print next steps from the incident summary (single source of truth)
   for (const step of incidentSummary.nextSteps) {

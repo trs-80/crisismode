@@ -18,6 +18,7 @@ import { sanitizeInput } from '../framework/ai-diagnosis.js';
 import { getNetworkProfile } from '../framework/network-profile.js';
 import type { IncidentSummary } from './incident-summary.js';
 import type { RecentChange } from './output.js';
+import type { VisibilityReport } from './visibility.js';
 import { defaultAiModel } from '../framework/ai-model.js';
 import { callClaude } from '../framework/ai-client.js';
 
@@ -39,6 +40,7 @@ export interface PlainEnglishSummary {
 export async function generatePlainEnglishSummary(
   summary: IncidentSummary,
   recentChanges: RecentChange[],
+  visibility?: VisibilityReport,
 ): Promise<PlainEnglishSummary> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -51,7 +53,7 @@ export async function generatePlainEnglishSummary(
   }
 
   try {
-    return await callAi(summary, recentChanges, apiKey);
+    return await callAi(summary, recentChanges, apiKey, visibility);
   } catch (err) {
     console.error('AI summary failed:', err instanceof Error ? err.message : err);
     return buildFallbackSummary(summary);
@@ -62,6 +64,7 @@ async function callAi(
   summary: IncidentSummary,
   recentChanges: RecentChange[],
   apiKey: string,
+  visibility?: VisibilityReport,
 ): Promise<PlainEnglishSummary> {
   // Build a compact text serialization — keep it under 500 tokens
   const parts: string[] = [];
@@ -90,7 +93,12 @@ async function callAi(
     parts.push(`Recent changes: ${changeDescs.join('; ')}`);
   }
 
-  const userMessage = sanitizeInput(parts.join('\n'));
+  const visibilityText = visibility
+    ? `\nVisibility: watching ${visibility.watching.map((e) => e.label).join(', ') || 'nothing'}. ` +
+      `Known gaps: ${visibility.blocked.map((e) => e.detail).join('; ') || 'none'}.`
+    : '';
+
+  const userMessage = sanitizeInput(parts.join('\n') + visibilityText);
 
   const text = await callClaude({
     system: SYSTEM_PROMPT,
