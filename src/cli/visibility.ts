@@ -26,8 +26,7 @@ const LOCAL_KINDS = new Set(['dns', 'disk']);
 
 const CONFIG_SOURCE_DETAIL: Record<string, string> = {
   file: 'configured in crisismode.yaml',
-  env: 'found via environment variables',
-  detection: 'detected listening on this machine',
+  'env-fallback': 'configured via legacy environment variables',
   none: 'detected automatically',
 };
 
@@ -49,9 +48,15 @@ export function buildVisibilityReport(
       continue;
     }
     const hint = presentHints.find((h) => h.inferredService === kind);
+    if (hint) {
+      watching.push({ label: kind, detail: `via ${hint.name}` });
+      continue;
+    }
+    const derivedTarget = profile.derivedTargets.find((t) => t.kind === kind);
+    const derivedNote = derivedTarget ? profile.derivedNotes[derivedTarget.name] : undefined;
     watching.push({
       label: kind,
-      detail: hint ? `via ${hint.name}` : (CONFIG_SOURCE_DETAIL[configSource] ?? 'configured'),
+      detail: derivedNote ?? (CONFIG_SOURCE_DETAIL[configSource] ?? 'configured'),
     });
   }
 
