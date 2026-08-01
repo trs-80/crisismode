@@ -34,11 +34,40 @@ export const DEFAULT_STATEMENT_TIMEOUT_MS = 10_000;
  */
 const QUERY_TIMEOUT_GRACE_MS = 5_000;
 
-/** Execution bounds to merge into a pg Pool config. */
+/**
+ * Execution bounds to merge into a pg Pool config.
+ *
+ * Rejects overrides that Postgres accepts but that quietly remove the bound
+ * this exists to add. Measured against PostgreSQL 16:
+ *
+ *   0     server reports 0 — statement_timeout disabled entirely
+ *   1.5   truncated to 1ms, so every statement fails
+ *   -1    connection rejected: "-1 ms is outside the valid range"
+ *
+ * Two of those three fail silently, and a pool that looks configured but has
+ * no bound is precisely the failure mode this guards against. Reject at
+ * construction so a bad target config surfaces immediately rather than as a
+ * hang during an incident.
+ */
 export function poolTimeouts(statementTimeoutMs?: number): {
   statement_timeout: number;
   query_timeout: number;
 } {
+  if (statementTimeoutMs !== undefined) {
+    if (!Number.isInteger(statementTimeoutMs)) {
+      throw new Error(
+        `statementTimeoutMs must be a whole number of milliseconds, got ${statementTimeoutMs} — ` +
+          `Postgres truncates fractional values (1.5 becomes 1ms).`,
+      );
+    }
+    if (statementTimeoutMs <= 0) {
+      throw new Error(
+        `statementTimeoutMs must be positive, got ${statementTimeoutMs} — ` +
+          `Postgres treats 0 as disabling statement_timeout, and rejects negative values.`,
+      );
+    }
+  }
+
   const statement = statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS;
   return {
     statement_timeout: statement,
