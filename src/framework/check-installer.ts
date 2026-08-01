@@ -123,12 +123,21 @@ export async function installCheck(
 
     if (entry.source === 'builtin' && entry.files) {
       filesWritten = await downloadBuiltinFiles(entry, tempDir);
+
+      // Verify the downloaded file set. Tarball entries are deliberately not
+      // re-verified here: downloadAndExtractTarball has already checked
+      // entry.sha256 against the archive bytes, and that same value cannot
+      // also equal a digest over the extracted files.
+      verifyChecksum(
+        tempDir,
+        filesWritten,
+        entry.sha256v2 !== undefined
+          ? { sha256: entry.sha256, sha256v2: entry.sha256v2 }
+          : { sha256: entry.sha256 },
+      );
     } else {
       filesWritten = await downloadAndExtractTarball(entry, tempDir);
     }
-
-    // Verify checksum
-    verifyChecksum(tempDir, filesWritten, entry.sha256);
 
     // Ensure parent directory exists
     mkdirSync(baseDir, { recursive: true });
@@ -201,22 +210,98 @@ async function downloadAndExtractTarball(entry: CheckRegistryEntry, destDir: str
   return readdirSync(destDir);
 }
 
-function verifyChecksum(dir: string, files: string[], expected: string): void {
-  // Compute sha256 of concatenated files (sorted, matching the registry computation)
-  const sorted = [...files].sort();
-  const hash = createHash('sha256');
-  for (const file of sorted) {
-    const filePath = join(dir, file);
-    if (existsSync(filePath)) {
-      hash.update(readFileSync(filePath));
-    }
-  }
-  const computed = hash.digest('hex');
+/**
+ * Compute the integrity digest for a set of plugin files.
+ *
+ * The digest is a sha256 over a SHA256SUMS-style manifest: one
+ * `<sha256>  <name>\n` line per file, sorted by name. That construction binds
+ * three things the previous concatenation could not:
+ *
+ *   - **Names.** Renaming a file changes the digest.
+ *   - **Boundaries.** Contents are represented by fixed-width hashes, so bytes
+ *     cannot be shifted between files. Concatenating raw contents meant
+ *     {"xy","z"} and {"x","yz"} hashed identically.
+ *   - **Presence.** A missing file is an error, not a silent skip, so a
+ *     partial download can no longer verify successfully.
+ *
+ * The format is deliberately reproducible with standard tools:
+ *   `sha256sum check.sh manifest.json | LC_ALL=C sort | sha256sum`
+ */
+export function computeChecksum(dir: string, files: string[]): string {
+  const manifest = [...files]
+    .sort()
+    .map((file) => {
+      const filePath = join(dir, file);
+      if (!existsSync(filePath)) {
+        throw new Error(`Cannot compute checksum: file is missing from ${dir}: ${file}`);
+      }
+      const fileHash = createHash('sha256').update(readFileSync(filePath)).digest('hex');
+      return `${fileHash}  ${file}\n`;
+    })
+    .join('');
 
-  if (computed !== expected) {
+  return createHash('sha256').update(manifest, 'utf-8').digest('hex');
+}
+
+/**
+ * The pre-v2 digest: contents of the sorted file list, concatenated.
+ *
+ * Retained because CrisisMode binaries already in the wild compute this and
+ * compare against the registry's `sha256`. Keeping the field correct is what
+ * lets those clients keep installing checks while `sha256v2` rolls out.
+ *
+ * It is weak by construction — no delimiters, so bytes can be shifted between
+ * files invisibly, and filenames are not covered. Prefer computeChecksum().
+ * The one behaviour that did change: a missing file is now an error rather
+ * than a silent skip, which does not alter the digest of a complete file set.
+ */
+export function computeLegacyChecksum(dir: string, files: string[]): string {
+  const hash = createHash('sha256');
+  for (const file of [...files].sort()) {
+    const filePath = join(dir, file);
+    if (!existsSync(filePath)) {
+      throw new Error(`Cannot compute checksum: file is missing from ${dir}: ${file}`);
+    }
+    hash.update(readFileSync(filePath));
+  }
+  return hash.digest('hex');
+}
+
+/** The digests a registry entry can carry. */
+export interface ExpectedChecksums {
+  /** Legacy digest — concatenated contents. Always present. */
+  sha256: string;
+  /** Manifest-bound digest. Preferred when present. */
+  sha256v2?: string;
+}
+
+/**
+ * Verify installed files against the registry's digests.
+ *
+ * `sha256v2` is preferred and, when present, is the only value consulted —
+ * falling back to the weaker digest after a v2 mismatch would let an attacker
+ * choose which check to face. Entries without a v2 (older or third-party
+ * indexes) still verify against the legacy digest.
+ */
+export function verifyChecksum(dir: string, files: string[], expected: ExpectedChecksums): void {
+  const useV2 = expected.sha256v2 !== undefined;
+  const target = useV2 ? expected.sha256v2! : expected.sha256;
+
+  let computed: string;
+  try {
+    computed = useV2 ? computeChecksum(dir, files) : computeLegacyChecksum(dir, files);
+  } catch (err) {
+    throw new Error(
+      `Checksum verification failed for files in ${dir}: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
+
+  if (computed !== target) {
     throw new Error(
       `Checksum verification failed for files in ${dir}:\n` +
-      `  Expected: ${expected}\n` +
+      `  Expected: ${target} (${useV2 ? 'sha256v2' : 'sha256'})\n` +
       `  Computed: ${computed}\n` +
       `Files may have been tampered with or the registry is outdated.`,
     );
