@@ -21,6 +21,7 @@ import type {
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
+import { guardPoolErrors } from '../pg-common.js';
 
 const { Pool } = pg;
 
@@ -63,16 +64,19 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
   private readonly longQueryThresholdSec: number;
 
   constructor(config: DbMigrationConfig) {
-    this.pool = new Pool({
-      host: config.host,
-      port: config.port,
-      user: config.user,
-      password: config.password,
-      database: config.database,
-      max: 5,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 5_000,
-    });
+    this.pool = guardPoolErrors(
+      new Pool({
+        host: config.host,
+        port: config.port,
+        user: config.user,
+        password: config.password,
+        database: config.database,
+        max: 5,
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 5_000,
+      }),
+      'db-migration',
+    );
     this.longQueryThresholdSec = config.longQueryThresholdSec ?? 60;
   }
 

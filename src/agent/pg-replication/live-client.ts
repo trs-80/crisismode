@@ -15,6 +15,7 @@ import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import type { TableStat, StatementStat, StatementAggregate } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
+import { guardPoolErrors } from '../pg-common.js';
 
 const { Pool } = pg;
 
@@ -55,20 +56,26 @@ export class PgLiveClient implements PgBackend {
     primaryConfig: PgConnectionConfig,
     replicaConfig?: PgConnectionConfig,
   ) {
-    this.primaryPool = new Pool({
-      ...primaryConfig,
-      max: 5,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    });
+    this.primaryPool = guardPoolErrors(
+      new Pool({
+        ...primaryConfig,
+        max: 5,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
+      }),
+      'primary',
+    );
 
     this.replicaPool = replicaConfig
-      ? new Pool({
-          ...replicaConfig,
-          max: 3,
-          idleTimeoutMillis: 30000,
-          connectionTimeoutMillis: 5000,
-        })
+      ? guardPoolErrors(
+          new Pool({
+            ...replicaConfig,
+            max: 3,
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 5000,
+          }),
+          'replica',
+        )
       : null;
   }
 
