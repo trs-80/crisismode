@@ -2,8 +2,10 @@
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { computeHealthScore, watchedKinds } from '../cli/commands/scan.js';
+import { computeHealthScore, watchedKinds, checkTargetHealth } from '../cli/commands/scan.js';
+import type { HealthCheckRegistry } from '../cli/commands/scan.js';
 import type * as OutputModule from '../cli/output.js';
+import type { TargetConfig } from '../config/schema.js';
 
 // ── Output mode tests ──
 
@@ -142,6 +144,70 @@ describe('watchedKinds', () => {
 
   it('returns an empty array when nothing was actually watched', () => {
     expect(watchedKinds([{ kind: 'mongodb', agentAvailable: false }])).toEqual([]);
+  });
+});
+
+// ── checkTargetHealth: agentAvailable must survive eager-connect failures ──
+
+describe('checkTargetHealth', () => {
+  function target(kind: string): TargetConfig {
+    return { name: `${kind}-target`, kind };
+  }
+
+  it('reports agentAvailable: true when a registered agent exists but its eager connect fails', async () => {
+    // Mirrors redis/queue-backlog/db-migration/kubernetes: createForTarget()
+    // does real I/O (connect/ping) and rejects for a live-but-down service —
+    // that must still count as "watched," not "no agent registered."
+    const registry: HealthCheckRegistry = {
+      supportedKinds: () => ['redis', 'postgresql'],
+      createForTarget: () => Promise.reject(new Error('ECONNREFUSED: connection refused')),
+    };
+
+    const result = await checkTargetHealth(target('redis'), registry);
+
+    expect(result.agentAvailable).toBe(true);
+    expect(result.health).toBeNull();
+    expect(result.finding.status).toBe('unknown');
+    expect(watchedKinds([result])).toEqual(['redis']);
+  });
+
+  it('reports agentAvailable: false when the kind has no registration at all', async () => {
+    const registry: HealthCheckRegistry = {
+      supportedKinds: () => ['postgresql'],
+      createForTarget: () => Promise.reject(
+        new Error('No agent registered for kind "mongodb". Supported: postgresql'),
+      ),
+    };
+
+    const result = await checkTargetHealth(target('mongodb'), registry);
+
+    expect(result.agentAvailable).toBe(false);
+    expect(result.health).toBeNull();
+    expect(watchedKinds([result])).toEqual([]);
+  });
+
+  it('reports agentAvailable: true on a successful health check', async () => {
+    const registry: HealthCheckRegistry = {
+      supportedKinds: () => ['postgresql'],
+      createForTarget: () => Promise.resolve({
+        agent: {
+          manifest: { name: 'pg', version: '1.0.0', spec: { executionContexts: [] } },
+          assessHealth: () => Promise.resolve({
+            status: 'healthy',
+            confidence: 0.9,
+            summary: 'ok',
+            observedAt: new Date().toISOString(),
+            signals: [],
+          }),
+        },
+        backend: { close: () => Promise.resolve() },
+      } as never),
+    };
+
+    const result = await checkTargetHealth(target('postgresql'), registry);
+
+    expect(result.agentAvailable).toBe(true);
+    expect(result.finding.status).toBe('healthy');
   });
 });
 
