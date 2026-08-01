@@ -209,6 +209,23 @@ describe('checkTargetHealth', () => {
     expect(result.agentAvailable).toBe(true);
     expect(result.finding.status).toBe('healthy');
   });
+
+  it('returns an unknown finding instead of rejecting when supportedKinds() itself throws', async () => {
+    // A broken registry implementation must not escape checkTargetHealth and
+    // abort the whole Promise.all in runScan — it should degrade to a single
+    // unknown finding for this target.
+    const registry: HealthCheckRegistry = {
+      supportedKinds: () => { throw new Error('registry misconfigured'); },
+      createForTarget: () => Promise.reject(new Error('should not be reached')),
+    };
+
+    const result = await checkTargetHealth(target('postgresql'), registry);
+
+    expect(result.agentAvailable).toBe(false);
+    expect(result.health).toBeNull();
+    expect(result.finding.status).toBe('unknown');
+    expect(result.finding.summary).toContain('registry misconfigured');
+  });
 });
 
 // ── Detect probes coverage ──

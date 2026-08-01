@@ -56,6 +56,14 @@ function plan(): RecoveryPlan {
         },
         timeout: '30s',
       },
+      {
+        stepId: 'step-002',
+        type: 'human_notification',
+        name: 'Notify on-call',
+        recipients: [{ role: 'on_call_sre', urgency: 'high' }],
+        message: { summary: 'Recovery in progress', detail: 'Restarting svc-1.', actionRequired: false },
+        channel: 'auto',
+      },
     ] as unknown as RecoveryPlan['steps'],
   };
 }

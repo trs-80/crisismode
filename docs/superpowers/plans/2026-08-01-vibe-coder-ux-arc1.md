@@ -85,8 +85,8 @@ path — if scan sets options in `index.ts` instead, do it there). In
 const terse = args.includes('--terse');
 ```
 
-and pass `{ ...existingOpts, terse }` to `runScan`. Add to the help text:
-`    --terse             Suppress plain-language explanations (scan)`
+and pass `{ ...existingOpts, terse }` to `runScan`. Add to the help text an
+entry for `--terse`: "Suppress plain-language explanations (scan)"
 
 - [ ] **Step 4: Run test to verify it passes**
 
