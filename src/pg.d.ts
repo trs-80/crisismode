@@ -10,7 +10,19 @@ declare module 'pg' {
     database?: string;
     max?: number;
     idleTimeoutMillis?: number;
+    /** How long acquiring a connection may take. Not an execution bound. */
     connectionTimeoutMillis?: number;
+    /**
+     * Server-side execution bound, in ms. Sent in the startup packet, so
+     * Postgres itself aborts the statement. This is the real defence.
+     */
+    statement_timeout?: number;
+    /**
+     * Client-side read timer, in ms. Settles the promise when the connection
+     * is wedged and no server reply arrives. It does NOT cancel the
+     * server-side query, so keep it above statement_timeout.
+     */
+    query_timeout?: number;
   }
 
   export interface QueryResult<T = Record<string, unknown>> {
