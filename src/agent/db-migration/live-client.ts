@@ -21,7 +21,7 @@ import type {
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
-import { guardPoolErrors } from '../pg-common.js';
+import { guardPoolErrors, poolTimeouts } from '../pg-common.js';
 
 const { Pool } = pg;
 
@@ -33,6 +33,11 @@ export interface DbMigrationConfig {
   database: string;
   /** Long-running query threshold in seconds (default: 60) */
   longQueryThresholdSec?: number;
+  /**
+   * Server-side bound on a single statement, in ms.
+   * Defaults to DEFAULT_STATEMENT_TIMEOUT_MS.
+   */
+  statementTimeoutMs?: number;
 }
 
 interface MigrationRow {
@@ -74,6 +79,7 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
         max: 5,
         idleTimeoutMillis: 30_000,
         connectionTimeoutMillis: 5_000,
+        ...poolTimeouts(config.statementTimeoutMs),
       }),
       'db-migration',
     );

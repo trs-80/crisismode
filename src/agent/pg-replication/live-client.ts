@@ -15,7 +15,7 @@ import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import type { TableStat, StatementStat, StatementAggregate } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
-import { guardPoolErrors } from '../pg-common.js';
+import { guardPoolErrors, poolTimeouts } from '../pg-common.js';
 
 const { Pool } = pg;
 
@@ -46,6 +46,11 @@ export interface PgConnectionConfig {
   user: string;
   password: string;
   database: string;
+  /**
+   * Server-side bound on a single statement, in ms.
+   * Defaults to DEFAULT_STATEMENT_TIMEOUT_MS.
+   */
+  statementTimeoutMs?: number;
 }
 
 export class PgLiveClient implements PgBackend {
@@ -56,27 +61,36 @@ export class PgLiveClient implements PgBackend {
     primaryConfig: PgConnectionConfig,
     replicaConfig?: PgConnectionConfig,
   ) {
+    // statementTimeoutMs is a CrisisMode setting, not a pg one — destructure it
+    // out so it is never handed to the driver as an unknown key.
+    const { statementTimeoutMs: primaryTimeout, ...primary } = primaryConfig;
+
     this.primaryPool = guardPoolErrors(
       new Pool({
-        ...primaryConfig,
+        ...primary,
         max: 5,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
+        ...poolTimeouts(primaryTimeout),
       }),
       'primary',
     );
 
-    this.replicaPool = replicaConfig
-      ? guardPoolErrors(
-          new Pool({
-            ...replicaConfig,
-            max: 3,
-            idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 5000,
-          }),
-          'replica',
-        )
-      : null;
+    if (replicaConfig) {
+      const { statementTimeoutMs: replicaTimeout, ...replica } = replicaConfig;
+      this.replicaPool = guardPoolErrors(
+        new Pool({
+          ...replica,
+          max: 3,
+          idleTimeoutMillis: 30000,
+          connectionTimeoutMillis: 5000,
+          ...poolTimeouts(replicaTimeout),
+        }),
+        'replica',
+      );
+    } else {
+      this.replicaPool = null;
+    }
   }
 
   async queryReplicationStatus(): Promise<ReplicaStatus[]> {
