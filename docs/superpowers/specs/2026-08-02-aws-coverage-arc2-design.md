@@ -58,8 +58,9 @@ to hosts already extracted from connection-string env hints:
 - RDS Proxy (`.proxy-`) and non-RDS hosts → ignored (proxy noted as
   future work).
 - Endpoint seen but no credentials → visibility blocked-bucket entry with
-  the hint naming the env vars to set (`AWS_ACCESS_KEY_ID`/`AWS_PROFILE`
-  + `AWS_REGION`).
+  the hint naming the env vars to set (`AWS_ACCESS_KEY_ID` +
+  `AWS_SECRET_ACCESS_KEY` (or `AWS_PROFILE`) + `AWS_REGION` —
+  `AWS_ACCESS_KEY_ID` alone cannot authenticate).
 
 ### 2. Backend extension (`RdsRecoveryBackend`)
 
