@@ -10,6 +10,8 @@
 
 import { tryImportAws } from '../aws-common.js';
 import type * as RdsSdkModule from '@aws-sdk/client-rds';
+import type * as CloudWatchSdkModule from '@aws-sdk/client-cloudwatch';
+import type * as Ec2SdkModule from '@aws-sdk/client-ec2';
 import type {
   RdsRecoveryBackend,
   InstanceBackupConfig,
@@ -19,6 +21,8 @@ import type {
   RdsPortReachability,
   PermissionMissing,
 } from './backend.js';
+import { isPermissionMissing } from './backend.js';
+import { approxMaxConnections, summarizeSgRules, isAccessDeniedError } from './control-plane-helpers.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
@@ -33,6 +37,13 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
   private instanceId: string;
   private rdsClient: unknown | null = null;
   private rdsSdk: typeof RdsSdkModule | null = null;
+  private cloudWatchClient: unknown | null = null;
+  private cloudWatchSdk: typeof CloudWatchSdkModule | null = null;
+  private ec2Client: unknown | null = null;
+  private ec2Sdk: typeof Ec2SdkModule | null = null;
+
+  /** Cached getInstanceHealth() result — avoids duplicate DescribeDBInstances calls within one scan. */
+  private instanceHealthCache: RdsInstanceHealth | PermissionMissing | null = null;
 
   constructor(config: RdsConnectionConfig) {
     this.region = config.region;
@@ -60,6 +71,50 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
     return {
       sdk,
       client: this.rdsClient as InstanceType<(typeof RdsSdkModule)['RDSClient']>,
+    };
+  }
+
+  private async ensureCloudWatch(): Promise<{
+    sdk: typeof CloudWatchSdkModule;
+    client: InstanceType<(typeof CloudWatchSdkModule)['CloudWatchClient']>;
+  } | null> {
+    if (this.cloudWatchSdk && this.cloudWatchClient) {
+      return {
+        sdk: this.cloudWatchSdk,
+        client: this.cloudWatchClient as InstanceType<(typeof CloudWatchSdkModule)['CloudWatchClient']>,
+      };
+    }
+
+    const sdk = await tryImportAws<typeof CloudWatchSdkModule>('@aws-sdk/client-cloudwatch');
+    if (!sdk) return null;
+
+    this.cloudWatchSdk = sdk;
+    this.cloudWatchClient = new sdk.CloudWatchClient({ region: this.region });
+    return {
+      sdk,
+      client: this.cloudWatchClient as InstanceType<(typeof CloudWatchSdkModule)['CloudWatchClient']>,
+    };
+  }
+
+  private async ensureEc2(): Promise<{
+    sdk: typeof Ec2SdkModule;
+    client: InstanceType<(typeof Ec2SdkModule)['EC2Client']>;
+  } | null> {
+    if (this.ec2Sdk && this.ec2Client) {
+      return {
+        sdk: this.ec2Sdk,
+        client: this.ec2Client as InstanceType<(typeof Ec2SdkModule)['EC2Client']>,
+      };
+    }
+
+    const sdk = await tryImportAws<typeof Ec2SdkModule>('@aws-sdk/client-ec2');
+    if (!sdk) return null;
+
+    this.ec2Sdk = sdk;
+    this.ec2Client = new sdk.EC2Client({ region: this.region });
+    return {
+      sdk,
+      client: this.ec2Client as InstanceType<(typeof Ec2SdkModule)['EC2Client']>,
     };
   }
 
@@ -116,6 +171,10 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
   }
 
   async getInstanceHealth(): Promise<RdsInstanceHealth | PermissionMissing> {
+    if (this.instanceHealthCache) {
+      return this.instanceHealthCache;
+    }
+
     try {
       const { sdk, client } = await this.ensureClient();
       const describeResp = await client.send(
@@ -129,7 +188,7 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
         throw new Error(`RDS instance not found: ${this.instanceId}`);
       }
 
-      return {
+      const result: RdsInstanceHealth = {
         instanceId: this.instanceId,
         status: instance.DBInstanceStatus ?? 'unknown',
         engine: instance.Engine ?? 'unknown',
@@ -141,12 +200,17 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
           ? Object.keys(instance.PendingModifiedValues).filter((k) => (instance.PendingModifiedValues as Record<string, unknown>)[k])
           : [],
         endpointPort: instance.Endpoint?.Port ?? 5432,
-        vpcSecurityGroupIds: (instance.VpcSecurityGroups ?? []).map((sg) => sg.VpcSecurityGroupId ?? ''),
+        vpcSecurityGroupIds: (instance.VpcSecurityGroups ?? [])
+          .map((sg) => sg.VpcSecurityGroupId ?? '')
+          .filter((id) => id !== ''),
       };
+      this.instanceHealthCache = result;
+      return result;
     } catch (error) {
-      const err = error as Error & { Code?: string };
-      if (err.Code?.includes('UnauthorizedOperation') || err.Code?.includes('AccessDenied')) {
-        return { permissionMissing: 'rds:DescribeDBInstances' };
+      if (isAccessDeniedError(error)) {
+        const result: PermissionMissing = { permissionMissing: 'rds:DescribeDBInstances' };
+        this.instanceHealthCache = result;
+        return result;
       }
       throw error;
     }
@@ -155,11 +219,11 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
   async getRecentEvents(hours: number): Promise<RdsEvent[] | PermissionMissing> {
     try {
       const { sdk, client } = await this.ensureClient();
-      const startTime = new Date(Date.now() - hours * 3600000);
       const resp = await client.send(
         new sdk.DescribeEventsCommand({
           SourceIdentifier: this.instanceId,
-          StartTime: startTime,
+          SourceType: 'db-instance',
+          Duration: hours * 60,
         }),
       );
 
@@ -169,8 +233,7 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
         category: event.EventCategories?.[0] ?? 'unknown',
       }));
     } catch (error) {
-      const err = error as Error & { Code?: string };
-      if (err.Code?.includes('UnauthorizedOperation') || err.Code?.includes('AccessDenied')) {
+      if (isAccessDeniedError(error)) {
         return { permissionMissing: 'rds:DescribeEvents' };
       }
       throw error;
@@ -178,24 +241,96 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
   }
 
   async getLiveMetrics(): Promise<RdsLiveMetrics | PermissionMissing> {
-    // CloudWatch metrics require additional AWS SDK and permissions
-    // For now, return permission missing to indicate this needs AWS setup
-    return { permissionMissing: 'cloudwatch:GetMetricStatistics' };
+    const cloudWatch = await this.ensureCloudWatch();
+    if (!cloudWatch) {
+      return { permissionMissing: 'sdk:@aws-sdk/client-cloudwatch not installed' };
+    }
+    const { sdk, client } = cloudWatch;
+
+    try {
+      const endTime = new Date();
+      const startTime = new Date(endTime.getTime() - 15 * 60 * 1000);
+      const metricIds = {
+        databaseConnections: 'DatabaseConnections',
+        cpuUtilizationPct: 'CPUUtilization',
+        freeStorageBytes: 'FreeStorageSpace',
+        freeableMemoryBytes: 'FreeableMemory',
+      } as const;
+
+      const resp = await client.send(
+        new sdk.GetMetricDataCommand({
+          MetricDataQueries: Object.entries(metricIds).map(([id, metricName]) => ({
+            Id: id.toLowerCase(),
+            MetricStat: {
+              Metric: {
+                Namespace: 'AWS/RDS',
+                MetricName: metricName,
+                Dimensions: [{ Name: 'DBInstanceIdentifier', Value: this.instanceId }],
+              },
+              Period: 300,
+              Stat: 'Average',
+            },
+            ReturnData: true,
+          })),
+          StartTime: startTime,
+          EndTime: endTime,
+          ScanBy: 'TimestampDescending',
+        }),
+      );
+
+      const latest = (id: string): number | null => {
+        const values = resp.MetricDataResults?.find((r) => r.Id === id.toLowerCase())?.Values;
+        return values && values.length > 0 ? values[0]! : null;
+      };
+
+      const health = await this.getInstanceHealth();
+      const maxConnections = isPermissionMissing(health) ? null : approxMaxConnections(health.instanceClass);
+
+      return {
+        databaseConnections: latest('databaseConnections'),
+        approxMaxConnections: maxConnections,
+        cpuUtilizationPct: latest('cpuUtilizationPct'),
+        freeStorageBytes: latest('freeStorageBytes'),
+        freeableMemoryBytes: latest('freeableMemoryBytes'),
+      };
+    } catch (error) {
+      if (isAccessDeniedError(error)) {
+        return { permissionMissing: 'cloudwatch:GetMetricData' };
+      }
+      throw error;
+    }
   }
 
   async getPortReachability(): Promise<RdsPortReachability | PermissionMissing> {
-    try {
-      const rdsData = await this.getInstanceHealth();
-      if ('permissionMissing' in rdsData) {
-        return { permissionMissing: 'ec2:DescribeSecurityGroups' };
-      }
+    const health = await this.getInstanceHealth();
+    if (isPermissionMissing(health)) {
+      return health;
+    }
 
-      // Port reachability requires EC2 API access for security group rules
-      // For now, return permission missing to indicate this needs AWS setup
-      return { permissionMissing: 'ec2:DescribeSecurityGroups' };
+    const ec2 = await this.ensureEc2();
+    if (!ec2) {
+      return { permissionMissing: 'sdk:@aws-sdk/client-ec2 not installed' };
+    }
+    const { sdk, client } = ec2;
+
+    if (health.vpcSecurityGroupIds.length === 0) {
+      return { port: health.endpointPort, openTo: [] };
+    }
+
+    try {
+      const resp = await client.send(
+        new sdk.DescribeSecurityGroupsCommand({
+          GroupIds: health.vpcSecurityGroupIds,
+        }),
+      );
+
+      const permissions = (resp.SecurityGroups ?? []).flatMap((sg) => sg.IpPermissions ?? []);
+      return {
+        port: health.endpointPort,
+        openTo: summarizeSgRules(health.endpointPort, permissions),
+      };
     } catch (error) {
-      const err = error as Error & { Code?: string };
-      if (err.Code?.includes('UnauthorizedOperation') || err.Code?.includes('AccessDenied')) {
+      if (isAccessDeniedError(error)) {
         return { permissionMissing: 'ec2:DescribeSecurityGroups' };
       }
       throw error;
@@ -289,9 +424,14 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
   }
 
   async close(): Promise<void> {
-    // RDS client does not require explicit cleanup
+    // Clients do not require explicit cleanup; clear references and cache
     this.rdsClient = null;
     this.rdsSdk = null;
+    this.cloudWatchClient = null;
+    this.cloudWatchSdk = null;
+    this.ec2Client = null;
+    this.ec2Sdk = null;
+    this.instanceHealthCache = null;
   }
 
 }
