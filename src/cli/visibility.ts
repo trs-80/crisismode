@@ -34,6 +34,7 @@ export function buildVisibilityReport(
   profile: StackProfile,
   ranKinds: string[],
   configSource: string,
+  extraBlocked?: VisibilityEntry[],
 ): VisibilityReport {
   const watching: VisibilityEntry[] = [];
   const blocked: VisibilityEntry[] = [];
@@ -70,11 +71,37 @@ export function buildVisibilityReport(
     });
   }
 
-  // Cloud credentials with no control-plane support yet.
-  if (presentHints.some((h) => h.kind === 'aws_credentials' || h.kind === 'aws_profile')) {
+  // Aurora and RDS Proxy endpoints — unsupported yet.
+  if (profile.awsDetection?.unsupportedEndpoints) {
+    for (const endpoint of profile.awsDetection.unsupportedEndpoints) {
+      const typeLabel = endpoint.type === 'cluster' ? 'Aurora' : 'RDS Proxy';
+      blocked.push({
+        label: `aws-rds (${typeLabel})`,
+        detail: `found ${endpoint.type === 'cluster' ? 'Aurora cluster' : 'RDS Proxy'} endpoint: ${endpoint.host}`,
+        hint: 'Aurora cluster and RDS Proxy checks are not supported yet, but the underlying database is still checked via its connection string.',
+      });
+    }
+  }
+
+  // Uncredentialed RDS hosts seen in connection strings.
+  if (profile.awsDetection?.uncredentialedHosts) {
+    for (const host of profile.awsDetection.uncredentialedHosts) {
+      blocked.push({
+        label: 'aws-rds (missing credentials)',
+        detail: `found RDS endpoint ${host} but no AWS credentials detected`,
+        hint: 'Set AWS_ACCESS_KEY_ID, AWS_PROFILE, or AWS_REGION environment variables to enable RDS control-plane checks.',
+      });
+    }
+  }
+
+  // Cloud credentials with no control-plane support yet (only if aws-rds did not run).
+  if (
+    presentHints.some((h) => h.kind === 'aws_credentials' || h.kind === 'aws_profile') &&
+    !ran.has('aws-rds')
+  ) {
     blocked.push({
       label: 'AWS control plane',
-      detail: 'AWS credentials detected — control-plane checks (RDS, ElastiCache instance health) are not supported yet',
+      detail: 'AWS credentials detected — control-plane checks for other services (ElastiCache, Aurora) are not supported yet',
       hint: 'AWS-hosted services CrisisMode can reach directly (e.g. RDS Postgres via DATABASE_URL) are still checked.',
     });
   }
@@ -86,6 +113,9 @@ export function buildVisibilityReport(
       detail: 'disk, memory, and processes on remote or managed hosts cannot be seen from outside — that is true of any external tool. Run a CrisisMode spoke on the host to see them.',
     });
   }
+
+  // Append extra blocked entries (e.g., from IAM permission checks).
+  blocked.push(...(extraBlocked ?? []));
 
   return { watching, blocked, invisible };
 }

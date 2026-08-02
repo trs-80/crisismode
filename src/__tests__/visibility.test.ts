@@ -96,4 +96,44 @@ describe('buildVisibilityReport', () => {
     const pg = report.watching.find((e) => e.label === 'postgresql');
     expect(pg!.detail).toBe(expected);
   });
+
+  it('reports Aurora endpoints as blocked with an honest hint', () => {
+    const profile = profileWith({
+      awsDetection: {
+        unsupportedEndpoints: [{ host: 'prod.cluster-abc.us-east-1.rds.amazonaws.com', type: 'cluster' }],
+        uncredentialedHosts: [],
+      },
+    });
+    const report = buildVisibilityReport(profile, [], 'none');
+    const aurora = report.blocked.find((e) => e.label.includes('Aurora'));
+    expect(aurora).toBeDefined();
+    expect(aurora!.detail).toContain('prod.cluster-abc');
+    expect(aurora!.hint).toBeTruthy();
+  });
+
+  it('reports RDS endpoints seen without credentials', () => {
+    const profile = profileWith({
+      awsDetection: { unsupportedEndpoints: [], uncredentialedHosts: ['mydb.abc.us-east-1.rds.amazonaws.com'] },
+    });
+    const report = buildVisibilityReport(profile, [], 'none');
+    const entry = report.blocked.find((e) => e.detail.includes('mydb.abc'));
+    expect(entry).toBeDefined();
+    expect(entry!.hint).toMatch(/AWS_ACCESS_KEY_ID|AWS_PROFILE/);
+  });
+
+  it('suppresses the generic AWS-unsupported entry when aws-rds ran', () => {
+    const profile = profileWith({
+      envHints: [{ name: 'AWS_ACCESS_KEY_ID', present: true, kind: 'aws_credentials' }],
+    });
+    const report = buildVisibilityReport(profile, ['aws-rds'], 'env-fallback');
+    expect(report.blocked.find((e) => e.label === 'AWS control plane')).toBeUndefined();
+  });
+
+  it('appends extraBlocked entries to the blocked bucket', () => {
+    const profile = profileWith({});
+    const report = buildVisibilityReport(profile, [], 'none', [
+      { label: 'aws-rds permissions', detail: 'missing rds:DescribeDBInstances', hint: 'attach AmazonRDSReadOnlyAccess' },
+    ]);
+    expect(report.blocked.find((e) => e.detail.includes('rds:DescribeDBInstances'))).toBeDefined();
+  });
 });
