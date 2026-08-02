@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { detectServices } from './detect.js';
 import type { DetectedService } from './detect.js';
+import { parseRdsEndpoint } from './aws-endpoint.js';
 import { INFRA_PKG_NAMES } from '../config/service-registry.js';
 import type { TargetConfig } from '../config/schema.js';
 import { AI_ENV_VARS } from '../agent/ai-provider/provider-table.js';
@@ -49,6 +50,13 @@ export interface StackProfile {
   derivedNotes: Record<string, string>;
   /** Vercel project config from .vercel/project.json */
   vercelProject?: { projectId: string; orgId: string };
+  /** AWS RDS endpoint detection seen in connection-string env vars */
+  awsDetection?: {
+    /** Aurora cluster/proxy endpoints seen (not diagnosable this arc) */
+    unsupportedEndpoints: Array<{ host: string; type: 'cluster' | 'proxy' }>;
+    /** RDS instance endpoints seen while no AWS credentials were detected */
+    uncredentialedHosts: string[];
+  };
   /** Overall confidence in the profile */
   confidence: number;
 }
@@ -333,6 +341,54 @@ export async function deriveGatedTargets(
 }
 
 /**
+ * Derive aws-rds control-plane targets from RDS endpoints found in
+ * connection-string env vars. Aurora/proxy endpoints and endpoints seen
+ * without AWS credentials are recorded for visibility instead of targeted.
+ * SECURITY: never logs connection-string values.
+ */
+export function deriveAwsRdsTargets(
+  hints: EnvHint[],
+  env: NodeJS.ProcessEnv,
+  hasAwsCredentials: boolean,
+): { targets: TargetConfig[]; notes: Record<string, string>; awsDetection: NonNullable<StackProfile['awsDetection']> } {
+  const targets: TargetConfig[] = [];
+  const notes: Record<string, string> = {};
+  const awsDetection: NonNullable<StackProfile['awsDetection']> = {
+    unsupportedEndpoints: [],
+    uncredentialedHosts: [],
+  };
+  const seen = new Set<string>();
+
+  for (const hint of hints) {
+    if (!hint.present || hint.kind !== 'database_url') continue;
+    const value = env[hint.name];
+    if (!value) continue;
+    const conn = parseConnectionString(value);
+    if (!conn) continue;
+    const endpoint = parseRdsEndpoint(conn.host);
+    if (!endpoint || seen.has(endpoint.host)) continue;
+    seen.add(endpoint.host);
+
+    if (endpoint.type !== 'instance') {
+      awsDetection.unsupportedEndpoints.push({ host: endpoint.host, type: endpoint.type });
+      continue;
+    }
+    if (!hasAwsCredentials) {
+      awsDetection.uncredentialedHosts.push(endpoint.host);
+      continue;
+    }
+    const name = `rds-${endpoint.instanceId}`;
+    targets.push({
+      name,
+      kind: 'aws-rds',
+      aws: { region: endpoint.region, instanceId: endpoint.instanceId! },
+    });
+    notes[name] = `from ${hint.name} endpoint`;
+  }
+  return { targets, notes, awsDetection };
+}
+
+/**
  * Read .vercel/project.json and extract projectId + orgId.
  * Returns null if the file is missing or malformed.
  */
@@ -369,7 +425,10 @@ export async function discoverStack(): Promise<StackProfile> {
   const envHints = scanEnvHints();
   const aiProviders = detectAiProviders(appStack);
   const gated = await deriveGatedTargets(appStack, cwd);
-  const derivedTargets = [...buildTargetsFromEnvHints(envHints), ...gated.targets];
+  const hasAwsCreds = envHints.some((h) => h.present && (h.kind === 'aws_credentials' || h.kind === 'aws_profile'));
+  const rds = deriveAwsRdsTargets(envHints, process.env, hasAwsCreds);
+  const derivedTargets = [...buildTargetsFromEnvHints(envHints), ...gated.targets, ...rds.targets];
+  const derivedNotes = { ...gated.notes, ...rds.notes };
   const vercelProject = readVercelProjectConfig(cwd);
 
   const confidence = computeConfidence(services, appStack, envHints, platform);
@@ -381,8 +440,9 @@ export async function discoverStack(): Promise<StackProfile> {
     platform,
     aiProviders,
     derivedTargets,
-    derivedNotes: gated.notes,
+    derivedNotes,
     ...(vercelProject ? { vercelProject } : {}),
+    awsDetection: rds.awsDetection,
     confidence,
   };
 }
