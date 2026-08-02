@@ -24,8 +24,10 @@ describe('RdsRecoverySimulator control-plane scenarios', () => {
     const sim = new RdsRecoverySimulator();
     sim.transition!('storage_full');
     const health = await sim.getInstanceHealth();
+    expect(isPermissionMissing(health)).toBe(false);
     if (!isPermissionMissing(health)) expect(health.status).toBe('storage-full');
     const metrics = await sim.getLiveMetrics();
+    expect(isPermissionMissing(metrics)).toBe(false);
     if (!isPermissionMissing(metrics)) expect(metrics.freeStorageBytes).toBeLessThan(1024 * 1024 * 1024);
   });
 
@@ -33,6 +35,7 @@ describe('RdsRecoverySimulator control-plane scenarios', () => {
     const sim = new RdsRecoverySimulator();
     sim.transition!('connection_saturation');
     const metrics = await sim.getLiveMetrics();
+    expect(isPermissionMissing(metrics)).toBe(false);
     if (!isPermissionMissing(metrics)) {
       expect(metrics.databaseConnections! / metrics.approxMaxConnections!).toBeGreaterThan(0.9);
     }
@@ -42,6 +45,7 @@ describe('RdsRecoverySimulator control-plane scenarios', () => {
     const sim = new RdsRecoverySimulator();
     sim.transition!('sg_blocked');
     const reach = await sim.getPortReachability();
+    expect(isPermissionMissing(reach)).toBe(false);
     if (!isPermissionMissing(reach)) expect(reach.openTo).toHaveLength(0);
   });
 
@@ -49,8 +53,10 @@ describe('RdsRecoverySimulator control-plane scenarios', () => {
     const sim = new RdsRecoverySimulator();
     sim.transition!('maintenance_pending');
     const health = await sim.getInstanceHealth();
+    expect(isPermissionMissing(health)).toBe(false);
     if (!isPermissionMissing(health)) expect(health.pendingModifications.length).toBeGreaterThan(0);
     const events = await sim.getRecentEvents(24);
+    expect(isPermissionMissing(events)).toBe(false);
     if (!isPermissionMissing(events)) expect(events.length).toBeGreaterThan(0);
   });
 
