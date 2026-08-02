@@ -298,7 +298,7 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
       };
 
       const health = await this.getInstanceHealth();
-      const maxConnections = isPermissionMissing(health) ? null : approxMaxConnections(health.instanceClass);
+      const maxConnections = isPermissionMissing(health) ? null : approxMaxConnections(health.instanceClass, health.engine);
 
       return {
         databaseConnections: latest('databaseConnections'),

@@ -5,14 +5,24 @@ import {
 } from '../agent/aws-rds/control-plane-helpers.js';
 
 describe('approxMaxConnections', () => {
-  it('derives the documented formula value for known classes', () => {
+  it('derives the documented formula value for known postgres-family classes', () => {
     // db.t3.micro: 1 GiB → LEAST(1073741824/9531392, 5000) ≈ 112
-    expect(approxMaxConnections('db.t3.micro')).toBe(112);
+    expect(approxMaxConnections('db.t3.micro', 'postgres')).toBe(112);
     // db.m5.large: 8 GiB → ≈ 901
-    expect(approxMaxConnections('db.m5.large')).toBe(901);
+    expect(approxMaxConnections('db.m5.large', 'postgres')).toBe(901);
+  });
+  it('treats aurora-postgresql and the simulator-style "postgresql" string as postgres-family', () => {
+    expect(approxMaxConnections('db.t3.micro', 'aurora-postgresql')).toBe(112);
+    expect(approxMaxConnections('db.t3.micro', 'postgresql')).toBe(112);
   });
   it('returns null for unknown classes', () => {
-    expect(approxMaxConnections('db.z99.mega')).toBeNull();
+    expect(approxMaxConnections('db.z99.mega', 'postgres')).toBeNull();
+  });
+  it('returns null for non-postgres engines instead of applying the postgres formula', () => {
+    // The postgres default_max_connections formula does not describe MySQL's
+    // divisor — reporting a value would be a false saturation signal.
+    expect(approxMaxConnections('db.t3.micro', 'mysql')).toBeNull();
+    expect(approxMaxConnections('db.m5.large', 'mariadb')).toBeNull();
   });
 });
 
@@ -33,6 +43,25 @@ describe('summarizeSgRules', () => {
   });
   it('returns empty for no matching rules', () => {
     expect(summarizeSgRules(5432, [])).toEqual([]);
+  });
+  it('collects IPv6 CIDRs from an IPv6-only inbound rule instead of reporting no sources', () => {
+    const out = summarizeSgRules(5432, [
+      { FromPort: 5432, ToPort: 5432, IpProtocol: 'tcp', Ipv6Ranges: [{ CidrIpv6: '2001:db8::/32' }] },
+    ]);
+    expect(out).toEqual(['2001:db8::/32']);
+  });
+  it('collects both IPv4 and IPv6 sources on the same rule', () => {
+    const out = summarizeSgRules(5432, [
+      {
+        FromPort: 5432,
+        ToPort: 5432,
+        IpProtocol: 'tcp',
+        IpRanges: [{ CidrIp: '10.0.0.0/16' }],
+        Ipv6Ranges: [{ CidrIpv6: '2001:db8::/32' }],
+      },
+    ]);
+    expect(out).toContain('10.0.0.0/16');
+    expect(out).toContain('2001:db8::/32');
   });
 });
 
