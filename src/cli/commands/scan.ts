@@ -26,7 +26,7 @@ import {
   buildIncidentSummary, formatIncidentSummaryText,
 } from '../incident-summary.js';
 import { generatePlainEnglishSummary } from '../ai-summary.js';
-import { buildVisibilityReport } from '../visibility.js';
+import { buildVisibilityReport, type VisibilityEntry } from '../visibility.js';
 import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
 import { buildConfigFromDetection } from '../runtime.js';
 import { synthesizeByRules } from '../../framework/root-cause-synthesis.js';
@@ -434,7 +434,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   // What CrisisMode can see, what it found but can't check, and what's invisible by design.
   const ranKinds = watchedKinds(agentResults);
-  result.visibility = buildVisibilityReport(stackProfile, ranKinds, configSource);
+  result.visibility = buildVisibilityReport(stackProfile, ranKinds, configSource, iamBlockedEntries(findings));
 
   // Generate plain-English AI summary (non-blocking — falls back gracefully)
   const plainEnglish = await generatePlainEnglishSummary(incidentSummary, result.recentChanges, result.visibility);
@@ -477,6 +477,34 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
  */
 export function watchedKinds(agentResults: Array<{ kind: string; agentAvailable: boolean }>): string[] {
   return [...new Set(agentResults.filter((r) => r.agentAvailable).map((r) => r.kind))];
+}
+
+/**
+ * Extract IAM permission gaps from scan findings and convert them to visibility entries.
+ * Collects signals with source 'rds_iam_permissions', dedupes by detail, and adds actionable hints.
+ */
+export function iamBlockedEntries(
+  findings: Array<{ service: string; signals: Array<{ source?: string; detail: string }> }>,
+): VisibilityEntry[] {
+  const seenDetails = new Set<string>();
+  const entries: VisibilityEntry[] = [];
+
+  for (const finding of findings) {
+    for (const signal of finding.signals) {
+      if (signal.source === 'rds_iam_permissions') {
+        if (!seenDetails.has(signal.detail)) {
+          seenDetails.add(signal.detail);
+          entries.push({
+            label: 'aws-rds permissions',
+            detail: signal.detail,
+            hint: 'Attach the AmazonRDSReadOnlyAccess and CloudWatchReadOnlyAccess policies to let CrisisMode see the full picture.',
+          });
+        }
+      }
+    }
+  }
+
+  return entries;
 }
 
 /**
