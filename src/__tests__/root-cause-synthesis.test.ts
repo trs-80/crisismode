@@ -293,6 +293,73 @@ describe('Root cause synthesis (6.3)', () => {
       expect(cluster).toBeDefined();
       expect(cluster!.investigationOrder[0]).toBe('aws-rds');
     });
+
+    it('a pure security-group block fires only rds-reachability, not rds-platform-degraded', () => {
+      const result = synthesizeByRules([
+        makeEvidence('postgresql', {
+          signals: [
+            { type: 'connection', source: 'pg_connection', detail: 'connection refused', severity: 'critical' },
+          ],
+        }),
+        makeEvidence('aws-rds', {
+          targetName: 'rds-mydb',
+          signals: [
+            { type: 'connection', source: 'rds_security_group', detail: 'security group allows no sources on port 5432 — clients cannot connect', severity: 'critical' },
+          ],
+        }),
+      ]);
+      const platformCluster = result.clusters.find((c) => c.reasoning.includes('rds-platform-degraded'));
+      expect(platformCluster).toBeUndefined();
+      const reachabilityCluster = result.clusters.find((c) => c.reasoning.includes('rds-reachability'));
+      expect(reachabilityCluster).toBeDefined();
+      expect(reachabilityCluster!.investigationOrder[0]).toBe('aws-rds');
+    });
+
+    it('genuine RDS storage exhaustion fires only rds-platform-degraded, not rds-reachability', () => {
+      const result = synthesizeByRules([
+        makeEvidence('postgresql', {
+          signals: [
+            { type: 'connection', source: 'pg_connection', detail: 'connection refused', severity: 'critical' },
+          ],
+        }),
+        makeEvidence('aws-rds', {
+          targetName: 'rds-mydb',
+          signals: [
+            { type: 'resource_exhaustion', source: 'rds_storage', detail: 'storage is full', severity: 'critical' },
+          ],
+        }),
+      ]);
+      const reachabilityCluster = result.clusters.find((c) => c.reasoning.includes('rds-reachability'));
+      expect(reachabilityCluster).toBeUndefined();
+      const platformCluster = result.clusters.find((c) => c.reasoning.includes('rds-platform-degraded'));
+      expect(platformCluster).toBeDefined();
+      expect(platformCluster!.investigationOrder[0]).toBe('aws-rds');
+    });
+
+    it('regression: rules without requiredTypesByKind still match purely via sharedSignalTypes', () => {
+      // resource-exhaustion-cascade has no requiredTypesByKind — the pairwise
+      // matching change must reduce to the original "any shared type, any agent"
+      // behavior for every pre-existing rule.
+      const evidence: AgentEvidence[] = [
+        makeEvidence('kubernetes', {
+          signals: [
+            { type: 'resource_exhaustion', source: 'k8s', detail: 'node memory pressure', severity: 'critical' },
+          ],
+        }),
+        makeEvidence('postgresql', {
+          signals: [
+            { type: 'resource_exhaustion', source: 'pg', detail: 'disk full', severity: 'critical' },
+          ],
+        }),
+      ];
+
+      const result = synthesizeByRules(evidence);
+      const cluster = result.clusters.find((c) => c.reasoning.includes('resource-exhaustion-cascade'));
+      expect(cluster).toBeDefined();
+      // 0.3 base + full signal agreement (0.3) — no pattern match, no temporal correlation
+      expect(cluster!.confidence).toBeCloseTo(0.6, 2);
+      expect(cluster!.investigationOrder[0]).toBe('kubernetes');
+    });
   });
 
   describe('synthesizeFromRoutingResults', () => {
