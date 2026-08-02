@@ -11,6 +11,7 @@ describe('deriveAwsRdsTargets', () => {
     const r = deriveAwsRdsTargets([dbHint], env, true);
     expect(r.targets).toHaveLength(1);
     expect(r.targets[0]).toMatchObject({
+      name: 'rds-us-east-1-mydb',
       kind: 'aws-rds',
       aws: { region: 'us-east-1', instanceId: 'mydb' },
     });
@@ -49,5 +50,21 @@ describe('deriveAwsRdsTargets', () => {
     const pgHint: EnvHint = { name: 'POSTGRES_URL', present: true, kind: 'database_url', inferredService: 'postgresql' };
     const r = deriveAwsRdsTargets([dbHint, pgHint], env, true);
     expect(r.targets).toHaveLength(1);
+  });
+
+  it('does not collide two same-named instances in different regions — target names are region-scoped', () => {
+    // RDS instance identifiers are only unique within a region; AgentRegistry
+    // resolves targets by name, so two 'mydb' instances in different regions
+    // must not produce (or dedupe into) the same target name.
+    const env = {
+      DATABASE_URL: 'postgres://u:p@mydb.c9akciq32rza.us-east-1.rds.amazonaws.com:5432/app',
+      OTHER_DATABASE_URL: 'postgres://u:p@mydb.b7ymfgtdd0za.eu-west-1.rds.amazonaws.com:5432/app',
+    };
+    const otherHint: EnvHint = { name: 'OTHER_DATABASE_URL', present: true, kind: 'database_url', inferredService: 'postgresql' };
+    const r = deriveAwsRdsTargets([dbHint, otherHint], env, true);
+    expect(r.targets).toHaveLength(2);
+    const names = r.targets.map((t) => t.name);
+    expect(names).toContain('rds-us-east-1-mydb');
+    expect(names).toContain('rds-eu-west-1-mydb');
   });
 });

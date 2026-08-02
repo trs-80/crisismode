@@ -377,7 +377,10 @@ export function deriveAwsRdsTargets(
       awsDetection.uncredentialedHosts.push(endpoint.host);
       continue;
     }
-    const name = `rds-${endpoint.instanceId}`;
+    // RDS instance identifiers are only unique within a region — region-scope
+    // the target name so AgentRegistry (which resolves targets by name)
+    // never collides two same-named instances from different regions.
+    const name = `rds-${endpoint.region}-${endpoint.instanceId}`;
     targets.push({
       name,
       kind: 'aws-rds',
