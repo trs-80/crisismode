@@ -23,7 +23,8 @@ export type SimulatorState =
   | 'connection_saturation'
   | 'sg_blocked'
   | 'maintenance_pending'
-  | 'iam_denied';
+  | 'iam_denied'
+  | 'instance_stopped';
 
 export class RdsRecoverySimulator implements RdsRecoveryBackend {
   private state: SimulatorState = 'degraded';
@@ -39,6 +40,7 @@ export class RdsRecoverySimulator implements RdsRecoveryBackend {
       'sg_blocked',
       'maintenance_pending',
       'iam_denied',
+      'instance_stopped',
     ];
     if (!validStates.includes(to)) {
       throw new Error(`Invalid RDS simulator state: ${to}`);
@@ -111,6 +113,19 @@ export class RdsRecoverySimulator implements RdsRecoveryBackend {
         return {
           instanceId: 'prod-db-01',
           status: 'storage-full',
+          engine: 'postgresql',
+          engineVersion: '14.7',
+          instanceClass: 'db.t3.micro',
+          allocatedStorageGb: 20,
+          multiAz: false,
+          pendingModifications: [],
+          endpointPort: 5432,
+          vpcSecurityGroupIds: ['sg-123456'],
+        };
+      case 'instance_stopped':
+        return {
+          instanceId: 'prod-db-01',
+          status: 'stopped',
           engine: 'postgresql',
           engineVersion: '14.7',
           instanceClass: 'db.t3.micro',
