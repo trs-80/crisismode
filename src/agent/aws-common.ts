@@ -15,6 +15,8 @@ export interface AwsCredentialResult {
   valid: boolean;
   accountId: string;
   region: string;
+  /** Why validation failed — populated only when valid is false. */
+  reason?: string;
 }
 
 /**
@@ -38,12 +40,11 @@ export async function resolveAwsCredentials(opts?: {
   region?: string | undefined;
   profile?: string | undefined;
 }): Promise<AwsCredentialResult> {
-  const invalid: AwsCredentialResult = { valid: false, accountId: '', region: '' };
+  const region = opts?.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
+  const invalid = (reason: string): AwsCredentialResult => ({ valid: false, accountId: '', region, reason });
 
   const sts = await tryImportAws<typeof StsSdkModule>('@aws-sdk/client-sts');
-  if (!sts) return invalid;
-
-  const region = opts?.region || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
+  if (!sts) return invalid('@aws-sdk/client-sts is not installed');
 
   try {
     const client = new sts.STSClient({
@@ -56,8 +57,8 @@ export async function resolveAwsCredentials(opts?: {
       accountId: resp.Account ?? '',
       region,
     };
-  } catch {
-    return invalid;
+  } catch (err) {
+    return invalid(err instanceof Error ? err.message : String(err));
   }
 }
 

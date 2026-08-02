@@ -89,7 +89,7 @@ export function buildVisibilityReport(
       blocked.push({
         label: 'aws-rds (missing credentials)',
         detail: `found RDS endpoint ${host} but no AWS credentials detected`,
-        hint: 'Set AWS_ACCESS_KEY_ID, AWS_PROFILE, or AWS_REGION environment variables to enable RDS control-plane checks.',
+        hint: 'Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (or AWS_PROFILE), plus AWS_REGION, to enable RDS control-plane checks.',
       });
     }
   }

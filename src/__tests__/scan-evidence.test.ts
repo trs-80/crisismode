@@ -98,6 +98,54 @@ describe('buildScanEvidence (Task B2 follow-up)', () => {
     expect(evidence).toHaveLength(0);
   });
 
+  it('invalid AWS credentials (unknown-status health, single rds_iam_permissions signal) produce ' +
+    'no evidence for aws-rds and never fire rds-reachability, even alongside a real postgresql connection failure', () => {
+    const results = [
+      {
+        kind: 'aws-rds',
+        health: {
+          status: 'unknown',
+          confidence: 0,
+          summary: 'AWS credentials found but not working: InvalidClientTokenId — all AWS control-plane checks skipped',
+          observedAt: new Date().toISOString(),
+          signals: [
+            {
+              source: 'rds_iam_permissions',
+              status: 'unknown',
+              detail: 'AWS credentials found but not working: InvalidClientTokenId — all AWS control-plane checks skipped',
+              observedAt: new Date().toISOString(),
+            },
+          ],
+          recommendedActions: [],
+        } as HealthAssessment,
+        finding: { service: 'aws-rds (prod-db-01)', summary: 'AWS credentials found but not working: InvalidClientTokenId — all AWS control-plane checks skipped' },
+      },
+      {
+        kind: 'postgresql',
+        health: {
+          status: 'unhealthy',
+          confidence: 0.9,
+          summary: 'connection refused',
+          observedAt: new Date().toISOString(),
+          signals: [
+            { source: 'pg_connection', status: 'critical', detail: 'connection refused', observedAt: new Date().toISOString() },
+          ],
+          recommendedActions: [],
+        } as HealthAssessment,
+        finding: { service: 'postgresql (prod-db-01)', summary: 'connection refused' },
+      },
+    ];
+
+    const evidence = buildScanEvidence(results);
+    expect(evidence.some((e) => e.agentKind === 'aws-rds')).toBe(false);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.agentKind).toBe('postgresql');
+
+    const synthesis = synthesizeByRules(evidence);
+    const reachabilityCluster = synthesis.clusters.find((c) => c.reasoning.includes('rds-reachability'));
+    expect(reachabilityCluster).toBeUndefined();
+  });
+
   it('preserves existing behavior: unhealthy targets with real health objects still produce full evidence', () => {
     const makeUnhealthy = (): HealthAssessment => ({
       status: 'unhealthy',

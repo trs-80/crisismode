@@ -8,7 +8,7 @@
  * modify retention periods, and create snapshots.
  */
 
-import { tryImportAws } from '../aws-common.js';
+import { tryImportAws, resolveAwsCredentials } from '../aws-common.js';
 import type * as RdsSdkModule from '@aws-sdk/client-rds';
 import type * as CloudWatchSdkModule from '@aws-sdk/client-cloudwatch';
 import type * as Ec2SdkModule from '@aws-sdk/client-ec2';
@@ -20,9 +20,10 @@ import type {
   RdsLiveMetrics,
   RdsPortReachability,
   PermissionMissing,
+  AwsCredentialValidation,
 } from './backend.js';
 import { isPermissionMissing } from './backend.js';
-import { approxMaxConnections, summarizeSgRules, isAccessDeniedError } from './control-plane-helpers.js';
+import { approxMaxConnections, summarizeSgRules, isAccessDeniedError, isInstanceNotFoundError } from './control-plane-helpers.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
@@ -118,6 +119,12 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
     };
   }
 
+  /** Pre-flight credential check via STS GetCallerIdentity — no RDS calls yet. */
+  async validateCredentials(): Promise<AwsCredentialValidation> {
+    const result = await resolveAwsCredentials({ region: this.region });
+    return result.valid ? { valid: true } : { valid: false, reason: result.reason ?? 'unknown error' };
+  }
+
   async getInstanceBackupConfig(): Promise<InstanceBackupConfig> {
     const { sdk, client } = await this.ensureClient();
 
@@ -211,6 +218,13 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
         const result: PermissionMissing = { permissionMissing: 'rds:DescribeDBInstances' };
         this.instanceHealthCache = result;
         return result;
+      }
+      if (isInstanceNotFoundError(error)) {
+        throw new Error(
+          `RDS instance '${this.instanceId}' not found in account/region these credentials see (region: ${this.region}). ` +
+            `If this is a company database, your personal AWS credentials may point at the wrong account.`,
+          { cause: error },
+        );
       }
       throw error;
     }
@@ -347,6 +361,9 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
     switch (command.operation) {
       case 'get_instance_backup_config': {
         return { config: await this.getInstanceBackupConfig() };
+      }
+      case 'get_instance_health': {
+        return { health: await this.getInstanceHealth() };
       }
       case 'modify_db_instance': {
         const retentionPeriod = (command.parameters?.backupRetentionPeriod as number) ?? 7;
