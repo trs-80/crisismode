@@ -12,6 +12,22 @@ describe('parseRdsEndpoint', () => {
     });
   });
 
+  it('handles mixed-case cluster endpoint', () => {
+    const r = parseRdsEndpoint('MyDB.CLUSTER-abc123.US-EAST-1.rds.amazonaws.com');
+    expect(r).toMatchObject({ type: 'cluster', region: 'us-east-1' });
+    expect(r!.instanceId).toBeUndefined();
+  });
+
+  it('handles mixed-case proxy endpoint', () => {
+    expect(parseRdsEndpoint('MyProxy.PROXY-abc123.EU-WEST-1.rds.amazonaws.com'))
+      .toMatchObject({ type: 'proxy', region: 'eu-west-1' });
+  });
+
+  it('recognises a cluster-custom endpoint as cluster', () => {
+    expect(parseRdsEndpoint('mydb.cluster-custom-c9akciq32rza.us-east-1.rds.amazonaws.com'))
+      .toMatchObject({ type: 'cluster', region: 'us-east-1' });
+  });
+
   it('recognises an Aurora cluster endpoint without an instanceId', () => {
     const r = parseRdsEndpoint('prod.cluster-c9akciq32rza.eu-west-2.rds.amazonaws.com');
     expect(r).toMatchObject({ type: 'cluster', region: 'eu-west-2' });
