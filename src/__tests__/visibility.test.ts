@@ -129,6 +129,22 @@ describe('buildVisibilityReport', () => {
     expect(report.blocked.find((e) => e.label === 'AWS control plane')).toBeUndefined();
   });
 
+  it('suppresses the generic AWS-unsupported entry when only Aurora/proxy endpoints were found (no aws-rds ran)', () => {
+    // The Aurora-specific blocked entry (added above from unsupportedEndpoints)
+    // is strictly more informative than the generic "not supported yet" one —
+    // showing both is redundant.
+    const profile = profileWith({
+      envHints: [{ name: 'AWS_ACCESS_KEY_ID', present: true, kind: 'aws_credentials' }],
+      awsDetection: {
+        unsupportedEndpoints: [{ host: 'prod.cluster-abc.us-east-1.rds.amazonaws.com', type: 'cluster' }],
+        uncredentialedHosts: [],
+      },
+    });
+    const report = buildVisibilityReport(profile, [], 'env-fallback');
+    expect(report.blocked.find((e) => e.label === 'AWS control plane')).toBeUndefined();
+    expect(report.blocked.find((e) => e.label.includes('Aurora'))).toBeDefined();
+  });
+
   it('appends extraBlocked entries to the blocked bucket', () => {
     const profile = profileWith({});
     const report = buildVisibilityReport(profile, [], 'none', [

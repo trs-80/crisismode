@@ -94,10 +94,14 @@ export function buildVisibilityReport(
     }
   }
 
-  // Cloud credentials with no control-plane support yet (only if aws-rds did not run).
+  // Cloud credentials with no control-plane support yet (only if aws-rds did
+  // not run, and only when there isn't already a more specific Aurora/RDS
+  // Proxy entry above — that entry is strictly more informative than this
+  // generic one, so showing both would be redundant).
   if (
     presentHints.some((h) => h.kind === 'aws_credentials' || h.kind === 'aws_profile') &&
-    !ran.has('aws-rds')
+    !ran.has('aws-rds') &&
+    !profile.awsDetection?.unsupportedEndpoints?.length
   ) {
     blocked.push({
       label: 'AWS control plane',
