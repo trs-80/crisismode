@@ -41,6 +41,20 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
   }
 
   /**
+   * Pre-flight credential check. When the backend implements
+   * `validateCredentials()` and reports invalid credentials, returns the
+   * message to surface; callers must skip all further AWS calls in that
+   * cycle rather than let them throw and produce misleading evidence
+   * downstream (e.g. a synthetic connection-path signal a correlation rule
+   * could pick up as if CrisisMode had actually observed the control plane).
+   */
+  private async invalidCredentialsMessage(): Promise<string | null> {
+    const result = await this.backend.validateCredentials?.();
+    if (!result || result.valid) return null;
+    return `AWS credentials found but not working: ${result.reason ?? 'unknown error'} — all AWS control-plane checks skipped`;
+  }
+
+  /**
    * Queries the four control-plane backend methods (instance health, recent
    * events, live metrics, port reachability) and derives one ControlPlaneItem
    * per observation. Any call gated by a missing IAM permission becomes a
@@ -72,6 +86,8 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
       items.push(iamItem(instanceHealthR.permissionMissing));
     } else {
       const statusCritical = instanceHealthR.status !== 'available';
+      const pendingModifications = instanceHealthR.pendingModifications;
+      const hasPendingModifications = pendingModifications.length > 0;
       items.push({
         source: 'rds_instance_status',
         message: statusCritical
@@ -90,13 +106,23 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
           endpointPort: instanceHealthR.endpointPort,
         },
       });
+      if (hasPendingModifications) {
+        items.push({
+          source: 'rds_instance_status',
+          message: `RDS instance ${instanceHealthR.instanceId} has pending modifications scheduled: ${pendingModifications.join(', ')} — brief interruption possible when applied.`,
+          critical: false,
+          warning: true,
+          isPermissionMissing: false,
+          data: { instanceId: instanceHealthR.instanceId, pendingModifications },
+        });
+      }
     }
 
     // rds_events
     if (isPermissionMissing(eventsR)) {
       items.push(iamItem(eventsR.permissionMissing));
     } else {
-      const notable = eventsR.filter((e) => /failure|failover|low storage/i.test(e.category));
+      const notable = eventsR.filter((e) => /failure|failover|low storage|maintenance/i.test(e.category));
       for (const event of notable) {
         items.push({
           source: 'rds_events',
@@ -184,6 +210,21 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
 
   async assessHealth(_context: AgentContext): Promise<HealthAssessment> {
     const observedAt = new Date().toISOString();
+
+    const credentialsMessage = await this.invalidCredentialsMessage();
+    if (credentialsMessage) {
+      return {
+        status: 'unknown',
+        confidence: 0,
+        summary: credentialsMessage,
+        observedAt,
+        signals: [{ source: 'rds_iam_permissions', status: 'unknown', detail: credentialsMessage, observedAt }],
+        recommendedActions: [
+          'Verify AWS credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_PROFILE) are current and have permission to describe RDS resources.',
+        ],
+      };
+    }
+
     const config = await this.backend.getInstanceBackupConfig();
     const controlPlaneItems = await this.gatherControlPlaneItems();
 
@@ -252,6 +293,17 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
   }
 
   async diagnose(_context: AgentContext): Promise<DiagnosisResult> {
+    const credentialsMessage = await this.invalidCredentialsMessage();
+    if (credentialsMessage) {
+      return {
+        status: 'inconclusive',
+        scenario: null,
+        confidence: 0,
+        findings: [{ source: 'rds_iam_permissions', observation: credentialsMessage, severity: 'info' }],
+        diagnosticPlanNeeded: false,
+      };
+    }
+
     const config = await this.backend.getInstanceBackupConfig();
     const controlPlaneItems = await this.gatherControlPlaneItems();
 

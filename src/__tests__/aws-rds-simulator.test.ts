@@ -62,4 +62,33 @@ describe('RdsRecoverySimulator control-plane scenarios', () => {
     expect(isPermissionMissing(await sim.getLiveMetrics())).toBe(true);
     expect(isPermissionMissing(await sim.getPortReachability())).toBe(true);
   });
+
+  it('iam_denied getLiveMetrics reports the CloudWatch permission as GetMetricData, matching the live client', async () => {
+    const sim = new RdsRecoverySimulator();
+    sim.transition!('iam_denied');
+    const metrics = await sim.getLiveMetrics();
+    expect(isPermissionMissing(metrics)).toBe(true);
+    if (isPermissionMissing(metrics)) {
+      expect(metrics.permissionMissing).toBe('cloudwatch:GetMetricData');
+    }
+  });
+
+  it('validateCredentials always reports valid — the simulator never gates on AWS credentials', async () => {
+    const sim = new RdsRecoverySimulator();
+    await expect(sim.validateCredentials()).resolves.toEqual({ valid: true });
+  });
+
+  it('executeCommand get_instance_health returns real instance health data, not a generic placeholder', async () => {
+    const sim = new RdsRecoverySimulator();
+    sim.transition!('storage_full');
+    const result = await sim.executeCommand({
+      type: 'structured_command',
+      operation: 'get_instance_health',
+      parameters: { instanceId: 'prod-db-01' },
+    });
+    expect(result).toEqual({ health: await sim.getInstanceHealth() });
+    expect(result).not.toEqual(
+      expect.objectContaining({ simulated: true }),
+    );
+  });
 });

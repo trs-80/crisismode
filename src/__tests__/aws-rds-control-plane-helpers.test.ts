@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from 'vitest';
 import {
-  approxMaxConnections, summarizeSgRules, isAccessDeniedError,
+  approxMaxConnections, summarizeSgRules, isAccessDeniedError, isInstanceNotFoundError,
 } from '../agent/aws-rds/control-plane-helpers.js';
 
 describe('approxMaxConnections', () => {
@@ -43,5 +43,15 @@ describe('isAccessDeniedError', () => {
     expect(isAccessDeniedError(Object.assign(new Error('x'), { name: 'UnauthorizedOperation' }))).toBe(true);
     expect(isAccessDeniedError(new Error('User ... is not authorized to perform rds:DescribeDBInstances'))).toBe(true);
     expect(isAccessDeniedError(new Error('connect ETIMEDOUT'))).toBe(false);
+  });
+});
+
+describe('isInstanceNotFoundError', () => {
+  it('matches the RDS instance-not-found error family by name', () => {
+    expect(isInstanceNotFoundError(Object.assign(new Error('x'), { name: 'DBInstanceNotFoundFault' }))).toBe(true);
+    expect(isInstanceNotFoundError(Object.assign(new Error('x'), { name: 'DBInstanceNotFound' }))).toBe(true);
+    expect(isInstanceNotFoundError(Object.assign(new Error('x'), { name: 'AccessDenied' }))).toBe(false);
+    expect(isInstanceNotFoundError(new Error('connect ETIMEDOUT'))).toBe(false);
+    expect(isInstanceNotFoundError('not an error')).toBe(false);
   });
 });

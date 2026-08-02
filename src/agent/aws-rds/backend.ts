@@ -62,7 +62,21 @@ export interface RdsPortReachability {
   openTo: string[];
 }
 
+/** Result of a pre-flight AWS credential check, before any control-plane calls are made. */
+export interface AwsCredentialValidation {
+  valid: boolean;
+  /** Why validation failed — populated only when valid is false. */
+  reason?: string;
+}
+
 export interface RdsRecoveryBackend extends ExecutionBackend {
+  /**
+   * Optional pre-flight credential check. Live clients implement this via STS
+   * GetCallerIdentity; the simulator implements it as an always-valid no-op.
+   * When present and invalid, the agent skips all AWS calls for this cycle.
+   */
+  validateCredentials?(): Promise<AwsCredentialValidation>;
+
   /** Get the backup configuration and snapshot status for the target RDS instance */
   getInstanceBackupConfig(): Promise<InstanceBackupConfig>;
 

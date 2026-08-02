@@ -9,6 +9,7 @@ import type {
   RdsLiveMetrics,
   RdsPortReachability,
   PermissionMissing,
+  AwsCredentialValidation,
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
@@ -46,6 +47,11 @@ export class RdsRecoverySimulator implements RdsRecoveryBackend {
       throw new Error(`Invalid RDS simulator state: ${to}`);
     }
     this.state = to as SimulatorState;
+  }
+
+  /** The simulator never gates on AWS credentials — it always reports valid. */
+  async validateCredentials(): Promise<AwsCredentialValidation> {
+    return { valid: true };
   }
 
   async getInstanceBackupConfig(): Promise<InstanceBackupConfig> {
@@ -191,7 +197,7 @@ export class RdsRecoverySimulator implements RdsRecoveryBackend {
 
   async getLiveMetrics(): Promise<RdsLiveMetrics | PermissionMissing> {
     if (this.state === 'iam_denied') {
-      return { permissionMissing: 'cloudwatch:GetMetricStatistics' };
+      return { permissionMissing: 'cloudwatch:GetMetricData' };
     }
 
     const maxConnectionsForMicro = 85;
@@ -264,6 +270,8 @@ export class RdsRecoverySimulator implements RdsRecoveryBackend {
     switch (command.operation) {
       case 'get_instance_backup_config':
         return { config: await this.getInstanceBackupConfig() };
+      case 'get_instance_health':
+        return { health: await this.getInstanceHealth() };
       case 'modify_db_instance':
         this.transition('recovering');
         return { modified: true, backupRetentionPeriod: 7 };

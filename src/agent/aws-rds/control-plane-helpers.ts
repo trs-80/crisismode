@@ -89,3 +89,13 @@ export function isAccessDeniedError(err: unknown): boolean {
   }
   return /is not authorized to perform/i.test(err.message ?? '');
 }
+
+/**
+ * Detects RDS's "instance does not exist" error family. Most often seen when
+ * credentials are valid but point at the wrong AWS account or region — the
+ * account/region these credentials see simply has no instance by this id.
+ */
+export function isInstanceNotFoundError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.name === 'DBInstanceNotFoundFault' || err.name === 'DBInstanceNotFound';
+}
