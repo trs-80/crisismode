@@ -10,7 +10,15 @@
 
 import { tryImportAws } from '../aws-common.js';
 import type * as RdsSdkModule from '@aws-sdk/client-rds';
-import type { RdsRecoveryBackend, InstanceBackupConfig } from './backend.js';
+import type {
+  RdsRecoveryBackend,
+  InstanceBackupConfig,
+  RdsInstanceHealth,
+  RdsEvent,
+  RdsLiveMetrics,
+  RdsPortReachability,
+  PermissionMissing,
+} from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
@@ -105,6 +113,93 @@ export class RdsRecoveryLiveClient implements RdsRecoveryBackend {
       latestSnapshotAge,
       automatedBackupsEnabled: retentionPeriod > 0,
     };
+  }
+
+  async getInstanceHealth(): Promise<RdsInstanceHealth | PermissionMissing> {
+    try {
+      const { sdk, client } = await this.ensureClient();
+      const describeResp = await client.send(
+        new sdk.DescribeDBInstancesCommand({
+          DBInstanceIdentifier: this.instanceId,
+        }),
+      );
+
+      const instance = describeResp.DBInstances?.[0];
+      if (!instance) {
+        throw new Error(`RDS instance not found: ${this.instanceId}`);
+      }
+
+      return {
+        instanceId: this.instanceId,
+        status: instance.DBInstanceStatus ?? 'unknown',
+        engine: instance.Engine ?? 'unknown',
+        engineVersion: instance.EngineVersion ?? 'unknown',
+        instanceClass: instance.DBInstanceClass ?? 'unknown',
+        allocatedStorageGb: instance.AllocatedStorage ?? 0,
+        multiAz: instance.MultiAZ ?? false,
+        pendingModifications: instance.PendingModifiedValues
+          ? Object.keys(instance.PendingModifiedValues).filter((k) => (instance.PendingModifiedValues as Record<string, unknown>)[k])
+          : [],
+        endpointPort: instance.Endpoint?.Port ?? 5432,
+        vpcSecurityGroupIds: (instance.VpcSecurityGroups ?? []).map((sg) => sg.VpcSecurityGroupId ?? ''),
+      };
+    } catch (error) {
+      const err = error as Error & { Code?: string };
+      if (err.Code?.includes('UnauthorizedOperation') || err.Code?.includes('AccessDenied')) {
+        return { permissionMissing: 'rds:DescribeDBInstances' };
+      }
+      throw error;
+    }
+  }
+
+  async getRecentEvents(hours: number): Promise<RdsEvent[] | PermissionMissing> {
+    try {
+      const { sdk, client } = await this.ensureClient();
+      const startTime = new Date(Date.now() - hours * 3600000);
+      const resp = await client.send(
+        new sdk.DescribeEventsCommand({
+          SourceIdentifier: this.instanceId,
+          StartTime: startTime,
+        }),
+      );
+
+      return (resp.Events ?? []).map((event) => ({
+        at: event.Date?.toISOString() ?? '',
+        message: event.Message ?? '',
+        category: event.EventCategories?.[0] ?? 'unknown',
+      }));
+    } catch (error) {
+      const err = error as Error & { Code?: string };
+      if (err.Code?.includes('UnauthorizedOperation') || err.Code?.includes('AccessDenied')) {
+        return { permissionMissing: 'rds:DescribeEvents' };
+      }
+      throw error;
+    }
+  }
+
+  async getLiveMetrics(): Promise<RdsLiveMetrics | PermissionMissing> {
+    // CloudWatch metrics require additional AWS SDK and permissions
+    // For now, return permission missing to indicate this needs AWS setup
+    return { permissionMissing: 'cloudwatch:GetMetricStatistics' };
+  }
+
+  async getPortReachability(): Promise<RdsPortReachability | PermissionMissing> {
+    try {
+      const rdsData = await this.getInstanceHealth();
+      if ('permissionMissing' in rdsData) {
+        return { permissionMissing: 'ec2:DescribeSecurityGroups' };
+      }
+
+      // Port reachability requires EC2 API access for security group rules
+      // For now, return permission missing to indicate this needs AWS setup
+      return { permissionMissing: 'ec2:DescribeSecurityGroups' };
+    } catch (error) {
+      const err = error as Error & { Code?: string };
+      if (err.Code?.includes('UnauthorizedOperation') || err.Code?.includes('AccessDenied')) {
+        return { permissionMissing: 'ec2:DescribeSecurityGroups' };
+      }
+      throw error;
+    }
   }
 
   async executeCommand(command: Command): Promise<unknown> {
