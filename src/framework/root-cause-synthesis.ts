@@ -73,6 +73,16 @@ interface CorrelationRule {
   agentKinds: string[];
   /** Shared signal types that trigger this correlation */
   sharedSignalTypes: SymptomSignal['type'][];
+  /**
+   * Per-agent-kind override: when an agent's kind has an entry here, that
+   * agent matches ONLY if its signal types intersect this kind-specific
+   * list, instead of the rule's general `sharedSignalTypes`. Agent kinds
+   * without an entry keep matching via `sharedSignalTypes` as before.
+   * Use this to disambiguate rules whose `sharedSignalTypes` overlap
+   * enough that unrelated agent-kind combinations would otherwise both
+   * satisfy the same rule (e.g. two rules both listing `'connection'`).
+   */
+  requiredTypesByKind?: Partial<Record<string, SymptomSignal['type'][]>>;
   /** Shared patterns that trigger this correlation */
   sharedPatterns: string[];
   /** Root cause template */
@@ -160,7 +170,11 @@ const CORRELATION_RULES: CorrelationRule[] = [
   {
     name: 'rds-platform-degraded',
     agentKinds: ['aws-rds', 'postgresql', 'managed-database'],
-    sharedSignalTypes: ['resource_exhaustion', 'connection'],
+    sharedSignalTypes: ['resource_exhaustion', 'connection', 'timeout'],
+    // aws-rds only counts toward this rule when it shows genuine resource
+    // exhaustion (storage/limits) — not merely a connection-path signal,
+    // which belongs to rds-reachability instead.
+    requiredTypesByKind: { 'aws-rds': ['resource_exhaustion'] },
     sharedPatterns: [],
     rootCauseTemplate: 'The AWS RDS platform under the database is degraded — fix the instance (storage/limits) before debugging the database itself',
     investigationOrder: ['aws-rds', 'postgresql', 'managed-database'],
@@ -170,8 +184,12 @@ const CORRELATION_RULES: CorrelationRule[] = [
     name: 'rds-reachability',
     agentKinds: ['aws-rds', 'postgresql'],
     sharedSignalTypes: ['connection', 'timeout'],
+    // aws-rds only counts toward this rule on a connection-path signal
+    // (security groups, connection limits) — not resource exhaustion,
+    // which belongs to rds-platform-degraded instead.
+    requiredTypesByKind: { 'aws-rds': ['connection'] },
     sharedPatterns: [],
-    rootCauseTemplate: 'The database looks down but AWS reports it healthy — network path (security groups) is the likely cause',
+    rootCauseTemplate: 'AWS\'s control plane shows a connection-path problem (security groups or connection limits) — check reachability and limits before debugging the database itself',
     investigationOrder: ['aws-rds', 'postgresql'],
     confidenceBoost: 0.25,
   },
@@ -237,7 +255,8 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
 
     for (const agent of matchingAgents) {
       const types = agentSignalTypes.get(agent.agentKind);
-      if (types && rule.sharedSignalTypes.some((t) => types.has(t))) {
+      const requiredTypes = rule.requiredTypesByKind?.[agent.agentKind] ?? rule.sharedSignalTypes;
+      if (types && requiredTypes.some((t) => types.has(t))) {
         signalMatches++;
       }
       const patterns = agentPatterns.get(agent.agentKind);
