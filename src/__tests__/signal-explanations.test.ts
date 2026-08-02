@@ -87,6 +87,11 @@ describe('knowledge map covers all built-in agent sources', () => {
     'deploy_status',                // deploy-rollback
     'provider_health_status',       // ai-provider
     's3_versioning',                // aws-s3
+    'rds_instance_status',          // aws-rds
+    'rds_connection_saturation',    // aws-rds
+    'rds_storage',                  // aws-rds
+    'rds_security_group',           // aws-rds
+    'rds_iam_permissions',          // aws-rds
   ];
 
   for (const source of REPRESENTATIVE_SOURCES) {
