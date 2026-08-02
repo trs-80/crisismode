@@ -73,6 +73,31 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html',
   },
   {
+    match: /^rds_instance_status|^rds_events/,
+    explanation: 'The AWS-managed status of your database instance. When AWS reports a non-available state (storage-full, rebooting, maintenance), the platform itself — not your application — is the reason the database misbehaves.',
+    learnMoreUrl: 'https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/accessing-monitoring.html',
+  },
+  {
+    match: /^rds_connection_saturation/,
+    explanation: 'Each RDS instance size allows a limited number of simultaneous database connections. Near the limit, new connections fail even though the database is healthy — common with serverless apps that open a connection per request. Connection pooling or RDS Proxy fixes this.',
+    learnMoreUrl: 'https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.html',
+  },
+  {
+    match: /^rds_storage/,
+    explanation: 'RDS instances have a fixed allocated storage size. When it fills up, the database stops accepting writes until storage is increased — a one-click change in the RDS console (Modify → Allocated storage).',
+    learnMoreUrl: 'https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PIOPS.StorageTypes.html',
+  },
+  {
+    match: /^rds_security_group/,
+    explanation: 'AWS security groups are firewalls around your database. If no rule allows your app\'s address on the database port, every connection times out even though the database is running fine — the most common cause of "my app can\'t reach RDS".',
+    learnMoreUrl: 'https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.RDSSecurityGroups.html',
+  },
+  {
+    match: /^rds_iam_permissions/,
+    explanation: 'CrisisMode\'s AWS credentials lack permission for a read-only check. The database itself may be fine — grant the listed IAM action (the AmazonRDSReadOnlyAccess and CloudWatchReadOnlyAccess managed policies cover all checks) to see the full picture.',
+    learnMoreUrl: 'https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/security_iam_id-based-policy-examples.html',
+  },
+  {
     match: /backup|snapshot|pitr|restore/,
     explanation: 'Backups and point-in-time recovery are the last line of defense against data loss. A misconfigured or stale backup means recovery may be impossible when needed.',
     learnMoreUrl: 'https://docs.aws.amazon.com/aws-backup/latest/devguide/whatisbackup.html',
