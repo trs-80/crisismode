@@ -32,12 +32,24 @@ const INSTANCE_CLASS_MEMORY_GIB: Record<string, number> = {
 };
 
 /**
- * Approximate max_connections using the RDS default formula:
- * LEAST(memBytes / 9531392, 5000). This is an approximation — actual
- * values depend on the parameter group and engine. Returns null for
- * instance classes not in the static memory map.
+ * RDS engine strings (and the simulator's 'postgresql' convention) whose
+ * default parameter group derives max_connections from the documented
+ * postgres formula. Matched case-insensitively as a substring so
+ * 'postgres', 'postgresql', and 'aurora-postgresql' all match.
  */
-export function approxMaxConnections(instanceClass: string): number | null {
+const POSTGRES_ENGINE_PATTERN = /postgres/i;
+
+/**
+ * Approximate max_connections using the RDS default formula for postgres
+ * engines: LEAST(memBytes / 9531392, 5000). This is an approximation —
+ * actual values depend on the parameter group. Returns null for instance
+ * classes not in the static memory map, and for non-postgres engines
+ * (e.g. MySQL uses a different divisor; reporting a value derived from the
+ * postgres formula would be a false saturation signal rather than no
+ * signal at all).
+ */
+export function approxMaxConnections(instanceClass: string, engine: string): number | null {
+  if (!POSTGRES_ENGINE_PATTERN.test(engine)) return null;
   const gib = INSTANCE_CLASS_MEMORY_GIB[instanceClass];
   if (gib === undefined) return null;
   return Math.min(Math.floor((gib * 1024 ** 3) / 9531392), 5000);
@@ -48,6 +60,7 @@ export interface SgPermission {
   ToPort?: number | undefined;
   IpProtocol?: string | undefined;
   IpRanges?: Array<{ CidrIp?: string | undefined }> | undefined;
+  Ipv6Ranges?: Array<{ CidrIpv6?: string | undefined }> | undefined;
   UserIdGroupPairs?: Array<{ GroupId?: string | undefined }> | undefined;
 }
 
@@ -68,6 +81,9 @@ export function summarizeSgRules(dbPort: number, permissions: SgPermission[]): s
 
     for (const range of perm.IpRanges ?? []) {
       if (range.CidrIp) out.push(range.CidrIp);
+    }
+    for (const range of perm.Ipv6Ranges ?? []) {
+      if (range.CidrIpv6) out.push(range.CidrIpv6);
     }
     for (const pair of perm.UserIdGroupPairs ?? []) {
       if (pair.GroupId) out.push(pair.GroupId);
