@@ -255,6 +255,44 @@ describe('Root cause synthesis (6.3)', () => {
         expect(cluster.confidence).toBeGreaterThan(0);
       }
     });
+
+    it('correlates pg unreachable with RDS platform exhaustion', () => {
+      const result = synthesizeByRules([
+        makeEvidence('postgresql', {
+          signals: [
+            { type: 'connection', source: 'pg_connection', detail: 'connection refused', severity: 'critical' },
+          ],
+        }),
+        makeEvidence('aws-rds', {
+          targetName: 'rds-mydb',
+          signals: [
+            { type: 'resource_exhaustion', source: 'rds_storage', detail: 'storage is full', severity: 'critical' },
+          ],
+        }),
+      ]);
+      const cluster = result.clusters.find((c) => c.agents.includes('aws-rds') && c.agents.includes('postgresql'));
+      expect(cluster).toBeDefined();
+      expect(cluster!.investigationOrder[0]).toBe('aws-rds');
+    });
+
+    it('correlates pg timeout with RDS security-group facts', () => {
+      const result = synthesizeByRules([
+        makeEvidence('postgresql', {
+          signals: [
+            { type: 'timeout', source: 'pg_connection', detail: 'timed out', severity: 'critical' },
+          ],
+        }),
+        makeEvidence('aws-rds', {
+          targetName: 'rds-mydb',
+          signals: [
+            { type: 'connection', source: 'rds_security_group', detail: 'security group allows no sources on port 5432 — clients cannot connect', severity: 'critical' },
+          ],
+        }),
+      ]);
+      const cluster = result.clusters.find((c) => c.agents.includes('aws-rds'));
+      expect(cluster).toBeDefined();
+      expect(cluster!.investigationOrder[0]).toBe('aws-rds');
+    });
   });
 
   describe('synthesizeFromRoutingResults', () => {

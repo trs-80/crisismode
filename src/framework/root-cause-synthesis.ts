@@ -157,6 +157,24 @@ const CORRELATION_RULES: CorrelationRule[] = [
     investigationOrder: ['dns', 'network', 'etcd', 'postgresql', 'redis', 'kafka', 'application'],
     confidenceBoost: 0.3,
   },
+  {
+    name: 'rds-platform-degraded',
+    agentKinds: ['aws-rds', 'postgresql', 'managed-database'],
+    sharedSignalTypes: ['resource_exhaustion', 'connection'],
+    sharedPatterns: [],
+    rootCauseTemplate: 'The AWS RDS platform under the database is degraded — fix the instance (storage/limits) before debugging the database itself',
+    investigationOrder: ['aws-rds', 'postgresql', 'managed-database'],
+    confidenceBoost: 0.3,
+  },
+  {
+    name: 'rds-reachability',
+    agentKinds: ['aws-rds', 'postgresql'],
+    sharedSignalTypes: ['connection', 'timeout'],
+    sharedPatterns: [],
+    rootCauseTemplate: 'The database looks down but AWS reports it healthy — network path (security groups) is the likely cause',
+    investigationOrder: ['aws-rds', 'postgresql'],
+    confidenceBoost: 0.25,
+  },
 ];
 
 // ── Rule-based correlation ──
