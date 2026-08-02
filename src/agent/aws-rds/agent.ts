@@ -853,7 +853,8 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
         `Reduce connection saturation on RDS instance ${instance}`,
         `Database connections on instance ${instance} are approaching the limit. Consider connection pooling (RDS Proxy) or a larger instance class: ` +
           `RDS console → Databases → ${instance} → Modify → DB instance class. ` +
-          `CLI equivalent: aws rds modify-db-instance --db-instance-identifier ${instance} --db-instance-class <larger-class> --apply-immediately.`,
+          `CLI equivalent: aws rds modify-db-instance --db-instance-identifier ${instance} --db-instance-class <larger-class> --apply-immediately. ` +
+          `Note: applying a class change reboots the instance immediately — schedule during low traffic, or omit --apply-immediately to wait for the next maintenance window.`,
       );
     }
 

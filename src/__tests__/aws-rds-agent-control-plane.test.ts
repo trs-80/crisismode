@@ -297,6 +297,16 @@ describe('aws-rds control-plane diagnosis', () => {
       expect(health.recommendedActions[0]).toMatch(actionPattern);
     });
 
+    it("the connection-saturation suggestion warns that --apply-immediately reboots the instance", async () => {
+      const { agent, context } = makeAgent('connection_saturation');
+      const diagnosis = await agent.diagnose(context);
+      const plan = await agent.plan(context, diagnosis);
+      const text = JSON.stringify(plan.steps);
+      expect(text).toContain('--db-instance-class');
+      expect(text).toContain('--apply-immediately');
+      expect(text.toLowerCase()).toMatch(/reboots? the instance/);
+    });
+
     it('a healthy instance keeps the backup-only summary (no control-plane condition to fold in)', async () => {
       const { agent, context } = makeAgent('healthy');
       const health = await agent.assessHealth(context);
