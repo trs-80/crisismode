@@ -78,4 +78,17 @@ describe('aws-rds control-plane diagnosis', () => {
     expect(text).toContain('RDS console'); // console path present
     expect(text).toContain('aws rds'); // CLI equivalent present
   });
+
+  it('instance_unavailable (e.g. a stopped instance) still yields a suggestion plan, not an empty one', async () => {
+    const { agent, context } = makeAgent('instance_stopped');
+    const diagnosis = await agent.diagnose(context);
+    expect(diagnosis.scenario).toBe('instance_unavailable');
+
+    const plan = await agent.plan(context, diagnosis);
+    expect(plan.steps.some((s) => s.type === 'system_action')).toBe(false);
+    const notifications = plan.steps.filter((s) => s.type === 'human_notification');
+    expect(notifications.length).toBeGreaterThan(0);
+    const text = JSON.stringify(notifications);
+    expect(text.toLowerCase()).toContain('stopped');
+  });
 });

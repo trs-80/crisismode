@@ -744,6 +744,30 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
       );
     }
 
+    // The instance itself is unavailable (not the storage/saturation/sg
+    // conditions above, each of which already explains *why* and takes
+    // priority in diagnose()'s scenario selection). Reachable in practice
+    // any time the live client reports a non-'available' status that isn't
+    // 'storage-full' — e.g. stopped, failed, incompatible-parameters — even
+    // though the simulator only exercises 'stopped' today.
+    if (diagnosis.scenario === 'instance_unavailable' && instanceStatusFinding?.severity === 'critical') {
+      const status =
+        typeof instanceStatusFinding.data?.status === 'string'
+          ? (instanceStatusFinding.data.status as string)
+          : 'unknown';
+      const guidance =
+        status === 'stopped'
+          ? `Start the instance: RDS console → Databases → ${instance} → Actions → Start. CLI equivalent: aws rds start-db-instance --db-instance-identifier ${instance}.`
+          : /rebooting|maintenance/i.test(status)
+            ? `The instance is currently '${status}' — wait and monitor; no action is needed unless it fails to return to 'available'.`
+            : `Review recent events and contact AWS support if the instance does not return to 'available'.`;
+      pushSuggestion(
+        `RDS instance ${instance} is not available (status: ${status})`,
+        `RDS instance status is '${status}' on instance ${instance}. Check the status reason and recent events: ` +
+          `RDS console → Databases → ${instance}. CLI equivalent: aws rds describe-db-instances --db-instance-identifier ${instance}. ${guidance}`,
+      );
+    }
+
     return {
       ...createPlanEnvelope({
         planIdSuffix: 'aws-rds-control-plane',
