@@ -216,7 +216,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/agent/backup/` | Backup verification and DR readiness agent |
 | `src/agent/aws-s3/` | AWS S3 backup configuration agent |
 | `src/agent/aws-dynamodb/` | AWS DynamoDB PITR verification agent |
-| `src/agent/aws-rds/` | AWS RDS backup and snapshot agent |
+| `src/agent/aws-rds/` | AWS RDS control-plane health, metrics, reachability, and backup agent |
 | `src/config/builtin-agents.ts` | Built-in agent registration |
 | `src/config/agent-registry.ts` | Global agent registry |
 | `src/integrations/` | External integrations (GitHub, Sentry) |
