@@ -32,6 +32,23 @@ interface ControlPlaneItem {
   data?: Record<string, unknown>;
 }
 
+type ControlPlaneScenario = 'storage_full' | 'sg_blocked' | 'connection_saturation' | 'instance_unavailable';
+
+/** The single control-plane condition assessHealth() and diagnose() should both foreground. */
+interface DominantControlPlaneCondition {
+  scenario: ControlPlaneScenario;
+  critical: boolean;
+  item: ControlPlaneItem;
+}
+
+/** Per-scenario operator action, always surfaced ahead of the backup-only recommendations. */
+const CONTROL_PLANE_ACTION: Record<ControlPlaneScenario, string> = {
+  storage_full: 'Increase allocated storage on the RDS instance immediately — the instance is at risk of write failures.',
+  sg_blocked: 'Open inbound access on the RDS security group — no clients can currently connect to the database.',
+  connection_saturation: 'Reduce connection saturation (connection pooling or a larger instance class) before it blocks new connections.',
+  instance_unavailable: 'Investigate why the RDS instance is not available and restore it to the available state.',
+};
+
 export class AwsRdsRecoveryAgent implements RecoveryAgent {
   manifest = awsRdsRecoveryManifest;
   backend: RdsRecoveryBackend;
@@ -208,6 +225,33 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
     return items;
   }
 
+  /**
+   * Picks the single control-plane condition assessHealth()'s summary/actions
+   * and diagnose()'s scenario selection should both foreground, in the same
+   * priority order: critical storage > critical security-group > critical
+   * saturation > critical instance-unavailability > warning saturation (the
+   * only control-plane check that has a non-critical failure mode). Returns
+   * null when no control-plane item is critical or warning.
+   */
+  private selectDominantControlPlaneCondition(items: ControlPlaneItem[]): DominantControlPlaneCondition | null {
+    const storageCritical = items.find((i) => i.source === 'rds_storage' && i.critical);
+    if (storageCritical) return { scenario: 'storage_full', critical: true, item: storageCritical };
+
+    const sgCritical = items.find((i) => i.source === 'rds_security_group' && i.critical);
+    if (sgCritical) return { scenario: 'sg_blocked', critical: true, item: sgCritical };
+
+    const saturationCritical = items.find((i) => i.source === 'rds_connection_saturation' && i.critical);
+    if (saturationCritical) return { scenario: 'connection_saturation', critical: true, item: saturationCritical };
+
+    const instanceCritical = items.find((i) => i.source === 'rds_instance_status' && i.critical);
+    if (instanceCritical) return { scenario: 'instance_unavailable', critical: true, item: instanceCritical };
+
+    const saturationWarning = items.find((i) => i.source === 'rds_connection_saturation' && i.warning);
+    if (saturationWarning) return { scenario: 'connection_saturation', critical: false, item: saturationWarning };
+
+    return null;
+  }
+
   async assessHealth(_context: AgentContext): Promise<HealthAssessment> {
     const observedAt = new Date().toISOString();
 
@@ -275,20 +319,47 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
       ...controlPlaneSignals,
     ];
 
+    // When a control-plane item is unhealthy/recovering the cause, the base
+    // backup-only summary and actions below would otherwise describe only
+    // backup state — misleading for e.g. a storage-full instance. Fold the
+    // dominant control-plane condition in front of both when one is present.
+    const dominant = this.selectDominantControlPlaneCondition(controlPlaneItems);
+    const backupFactsText = `backups: retention ${config.backupRetentionPeriod}d, ${
+      config.latestSnapshotTime ? `last snapshot ${Math.floor(config.latestSnapshotAge / 3600)}h ago` : 'no snapshots'
+    }`;
+
+    const baseSummary = {
+      healthy: `RDS instance ${config.instanceId} backup health is healthy. Automated backups are enabled with ${config.backupRetentionPeriod}-day retention and ${config.snapshotCount} snapshot(s) available.`,
+      recovering: `RDS instance ${config.instanceId} backup health is recovering. Backup retention is configured but snapshot age exceeds 24 hours.`,
+      unhealthy: `RDS instance ${config.instanceId} backup health is unhealthy. Automated backups are disabled or no snapshots exist — the instance has no backup protection.`,
+    };
+    const baseActions = {
+      healthy: ['No action required. Continue monitoring RDS backup retention and snapshot freshness.'],
+      recovering: ['Investigate why the latest snapshot is stale. Verify automated backup window and snapshot creation.'],
+      unhealthy: ['Run the RDS backup recovery workflow to enable automated backups and create an immediate snapshot.'],
+    };
+
+    const summary = dominant
+      ? {
+          ...baseSummary,
+          recovering: `${dominant.item.message} (${backupFactsText})`,
+          unhealthy: `${dominant.item.message} (${backupFactsText})`,
+        }
+      : baseSummary;
+    const actions = dominant
+      ? {
+          ...baseActions,
+          recovering: [CONTROL_PLANE_ACTION[dominant.scenario], ...baseActions.recovering],
+          unhealthy: [CONTROL_PLANE_ACTION[dominant.scenario], ...baseActions.unhealthy],
+        }
+      : baseActions;
+
     return buildHealthAssessment({
       status,
       signals,
       confidence: 0.95,
-      summary: {
-        healthy: `RDS instance ${config.instanceId} backup health is healthy. Automated backups are enabled with ${config.backupRetentionPeriod}-day retention and ${config.snapshotCount} snapshot(s) available.`,
-        recovering: `RDS instance ${config.instanceId} backup health is recovering. Backup retention is configured but snapshot age exceeds 24 hours.`,
-        unhealthy: `RDS instance ${config.instanceId} backup health is unhealthy. Automated backups are disabled or no snapshots exist — the instance has no backup protection.`,
-      },
-      actions: {
-        healthy: ['No action required. Continue monitoring RDS backup retention and snapshot freshness.'],
-        recovering: ['Investigate why the latest snapshot is stale. Verify automated backup window and snapshot creation.'],
-        unhealthy: ['Run the RDS backup recovery workflow to enable automated backups and create an immediate snapshot.'],
-      },
+      summary,
+      actions,
     });
   }
 
@@ -315,28 +386,31 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
           ? 'stale_snapshot'
           : 'healthy';
 
-    // Control-plane issues (storage/security-group/saturation/availability) are
-    // surfaced as more urgent than a backup-configuration finding, so they take
-    // priority when deciding what scenario the plan should suggest a fix for.
-    const storageCriticalItem = controlPlaneItems.find((i) => i.source === 'rds_storage' && i.critical);
-    const sgCriticalItem = controlPlaneItems.find((i) => i.source === 'rds_security_group' && i.critical);
-    const saturationItem = controlPlaneItems.find(
-      (i) => i.source === 'rds_connection_saturation' && (i.critical || i.warning),
-    );
-    const instanceCriticalItem = controlPlaneItems.find((i) => i.source === 'rds_instance_status' && i.critical);
+    // Precedence across both families, most urgent first: a critical
+    // control-plane item always wins; otherwise a critical backup scenario
+    // (retention disabled / no snapshots) wins over a merely-warning
+    // control-plane item (only connection saturation has a warning tier);
+    // anything left falls back to whatever the backup scenario is.
+    const dominant = this.selectDominantControlPlaneCondition(controlPlaneItems);
+    const backupCritical = config.backupRetentionPeriod === 0 || config.snapshotCount === 0;
 
-    const controlPlaneScenario = storageCriticalItem
-      ? 'storage_full'
-      : sgCriticalItem
-        ? 'sg_blocked'
-        : saturationItem
-          ? 'connection_saturation'
-          : instanceCriticalItem
-            ? 'instance_unavailable'
-            : null;
+    let scenario: string;
+    let usedControlPlane: boolean;
+    if (dominant?.critical) {
+      scenario = dominant.scenario;
+      usedControlPlane = true;
+    } else if (backupCritical) {
+      scenario = backupScenario;
+      usedControlPlane = false;
+    } else if (dominant) {
+      scenario = dominant.scenario;
+      usedControlPlane = true;
+    } else {
+      scenario = backupScenario;
+      usedControlPlane = false;
+    }
 
-    const scenario = controlPlaneScenario ?? backupScenario;
-    const confidence = controlPlaneScenario
+    const confidence = usedControlPlane
       ? 0.9
       : config.backupRetentionPeriod === 0 ? 0.98 : 0.90;
 
