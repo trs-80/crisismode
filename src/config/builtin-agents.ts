@@ -29,6 +29,7 @@ import { backupVerificationRegistration } from '../agent/backup/registration.js'
 import { awsS3RecoveryRegistration } from '../agent/aws-s3/registration.js';
 import { awsDynamoDbRecoveryRegistration } from '../agent/aws-dynamodb/registration.js';
 import { awsRdsRecoveryRegistration } from '../agent/aws-rds/registration.js';
+import { iacDriftRegistration } from '../agent/iac-drift/registration.js';
 
 export const builtinAgents: AgentRegistration[] = [
   // Infrastructure agents
@@ -47,6 +48,8 @@ export const builtinAgents: AgentRegistration[] = [
   awsS3RecoveryRegistration,
   awsDynamoDbRecoveryRegistration,
   awsRdsRecoveryRegistration,
+  // IaC awareness
+  iacDriftRegistration,
   // AI application recovery agents
   deployRollbackRegistration,
   aiProviderRegistration,

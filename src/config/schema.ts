@@ -78,6 +78,12 @@ export interface ConfigDriftTargetOptions {
   expectations?: ConfigDriftExpectation[];
 }
 
+export interface IacTargetOptions {
+  /** Project directory containing .tf / terraform.tfstate (default: process.cwd()).
+   *  The literal 'simulator' selects the in-memory backend. */
+  dir?: string;
+}
+
 // ── Target config ──
 
 export interface TargetConfig {
@@ -96,6 +102,8 @@ export interface TargetConfig {
   queue?: QueueTargetOptions;
   /** Drift-check options for application-config targets. */
   configDrift?: ConfigDriftTargetOptions;
+  /** Terraform project options for iac-drift targets. */
+  iac?: IacTargetOptions;
 }
 
 // ── Site config ──
@@ -155,4 +163,6 @@ export interface ResolvedTarget {
   queue?: QueueTargetOptions | undefined;
   /** Drift-check options for application-config targets. */
   configDrift?: ConfigDriftTargetOptions | undefined;
+  /** Terraform project options for iac-drift targets. */
+  iac?: IacTargetOptions | undefined;
 }

@@ -71,6 +71,7 @@ const KIND_PREFIX: Record<string, string> = {
   'aws-s3': 'S3',
   'aws-dynamodb': 'DYNAMO',
   'aws-rds': 'RDS',
+  'iac-drift': 'IAC',
   plugin: 'PLUG',
 };
 

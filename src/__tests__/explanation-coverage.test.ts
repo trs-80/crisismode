@@ -29,6 +29,7 @@ const REPRESENTATIVE_SOURCES: Record<string, string[]> = {
   'aws-s3': ['s3_versioning'],
   'aws-dynamodb': ['dynamodb_continuous_backups'],
   'aws-rds': ['rds_backup_retention', 'rds_instance_status', 'rds_connection_saturation', 'rds_storage', 'rds_security_group', 'rds_iam_permissions'],
+  'iac-drift': ['iac_drift_count'],
 };
 
 describe('explanation coverage', () => {
