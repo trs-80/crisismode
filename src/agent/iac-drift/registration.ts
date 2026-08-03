@@ -15,9 +15,6 @@ export const iacDriftRegistration: AgentRegistration = {
 
     if (dir !== 'simulator') {
       try {
-        // @ts-expect-error -- live-client.ts does not exist until Task 7 lands;
-        // the import throws module-not-found at runtime and hits the catch
-        // below, which is the intended interim behavior on this branch.
         const { IacDriftLiveClient } = await import('./live-client.js');
         const backend = new IacDriftLiveClient({ dir });
         const agent = new IacDriftRecoveryAgent(backend);
@@ -26,9 +23,8 @@ export const iacDriftRegistration: AgentRegistration = {
         // Only the dynamic import()/construction is guarded here; the live
         // client defers all filesystem/AWS I/O to query time, so real
         // read/auth failures surface later, not in this catch. Never swallow
-        // silently. Until Task 7 lands, this import always throws
-        // module-not-found and hits this fallback — expected interim
-        // behavior on this branch.
+        // silently — this only catches genuine construction errors (e.g. a
+        // corrupt module).
         const message = err instanceof Error ? err.message : String(err);
         console.warn(
           `iac-drift live client initialization failed for target "${target.name}" (${message}). ` +
