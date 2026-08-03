@@ -4,6 +4,15 @@
 import { describe, it, expect } from 'vitest';
 import { IacDriftRecoveryAgent } from '../agent/iac-drift/agent.js';
 import { IacDriftSimulator } from '../agent/iac-drift/simulator.js';
+import type {
+  IacDriftBackend,
+  IacStateStatus,
+  ResourceExistence,
+} from '../agent/iac-drift/backend.js';
+import type { IacResource } from '../agent/iac-drift/state-parser.js';
+import type { DriftComparison } from '../agent/iac-drift/drift-compare.js';
+import type { PermissionMissing } from '../agent/aws-common.js';
+import type { CheckExpression, Command } from '../types/common.js';
 import { assembleContext } from '../framework/context.js';
 import type { AgentContext } from '../types/agent-context.js';
 
@@ -12,6 +21,63 @@ function iacContext(agent: IacDriftRecoveryAgent): AgentContext {
     { type: 'health_check', source: 'test', payload: {}, receivedAt: new Date().toISOString() },
     agent.manifest,
   );
+}
+
+const PROD_DB: IacResource = {
+  type: 'aws_db_instance',
+  name: 'main',
+  id: 'prod-db',
+  attributes: {},
+};
+
+/** A backend whose existence AND drift checks are both IAM-permission-gated —
+ *  the simulator never returns PermissionMissing, so diagnose()'s "stay silent
+ *  on permission-missing resources" behavior needs a fake backend to exercise. */
+class PermissionMissingBackend implements IacDriftBackend {
+  async getStateStatus(): Promise<IacStateStatus> {
+    return { source: 'local', detail: 'terraform.tfstate', readable: true, serial: 1, resourceCounts: { aws_db_instance: 1 } };
+  }
+  async listManagedResources(): Promise<IacResource[]> {
+    return [PROD_DB];
+  }
+  async checkResourceExistence(): Promise<ResourceExistence | PermissionMissing> {
+    return { permissionMissing: 'rds:DescribeDBInstances' };
+  }
+  async getResourceDrift(): Promise<DriftComparison | PermissionMissing | null> {
+    return { permissionMissing: 'rds:DescribeDBInstances' };
+  }
+  async executeCommand(_command: Command): Promise<unknown> {
+    return {};
+  }
+  async evaluateCheck(_check: CheckExpression): Promise<boolean> {
+    return true;
+  }
+  async close(): Promise<void> {}
+}
+
+/** A backend reporting a stale (>30 day) state with a missing resource — the
+ *  simulator never sets staleDays, so a fake backend is needed to exercise
+ *  the staleness cap on diagnose()'s iac_resource_missing finding. */
+class StaleMissingBackend implements IacDriftBackend {
+  async getStateStatus(): Promise<IacStateStatus> {
+    return { source: 'local', detail: 'terraform.tfstate', readable: true, serial: 1, staleDays: 45, resourceCounts: { aws_s3_bucket: 1 } };
+  }
+  async listManagedResources(): Promise<IacResource[]> {
+    return [{ type: 'aws_s3_bucket', name: 'uploads', id: 'user-uploads', attributes: {} }];
+  }
+  async checkResourceExistence(): Promise<ResourceExistence | PermissionMissing> {
+    return { existence: 'missing' };
+  }
+  async getResourceDrift(): Promise<DriftComparison | PermissionMissing | null> {
+    throw new Error('must not be called — resource is missing, drift is not independently checked');
+  }
+  async executeCommand(_command: Command): Promise<unknown> {
+    return {};
+  }
+  async evaluateCheck(_check: CheckExpression): Promise<boolean> {
+    return true;
+  }
+  async close(): Promise<void> {}
 }
 
 describe('IacDriftRecoveryAgent.assessHealth', () => {
@@ -58,5 +124,22 @@ describe('IacDriftRecoveryAgent.diagnose', () => {
     const agent = new IacDriftRecoveryAgent(new IacDriftSimulator('state_unreadable'));
     const d = await agent.diagnose(iacContext(agent));
     expect(d.findings.map((f) => f.source)).toEqual(['iac_state_unreadable']);
+  });
+
+  it('permission-missing existence/drift produces no finding — health-signal-only, never a guess', async () => {
+    const agent = new IacDriftRecoveryAgent(new PermissionMissingBackend());
+    const d = await agent.diagnose(iacContext(agent));
+    expect(d.findings).toEqual([]);
+    // the same condition IS visible via the health assessment's iac_iam_permissions signal
+    const health = await agent.assessHealth(iacContext(agent));
+    expect(health.signals.some((s) => s.source === 'iac_iam_permissions')).toBe(true);
+  });
+
+  it('stale state: downgraded iac_resource_missing finding carries the staleness caveat', async () => {
+    const agent = new IacDriftRecoveryAgent(new StaleMissingBackend());
+    const d = await agent.diagnose(iacContext(agent));
+    const missing = d.findings.find((f) => f.source === 'iac_resource_missing')!;
+    expect(missing.severity).toBe('warning'); // downgraded from critical by staleness
+    expect(missing.observation).toContain('state may be stale — re-run after terraform refresh');
   });
 });

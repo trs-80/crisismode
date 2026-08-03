@@ -224,49 +224,38 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
     let hasDrift = false;
 
     for (const { resource, existence, drift } of items) {
-      if (isPermissionMissing(existence)) {
-        findings.push({
-          source: 'iac_iam_permissions',
-          observation: `cannot verify ${resource.type} ${resource.id}: IAM action ${existence.permissionMissing} not allowed`,
-          severity: 'warning',
-          data: { resourceType: resource.type, resourceId: resource.id },
-        });
-      } else if (existence.existence === 'missing') {
+      // A permission-missing existence/drift check is neither a confirmed
+      // miss nor a confirmed drift — surfacing it as a finding here would be
+      // a guess. It's still visible via the iac_iam_permissions health
+      // signal in assessHealth(); diagnose() stays silent on it.
+      if (!isPermissionMissing(existence) && existence.existence === 'missing') {
         hasMissing = true;
         const watchable = resource.type in WATCHABLE_TF_TYPES;
+        const baseObservation = `${resource.type} ${resource.id} is recorded in Terraform state but no longer exists in AWS. If it was deleted on purpose, remove it from your Terraform config; if not, terraform apply can recreate it.`;
         findings.push({
           source: 'iac_resource_missing',
-          observation: `${resource.type} ${resource.id} is recorded in Terraform state but no longer exists in AWS. If it was deleted on purpose, remove it from your Terraform config; if not, terraform apply can recreate it.`,
+          observation: stale ? `${baseObservation} (${STALE_CAVEAT})` : baseObservation,
           severity: stale ? 'warning' : watchable ? 'critical' : 'warning',
           data: { resourceType: resource.type, resourceId: resource.id, region: resource.region },
         });
       }
       // existence 'exists' or non-permission 'unknown' -> no finding (never guess)
 
-      if (drift) {
-        if (isPermissionMissing(drift)) {
-          findings.push({
-            source: 'iac_iam_permissions',
-            observation: `cannot verify drift for ${resource.type} ${resource.id}: IAM action ${drift.permissionMissing} not allowed`,
-            severity: 'warning',
-            data: { resourceType: resource.type, resourceId: resource.id },
-          });
-        } else if (drift.drifts.length > 0) {
-          hasDrift = true;
-          const first = drift.drifts[0]!;
-          findings.push({
-            source: 'iac_attribute_drift',
-            observation: `${resource.type} ${resource.id} was changed outside Terraform (${first.attribute}: ${first.intended} → ${first.observed}). The next terraform apply would revert this change.`,
-            severity: 'warning',
-            data: {
-              resourceType: resource.type,
-              resourceId: resource.id,
-              drifts: drift.drifts,
-              comparedAttributes: drift.comparedAttributes,
-              intendedAttributeCount: drift.intendedAttributeCount,
-            },
-          });
-        }
+      if (drift && !isPermissionMissing(drift) && drift.drifts.length > 0) {
+        hasDrift = true;
+        const first = drift.drifts[0]!;
+        findings.push({
+          source: 'iac_attribute_drift',
+          observation: `${resource.type} ${resource.id} was changed outside Terraform (${first.attribute}: ${first.intended} → ${first.observed}). The next terraform apply would revert this change.`,
+          severity: 'warning',
+          data: {
+            resourceType: resource.type,
+            resourceId: resource.id,
+            drifts: drift.drifts,
+            comparedAttributes: drift.comparedAttributes,
+            intendedAttributeCount: drift.intendedAttributeCount,
+          },
+        });
       }
     }
 
