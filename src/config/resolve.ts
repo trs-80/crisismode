@@ -24,6 +24,7 @@ export function resolveTarget(target: TargetConfig): ResolvedTarget {
     aws: target.aws,
     queue: target.queue,
     configDrift: target.configDrift,
+    iac: target.iac,
   };
 }
 
