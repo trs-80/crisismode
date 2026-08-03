@@ -543,6 +543,15 @@ let CAPABILITIES: CapabilityDefinition[] = [
     targetKinds: ['flink'],
     manualFallback: 'Decommission the TaskManager manually via the Flink REST API.',
   },
+
+  // ── IaC Drift (Terraform) ──
+  {
+    id: 'iac.state.read',
+    actionKind: 'read',
+    description: 'Read Terraform state and compare managed resources against observed infrastructure.',
+    targetKinds: ['terraform'],
+    manualFallback: 'Run `terraform plan` manually to see what Terraform believes has drifted.',
+  },
 ];
 
 const CAPABILITY_INDEX = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));
