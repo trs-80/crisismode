@@ -67,11 +67,14 @@ export class IacDriftLiveClient implements IacDriftBackend {
    *  fallback for resources whose ARN carried no region. */
   private stateBackendRegion?: string;
 
-  private rdsClient: SendableClient | null = null;
+  /** Constructed clients keyed by region — a state can span regions, and
+   *  each region needs its own client. Not used when a test client is
+   *  injected via cfg.clients (a single injected client serves all regions). */
+  private readonly rdsClients = new Map<string, SendableClient>();
   private rdsSdk: typeof RdsSdkModule | null = null;
-  private s3Client: SendableClient | null = null;
+  private readonly s3Clients = new Map<string, SendableClient>();
   private s3Sdk: typeof S3SdkModule | null = null;
-  private dynamoClient: SendableClient | null = null;
+  private readonly dynamoClients = new Map<string, SendableClient>();
   private dynamoSdk: typeof DynamoSdkModule | null = null;
 
   constructor(config: IacDriftLiveConfig) {
@@ -254,32 +257,38 @@ export class IacDriftLiveClient implements IacDriftBackend {
 
   private async ensureRds(region: string): Promise<SendableClient | null> {
     if (this.cfg.clients?.rds) return this.cfg.clients.rds;
-    if (this.rdsClient) return this.rdsClient;
-    const sdk = await tryImportAws<typeof RdsSdkModule>('@aws-sdk/client-rds');
+    const cached = this.rdsClients.get(region);
+    if (cached) return cached;
+    const sdk = this.rdsSdk ?? await tryImportAws<typeof RdsSdkModule>('@aws-sdk/client-rds');
     if (!sdk) return null;
     this.rdsSdk = sdk;
-    this.rdsClient = new sdk.RDSClient({ region });
-    return this.rdsClient;
+    const client = new sdk.RDSClient({ region });
+    this.rdsClients.set(region, client);
+    return client;
   }
 
   private async ensureS3(region: string): Promise<SendableClient | null> {
     if (this.cfg.clients?.s3) return this.cfg.clients.s3;
-    if (this.s3Client) return this.s3Client;
-    const sdk = await tryImportAws<typeof S3SdkModule>('@aws-sdk/client-s3');
+    const cached = this.s3Clients.get(region);
+    if (cached) return cached;
+    const sdk = this.s3Sdk ?? await tryImportAws<typeof S3SdkModule>('@aws-sdk/client-s3');
     if (!sdk) return null;
     this.s3Sdk = sdk;
-    this.s3Client = new sdk.S3Client({ region });
-    return this.s3Client;
+    const client = new sdk.S3Client({ region });
+    this.s3Clients.set(region, client);
+    return client;
   }
 
   private async ensureDynamo(region: string): Promise<SendableClient | null> {
     if (this.cfg.clients?.dynamo) return this.cfg.clients.dynamo;
-    if (this.dynamoClient) return this.dynamoClient;
-    const sdk = await tryImportAws<typeof DynamoSdkModule>('@aws-sdk/client-dynamodb');
+    const cached = this.dynamoClients.get(region);
+    if (cached) return cached;
+    const sdk = this.dynamoSdk ?? await tryImportAws<typeof DynamoSdkModule>('@aws-sdk/client-dynamodb');
     if (!sdk) return null;
     this.dynamoSdk = sdk;
-    this.dynamoClient = new sdk.DynamoDBClient({ region });
-    return this.dynamoClient;
+    const client = new sdk.DynamoDBClient({ region });
+    this.dynamoClients.set(region, client);
+    return client;
   }
 
   // ── Existence ──
@@ -304,7 +313,7 @@ export class IacDriftLiveClient implements IacDriftBackend {
     try {
       const cmd = this.rdsSdk && !this.cfg.clients?.rds
         ? new this.rdsSdk.DescribeDBInstancesCommand({ DBInstanceIdentifier: resource.id })
-        : { input: { DBInstanceIdentifier: resource.id } };
+        : { commandName: 'DescribeDBInstancesCommand', input: { DBInstanceIdentifier: resource.id } };
       await rds.send(cmd);
       return { existence: 'exists' };
     } catch (err) {
@@ -323,7 +332,7 @@ export class IacDriftLiveClient implements IacDriftBackend {
     try {
       const cmd = this.s3Sdk && !this.cfg.clients?.s3
         ? new this.s3Sdk.HeadBucketCommand({ Bucket: resource.id })
-        : { input: { Bucket: resource.id } };
+        : { commandName: 'HeadBucketCommand', input: { Bucket: resource.id } };
       await s3.send(cmd);
       return { existence: 'exists' };
     } catch (err) {
@@ -347,7 +356,7 @@ export class IacDriftLiveClient implements IacDriftBackend {
     try {
       const cmd = this.dynamoSdk && !this.cfg.clients?.dynamo
         ? new this.dynamoSdk.DescribeTableCommand({ TableName: resource.id })
-        : { input: { TableName: resource.id } };
+        : { commandName: 'DescribeTableCommand', input: { TableName: resource.id } };
       await dynamo.send(cmd);
       return { existence: 'exists' };
     } catch (err) {
@@ -379,7 +388,7 @@ export class IacDriftLiveClient implements IacDriftBackend {
     try {
       const cmd = this.rdsSdk && !this.cfg.clients?.rds
         ? new this.rdsSdk.DescribeDBInstancesCommand({ DBInstanceIdentifier: resource.id })
-        : { input: { DBInstanceIdentifier: resource.id } };
+        : { commandName: 'DescribeDBInstancesCommand', input: { DBInstanceIdentifier: resource.id } };
       const resp = await rds.send(cmd) as RdsSdkModule.DescribeDBInstancesCommandOutput;
       const instance = resp.DBInstances?.[0];
       if (!instance) return null;
@@ -395,7 +404,10 @@ export class IacDriftLiveClient implements IacDriftBackend {
       });
     } catch (err) {
       if (isAccessDeniedError(err)) return { permissionMissing: 'rds:DescribeDBInstances' };
-      throw err;
+      // Unexpected/transient errors (throttling, network, etc.) degrade to "no
+      // drift comparison available" rather than crashing the caller — genuine
+      // reachability failures surface through checkResourceExistence instead.
+      return null;
     }
   }
 
@@ -407,19 +419,23 @@ export class IacDriftLiveClient implements IacDriftBackend {
 
     let versioningEnabled: boolean;
     try {
-      const cmd = live ? new live.GetBucketVersioningCommand({ Bucket: resource.id }) : { input: { Bucket: resource.id } };
+      const cmd = live
+        ? new live.GetBucketVersioningCommand({ Bucket: resource.id })
+        : { commandName: 'GetBucketVersioningCommand', input: { Bucket: resource.id } };
       const resp = await s3.send(cmd) as S3SdkModule.GetBucketVersioningCommandOutput;
       versioningEnabled = resp.Status === 'Enabled';
     } catch (err) {
       if (isAccessDeniedError(err)) return { permissionMissing: 's3:GetBucketVersioning' };
-      throw err;
+      // Unexpected/transient errors degrade to "no drift comparison available"
+      // rather than crashing the caller — see getRdsDrift for rationale.
+      return null;
     }
 
     let hasLifecycleRules: boolean;
     try {
       const cmd = live
         ? new live.GetBucketLifecycleConfigurationCommand({ Bucket: resource.id })
-        : { input: { Bucket: resource.id } };
+        : { commandName: 'GetBucketLifecycleConfigurationCommand', input: { Bucket: resource.id } };
       const resp = await s3.send(cmd) as S3SdkModule.GetBucketLifecycleConfigurationCommandOutput;
       hasLifecycleRules = (resp.Rules?.length ?? 0) > 0;
     } catch (err) {
@@ -428,7 +444,9 @@ export class IacDriftLiveClient implements IacDriftBackend {
       } else if (isAccessDeniedError(err)) {
         return { permissionMissing: 's3:GetBucketLifecycleConfiguration' };
       } else {
-        throw err;
+        // Unexpected/transient errors degrade to "no drift comparison
+        // available" rather than crashing the caller — see getRdsDrift.
+        return null;
       }
     }
 
@@ -444,24 +462,30 @@ export class IacDriftLiveClient implements IacDriftBackend {
 
     let billingMode: string;
     try {
-      const cmd = live ? new live.DescribeTableCommand({ TableName: resource.id }) : { input: { TableName: resource.id } };
+      const cmd = live
+        ? new live.DescribeTableCommand({ TableName: resource.id })
+        : { commandName: 'DescribeTableCommand', input: { TableName: resource.id } };
       const resp = await dynamo.send(cmd) as DynamoSdkModule.DescribeTableCommandOutput;
       billingMode = resp.Table?.BillingModeSummary?.BillingMode ?? 'PROVISIONED';
     } catch (err) {
       if (isAccessDeniedError(err)) return { permissionMissing: 'dynamodb:DescribeTable' };
-      throw err;
+      // Unexpected/transient errors degrade to "no drift comparison available"
+      // rather than crashing the caller — see getRdsDrift for rationale.
+      return null;
     }
 
     let pitrEnabled: boolean;
     try {
       const cmd = live
         ? new live.DescribeContinuousBackupsCommand({ TableName: resource.id })
-        : { input: { TableName: resource.id } };
+        : { commandName: 'DescribeContinuousBackupsCommand', input: { TableName: resource.id } };
       const resp = await dynamo.send(cmd) as DynamoSdkModule.DescribeContinuousBackupsCommandOutput;
       pitrEnabled = resp.ContinuousBackupsDescription?.PointInTimeRecoveryDescription?.PointInTimeRecoveryStatus === 'ENABLED';
     } catch (err) {
       if (isAccessDeniedError(err)) return { permissionMissing: 'dynamodb:DescribeContinuousBackups' };
-      throw err;
+      // Unexpected/transient errors degrade to "no drift comparison available"
+      // rather than crashing the caller — see getRdsDrift for rationale.
+      return null;
     }
 
     return compareDynamoTable(resource, { billingMode, pitrEnabled });
@@ -528,20 +552,15 @@ export class IacDriftLiveClient implements IacDriftBackend {
   async close(): Promise<void> {
     // Only destroy constructed SDK clients — injected test clients are owned
     // by the caller.
-    if (this.rdsClient && !this.cfg.clients?.rds) {
-      (this.rdsClient as unknown as { destroy?: () => void }).destroy?.();
-    }
-    if (this.s3Client && !this.cfg.clients?.s3) {
-      (this.s3Client as unknown as { destroy?: () => void }).destroy?.();
-    }
-    if (this.dynamoClient && !this.cfg.clients?.dynamo) {
-      (this.dynamoClient as unknown as { destroy?: () => void }).destroy?.();
-    }
-    this.rdsClient = null;
+    const destroy = (client: SendableClient) => (client as unknown as { destroy?: () => void }).destroy?.();
+    if (!this.cfg.clients?.rds) for (const client of this.rdsClients.values()) destroy(client);
+    if (!this.cfg.clients?.s3) for (const client of this.s3Clients.values()) destroy(client);
+    if (!this.cfg.clients?.dynamo) for (const client of this.dynamoClients.values()) destroy(client);
+    this.rdsClients.clear();
     this.rdsSdk = null;
-    this.s3Client = null;
+    this.s3Clients.clear();
     this.s3Sdk = null;
-    this.dynamoClient = null;
+    this.dynamoClients.clear();
     this.dynamoSdk = null;
   }
 }
