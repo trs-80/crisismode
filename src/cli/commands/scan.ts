@@ -121,11 +121,15 @@ export function buildScanEvidence(
   const evidence: AgentEvidence[] = [];
   for (const r of results) {
     if (r.health && r.health.status !== 'healthy' && r.health.status !== 'unknown') {
+      const entityIds = [...new Set(
+        r.health.signals.map((s) => s.entityId).filter((x): x is string => typeof x === 'string'),
+      )];
       evidence.push({
         agentKind: r.kind,
         targetName: r.finding.service,
         health: r.health,
         signals: healthToSignals(r.health),
+        ...(entityIds.length > 0 ? { entityIds } : {}),
       });
     } else if (r.health === null && r.finding.summary.startsWith('Error:')) {
       evidence.push({

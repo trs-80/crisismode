@@ -5,7 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { healthToSignals } from '../framework/health-to-signals.js';
 import type { HealthAssessment } from '../types/health.js';
 
-function health(signals: Array<{ source: string; status: 'critical' | 'warning'; detail: string }>): HealthAssessment {
+function health(signals: Array<{ source: string; status: 'critical' | 'warning'; detail: string; entityId?: string }>): HealthAssessment {
   return {
     status: 'unhealthy',
     confidence: 0.9,
@@ -94,5 +94,22 @@ describe('healthToSignals', () => {
     expect(out[0]!.type).toBe('error_rate');
     expect(out[1]!.type).toBe('error_rate');
     expect(out.filter((s) => s.source === 'netstat' && s.type === 'error_rate')).toHaveLength(0);
+  });
+
+  it('maps drift details to config_mismatch and carries entityId through', () => {
+    const out = healthToSignals(health([
+      { source: 'iac_attribute_drift', status: 'warning', detail: 'aws_db_instance prod-db drifted from Terraform intent', entityId: 'prod-db' },
+    ]));
+    expect(out).toHaveLength(1);
+    expect(out[0]!.type).toBe('config_mismatch');
+    expect(out[0]!.entityId).toBe('prod-db');
+  });
+
+  it('does not set entityId on the output signal when the source signal has none', () => {
+    const out = healthToSignals(health([
+      { source: 'weird_probe', status: 'critical', detail: 'something odd happened' },
+    ]));
+    expect(out[0]!.entityId).toBeUndefined();
+    expect('entityId' in out[0]!).toBe(false);
   });
 });

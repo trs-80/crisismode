@@ -38,6 +38,8 @@ export interface SymptomSignal {
   detail: string;
   severity: 'info' | 'warning' | 'critical';
   data?: Record<string, unknown>;
+  /** Identifier of the concrete entity (e.g. instance id) this signal concerns. */
+  entityId?: string;
 }
 
 export interface RoutingResult {

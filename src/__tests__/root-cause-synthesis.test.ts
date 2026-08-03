@@ -362,6 +362,34 @@ describe('Root cause synthesis (6.3)', () => {
     });
   });
 
+  describe('iac-out-of-band-change rule', () => {
+    const iacEvidence = (entityIds: string[]): AgentEvidence => ({
+      agentKind: 'iac-drift', targetName: 'derived-iac-drift', entityIds,
+      signals: [{ type: 'config_mismatch', source: 'iac_attribute_drift', detail: 'aws_db_instance prod-db: instance_class drift', severity: 'warning' }],
+    });
+    const rdsEvidence = (entityIds: string[]): AgentEvidence => ({
+      agentKind: 'aws-rds', targetName: 'rds-us-east-1-prod-db', entityIds,
+      signals: [{ type: 'resource_exhaustion', source: 'rds_storage', detail: 'FreeStorageSpace critically low', severity: 'critical' }],
+    });
+
+    it('fires when iac-drift and aws-rds report the same instance', () => {
+      const result = synthesizeByRules([iacEvidence(['prod-db']), rdsEvidence(['prod-db'])]);
+      const cluster = result.clusters.find((c) => c.reasoning.includes('iac-out-of-band-change'));
+      expect(cluster).toBeDefined();
+      expect(cluster!.investigationOrder[0]).toBe('iac-drift');
+    });
+
+    it('does NOT fire when the drifted resource is a different instance', () => {
+      const result = synthesizeByRules([iacEvidence(['other-db']), rdsEvidence(['prod-db'])]);
+      expect(result.clusters.find((c) => c.reasoning.includes('iac-out-of-band-change'))).toBeUndefined();
+    });
+
+    it('does NOT fire when either side lacks entity ids (no guessing)', () => {
+      const result = synthesizeByRules([iacEvidence([]), rdsEvidence(['prod-db'])]);
+      expect(result.clusters.find((c) => c.reasoning.includes('iac-out-of-band-change'))).toBeUndefined();
+    });
+  });
+
   describe('synthesizeFromRoutingResults', () => {
     it('converts routing results to evidence and synthesizes', () => {
       const results: RoutingResult[] = [

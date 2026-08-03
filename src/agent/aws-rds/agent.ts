@@ -289,6 +289,7 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
       status: item.isPermissionMissing ? 'unknown' : signalStatus(item.critical, item.warning),
       detail: item.message,
       observedAt,
+      entityId: config.instanceId,
     }));
 
     const signals: HealthSignal[] = [
@@ -299,6 +300,7 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
           ? `Backup retention is disabled (0 days) on instance ${config.instanceId}. No automated backup protection.`
           : `Backup retention is ${config.backupRetentionPeriod} day(s) on instance ${config.instanceId}.`,
         observedAt,
+        entityId: config.instanceId,
       },
       {
         source: 'rds_snapshot_status',
@@ -309,12 +311,14 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
             ? `${config.snapshotCount} snapshot(s) available. Latest snapshot age: ${Math.floor(config.latestSnapshotAge / 3600)}h.`
             : `${config.snapshotCount} snapshot(s) available.`,
         observedAt,
+        entityId: config.instanceId,
       },
       {
         source: 'rds_instance_status',
         status: signalStatus(config.status !== 'available'),
         detail: `Instance ${config.instanceId} status: ${config.status}. Engine: ${config.engine}. Region: ${config.region}.`,
         observedAt,
+        entityId: config.instanceId,
       },
       ...controlPlaneSignals,
     ];
