@@ -33,6 +33,8 @@ export interface AgentEvidence {
   signals?: SymptomSignal[];
   patterns?: RecurringPattern[];
   snapshots?: HealthSnapshot[];
+  /** Identifiers of the concrete entities (e.g. instance ids) this agent's evidence concerns. */
+  entityIds?: string[];
 }
 
 export interface CorrelationCluster {
@@ -83,6 +85,14 @@ interface CorrelationRule {
    * satisfy the same rule (e.g. two rules both listing `'connection'`).
    */
   requiredTypesByKind?: Partial<Record<string, SymptomSignal['type'][]>>;
+  /**
+   * When true, the rule fires only when at least two matched agents report a
+   * common entity id (`AgentEvidence.entityIds`). Agents with no entity ids
+   * fail the requirement — the rule prefers silence over a guessed pairing
+   * (the Arc 2 co-firing lesson: matching on signal type alone is not enough
+   * to safely pair two agents' evidence about what may be different targets).
+   */
+  requireSharedEntityId?: boolean;
   /** Shared patterns that trigger this correlation */
   sharedPatterns: string[];
   /** Root cause template */
@@ -193,6 +203,19 @@ const CORRELATION_RULES: CorrelationRule[] = [
     investigationOrder: ['aws-rds', 'postgresql'],
     confidenceBoost: 0.25,
   },
+  {
+    name: 'iac-out-of-band-change',
+    agentKinds: ['iac-drift', 'aws-rds'],
+    sharedSignalTypes: ['config_mismatch', 'resource_exhaustion', 'connection', 'timeout', 'error_rate'],
+    // iac-drift counts only on an actual drift signal; aws-rds on any of its
+    // platform signals. Same-entity matching below is what makes the pairing safe.
+    requiredTypesByKind: { 'iac-drift': ['config_mismatch'] },
+    requireSharedEntityId: true,
+    sharedPatterns: [],
+    rootCauseTemplate: 'The degraded RDS instance was changed outside Terraform — the out-of-band change is the likely cause; reconcile it (terraform plan first) before deeper platform debugging',
+    investigationOrder: ['iac-drift', 'aws-rds'],
+    confidenceBoost: 0.3,
+  },
 ];
 
 // ── Rule-based correlation ──
@@ -267,6 +290,12 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
 
     // Need at least 2 agents sharing signals to form a cluster
     if (signalMatches < 2) continue;
+
+    if (rule.requireSharedEntityId) {
+      const idSets = matchingAgents.map((a) => new Set(a.entityIds ?? []));
+      const shared = [...(idSets[0] ?? [])].some((id) => idSets.every((s) => s.has(id)));
+      if (!shared) continue;
+    }
 
     const agentNames = matchingAgents.map((a) => a.agentKind);
     const temporal = hasTemporalCorrelation(matchingAgents);

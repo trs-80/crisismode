@@ -14,6 +14,7 @@ const TYPE_PATTERNS: Array<{ match: RegExp; type: SymptomSignal['type'] }> = [
   { match: /unreachable|refused|connect|ENOTFOUND|EAI_AGAIN/i, type: 'connection' },
   { match: /lag|latency|slow/i, type: 'latency' },
   { match: /memory|disk|inode|\bfull\b|exhaust|evict/i, type: 'resource_exhaustion' },
+  { match: /drift|out-of-band|intended|mismatch/i, type: 'config_mismatch' },
   { match: /error rate|\b5\d\d(?:s)?\b|failing|failed/i, type: 'error_rate' },
 ];
 
@@ -28,6 +29,7 @@ export function healthToSignals(health: HealthAssessment): SymptomSignal[] {
       source: sig.source,
       detail: sig.detail,
       severity: sig.status,
+      ...(sig.entityId !== undefined ? { entityId: sig.entityId } : {}),
     });
   }
   return out;
