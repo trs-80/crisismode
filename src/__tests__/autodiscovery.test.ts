@@ -10,6 +10,7 @@ vi.mock('../cli/detect.js', () => ({
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(async () => { throw new Error('ENOENT'); }),
   access: vi.fn(async () => { throw new Error('ENOENT'); }),
+  readdir: vi.fn(async () => { throw new Error('ENOENT'); }),
 }));
 
 vi.mock('chalk', () => {

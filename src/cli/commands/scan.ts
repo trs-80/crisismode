@@ -501,6 +501,24 @@ export function iamBlockedEntries(
             hint: 'Attach the AmazonRDSReadOnlyAccess and CloudWatchReadOnlyAccess policies to let CrisisMode see the full picture.',
           });
         }
+      } else if (signal.source === 'iac_iam_permissions') {
+        if (!seenDetails.has(signal.detail)) {
+          seenDetails.add(signal.detail);
+          entries.push({
+            label: 'iac-drift permissions',
+            detail: signal.detail,
+            hint: 'Grant the listed IAM action (read-only) so CrisisMode can compare Terraform intent against live AWS.',
+          });
+        }
+      } else if (signal.source === 'iac_state' && signal.detail.includes('could not read')) {
+        if (!seenDetails.has(signal.detail)) {
+          seenDetails.add(signal.detail);
+          entries.push({
+            label: 'iac-drift (state unreadable)',
+            detail: signal.detail,
+            hint: 'CrisisMode needs to read terraform.tfstate (s3:GetObject on the state bucket for S3 backends). Drift checks are unavailable until it can.',
+          });
+        }
       }
     }
   }
