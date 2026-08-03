@@ -19,6 +19,15 @@ export interface AwsCredentialResult {
   reason?: string;
 }
 
+/** A live-client check that failed because an IAM action is not allowed. */
+export interface PermissionMissing {
+  permissionMissing: string;
+}
+
+export function isPermissionMissing(v: unknown): v is PermissionMissing {
+  return typeof v === 'object' && v !== null && 'permissionMissing' in v;
+}
+
 /**
  * Dynamically import an AWS SDK package. Returns null if the package
  * is not installed — callers use this to degrade gracefully.
