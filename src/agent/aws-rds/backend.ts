@@ -7,6 +7,7 @@
  */
 
 import type { ExecutionBackend } from '../../framework/backend.js';
+import type { PermissionMissing } from '../aws-common.js';
 
 export interface InstanceBackupConfig {
   instanceId: string;
@@ -20,14 +21,8 @@ export interface InstanceBackupConfig {
   automatedBackupsEnabled: boolean;
 }
 
-/** A live-client check that failed because an IAM action is not allowed. */
-export interface PermissionMissing {
-  permissionMissing: string;
-}
-
-export function isPermissionMissing(v: unknown): v is PermissionMissing {
-  return typeof v === 'object' && v !== null && 'permissionMissing' in v;
-}
+export { isPermissionMissing } from '../aws-common.js';
+export type { PermissionMissing } from '../aws-common.js';
 
 export interface RdsInstanceHealth {
   instanceId: string;
