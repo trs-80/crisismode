@@ -14,6 +14,8 @@ export interface HealthSignal {
   explanation?: string;
   /** Where an unfamiliar operator can learn more about this concept. */
   learnMoreUrl?: string;
+  /** Stable identifier of the concrete resource this signal is about (e.g. an RDS instance id) — used for cross-agent correlation. */
+  entityId?: string;
 }
 
 export interface HealthAssessment {

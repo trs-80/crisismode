@@ -98,6 +98,16 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/security_iam_id-based-policy-examples.html',
   },
   {
+    match: /^iac_state/,
+    explanation: 'CrisisMode reads your terraform.tfstate file to learn what your infrastructure is supposed to look like. If the state is unreadable or stale, drift findings are limited or unavailable — the file, not your infrastructure, is the problem.',
+    learnMoreUrl: 'https://developer.hashicorp.com/terraform/language/state',
+  },
+  {
+    match: /^iac_/,
+    explanation: 'Terraform records the intended shape of your infrastructure. Drift means someone changed things outside Terraform — the next terraform apply would silently revert those changes, which can undo an emergency fix.',
+    learnMoreUrl: 'https://developer.hashicorp.com/terraform/tutorials/state/resource-drift',
+  },
+  {
     match: /backup|snapshot|pitr|restore/,
     explanation: 'Backups and point-in-time recovery are the last line of defense against data loss. A misconfigured or stale backup means recovery may be impossible when needed.',
     learnMoreUrl: 'https://docs.aws.amazon.com/aws-backup/latest/devguide/whatisbackup.html',

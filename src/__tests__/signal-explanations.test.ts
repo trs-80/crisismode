@@ -92,6 +92,9 @@ describe('knowledge map covers all built-in agent sources', () => {
     'rds_storage',                  // aws-rds
     'rds_security_group',           // aws-rds
     'rds_iam_permissions',          // aws-rds
+    'iac_attribute_drift',          // iac-drift
+    'iac_resource_missing',         // iac-drift
+    'iac_state_unreadable',         // iac-drift
   ];
 
   for (const source of REPRESENTATIVE_SOURCES) {
