@@ -10,7 +10,7 @@
  * non-blocking. Secret values are never logged or stored.
  */
 
-import { readFile, access } from 'node:fs/promises';
+import { readFile, access, readdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
@@ -21,6 +21,7 @@ import { INFRA_PKG_NAMES } from '../config/service-registry.js';
 import type { TargetConfig } from '../config/schema.js';
 import { AI_ENV_VARS } from '../agent/ai-provider/provider-table.js';
 import { findEnvExample } from '../agent/config-drift/env-example.js';
+import { discoverStateSource, parseTfState, WATCHABLE_TF_TYPES } from '../agent/iac-drift/state-parser.js';
 
 // ── Types ──
 
@@ -57,8 +58,76 @@ export interface StackProfile {
     /** RDS instance endpoints seen while no AWS credentials were detected */
     uncredentialedHosts: string[];
   };
+  /** Terraform state detection for the iac-drift agent */
+  iacDetection?: IacDetection;
   /** Overall confidence in the profile */
   confidence: number;
+}
+
+export interface IacDetection {
+  stateSource: 'local' | 's3-backend' | 'unsupported-backend' | 'none';
+  /** Backend type name, only set when stateSource is 'unsupported-backend'. */
+  backendType?: string;
+  /** Managed types in local state with no CrisisMode agent, with counts. */
+  unwatchableTypes: Record<string, number>;
+}
+
+/** Sub-resource types that describe an aspect of a watchable bucket rather
+ *  than a distinct unwatched resource. */
+const TF_SUBRESOURCE_TYPES = new Set(['aws_s3_bucket_versioning', 'aws_s3_bucket_lifecycle_configuration']);
+
+/**
+ * Derive an iac-drift target from Terraform state or config files in the
+ * project directory. Stays fast and offline: S3-backend state is never
+ * fetched here (the agent fetches it at check time) — only local state is
+ * read to compute unwatchable-type counts.
+ *
+ * Missing AWS credentials do NOT suppress the derived target (unlike
+ * deriveAwsRdsTargets) — local Terraform state is still readable without them.
+ */
+export async function deriveIacDetection(
+  cwd: string,
+): Promise<{ target: TargetConfig | null; note: string | null; iacDetection: IacDetection | null }> {
+  const stateSource = await discoverStateSource(cwd);
+
+  if (stateSource.kind === 'none') {
+    const hasTfFiles = await readdir(cwd).then(
+      (entries) => entries.some((f) => f.endsWith('.tf')),
+      () => false,
+    );
+    if (!hasTfFiles) {
+      return { target: null, note: null, iacDetection: null };
+    }
+  }
+
+  const unwatchableTypes: Record<string, number> = {};
+  if (stateSource.kind === 'local') {
+    const raw = await readFile(stateSource.path, 'utf-8').catch(() => undefined);
+    if (raw !== undefined) {
+      const parsed = parseTfState(raw);
+      if (parsed.ok) {
+        for (const [type, count] of Object.entries(parsed.summary.resourceCounts)) {
+          if (TF_SUBRESOURCE_TYPES.has(type) || type in WATCHABLE_TF_TYPES) continue;
+          unwatchableTypes[type] = count;
+        }
+      }
+    }
+  }
+
+  const iacDetection: IacDetection = {
+    stateSource: stateSource.kind,
+    ...(stateSource.kind === 'unsupported-backend' ? { backendType: stateSource.backendType } : {}),
+    unwatchableTypes,
+  };
+
+  const target: TargetConfig = {
+    name: 'derived-iac-drift',
+    kind: 'iac-drift',
+    primary: { host: 'auto', port: 0 },
+    iac: { dir: cwd },
+  };
+
+  return { target, note: 'from Terraform files in this project', iacDetection };
 }
 
 export interface AppStackInfo {
@@ -430,8 +499,9 @@ export async function discoverStack(): Promise<StackProfile> {
   const gated = await deriveGatedTargets(appStack, cwd);
   const hasAwsCreds = envHints.some((h) => h.present && (h.kind === 'aws_credentials' || h.kind === 'aws_profile'));
   const rds = deriveAwsRdsTargets(envHints, process.env, hasAwsCreds);
-  const derivedTargets = [...buildTargetsFromEnvHints(envHints), ...gated.targets, ...rds.targets];
-  const derivedNotes = { ...gated.notes, ...rds.notes };
+  const iac = await deriveIacDetection(cwd);
+  const derivedTargets = [...buildTargetsFromEnvHints(envHints), ...gated.targets, ...rds.targets, ...(iac.target ? [iac.target] : [])];
+  const derivedNotes = { ...gated.notes, ...rds.notes, ...(iac.target && iac.note ? { [iac.target.name]: iac.note } : {}) };
   const vercelProject = readVercelProjectConfig(cwd);
 
   const confidence = computeConfidence(services, appStack, envHints, platform);
@@ -446,6 +516,7 @@ export async function discoverStack(): Promise<StackProfile> {
     derivedNotes,
     ...(vercelProject ? { vercelProject } : {}),
     awsDetection: rds.awsDetection,
+    ...(iac.iacDetection ? { iacDetection: iac.iacDetection } : {}),
     confidence,
   };
 }

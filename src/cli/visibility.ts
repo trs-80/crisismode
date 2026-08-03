@@ -110,6 +110,26 @@ export function buildVisibilityReport(
     });
   }
 
+  // Terraform state visibility: unsupported backends are blocked, unwatched
+  // managed types are invisible (state confirms they exist, but no agent
+  // watches them for live drift).
+  if (profile.iacDetection) {
+    const iac = profile.iacDetection;
+    if (iac.stateSource === 'unsupported-backend') {
+      blocked.push({
+        label: 'iac-drift (remote state)',
+        detail: `Terraform state lives in a "${iac.backendType ?? 'unknown'}" backend CrisisMode cannot read yet`,
+        hint: 'CrisisMode reads local terraform.tfstate and S3 backends. Drift checks are unavailable for this project until then.',
+      });
+    }
+    for (const [tfType, count] of Object.entries(iac.unwatchableTypes)) {
+      invisible.push({
+        label: tfType,
+        detail: `your Terraform manages ${count} ${tfType} resource${count === 1 ? '' : 's'} — CrisisMode has no agent for this type yet, so only its existence in state is known`,
+      });
+    }
+  }
+
   // Inherent limits — only worth stating when remote services are in play.
   if (ranKinds.some((k) => !LOCAL_KINDS.has(k))) {
     invisible.push({

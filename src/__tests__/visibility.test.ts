@@ -152,4 +152,24 @@ describe('buildVisibilityReport', () => {
     ]);
     expect(report.blocked.find((e) => e.detail.includes('rds:DescribeDBInstances'))).toBeDefined();
   });
+
+  it('lists unwatchable Terraform-managed types as invisible', () => {
+    const profile = profileWith({});
+    profile.iacDetection = { stateSource: 'local', unwatchableTypes: { aws_elasticache_cluster: 2 } };
+    const report = buildVisibilityReport(profile, ['iac-drift'], 'none');
+    expect(report.invisible).toContainEqual(expect.objectContaining({
+      label: 'aws_elasticache_cluster',
+      detail: expect.stringContaining('2'),
+    }));
+  });
+
+  it('reports unsupported state backends as blocked', () => {
+    const profile = profileWith({});
+    profile.iacDetection = { stateSource: 'unsupported-backend', backendType: 'remote', unwatchableTypes: {} };
+    const report = buildVisibilityReport(profile, [], 'none');
+    expect(report.blocked).toContainEqual(expect.objectContaining({
+      label: 'iac-drift (remote state)',
+      detail: expect.stringContaining('remote'),
+    }));
+  });
 });
