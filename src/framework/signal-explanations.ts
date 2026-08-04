@@ -99,12 +99,12 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
   },
   {
     match: /^iac_state/,
-    explanation: 'CrisisMode reads your terraform.tfstate file to learn what your infrastructure is supposed to look like. If the state is unreadable or stale, drift findings are limited or unavailable — the file, not your infrastructure, is the problem.',
+    explanation: 'CrisisMode reads Terraform state (local or S3 backend) to learn what your infrastructure is supposed to look like. If the state is unreadable or stale, drift findings are limited or unavailable — the state, not your infrastructure, is the problem.',
     learnMoreUrl: 'https://developer.hashicorp.com/terraform/language/state',
   },
   {
     match: /^iac_/,
-    explanation: 'Terraform records the intended shape of your infrastructure. Drift means someone changed things outside Terraform — the next terraform apply would silently revert those changes, which can undo an emergency fix.',
+    explanation: 'Terraform records the intended shape of your infrastructure. Drift means someone changed things outside Terraform — an approved or auto-applied terraform apply can revert those changes, which can undo an emergency fix.',
     learnMoreUrl: 'https://developer.hashicorp.com/terraform/tutorials/state/resource-drift',
   },
   {
