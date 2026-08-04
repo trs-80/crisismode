@@ -90,7 +90,13 @@ export class IacDriftLiveClient implements IacDriftBackend {
 
   private async detectDirtyTfFiles(): Promise<boolean | undefined> {
     try {
-      const { stdout } = await execFileAsync('git', ['status', '--porcelain', '--', '*.tf'], { cwd: this.cfg.dir });
+      // A bounded timeout keeps a hung git (e.g. a stale index lock) from
+      // stalling the memoized state load indefinitely — the catch below
+      // already degrades to undefined on any failure, including a timeout.
+      const { stdout } = await execFileAsync('git', ['status', '--porcelain', '--', '*.tf'], {
+        cwd: this.cfg.dir,
+        timeout: 5_000,
+      });
       return stdout.trim().length > 0;
     } catch {
       return undefined;
@@ -171,8 +177,8 @@ export class IacDriftLiveClient implements IacDriftBackend {
       };
     }
 
-    const sdk = await tryImportAws<typeof S3SdkModule>('@aws-sdk/client-s3');
-    if (!sdk) {
+    const client = await this.ensureS3(source.region);
+    if (!client) {
       return {
         status: {
           source: 's3-backend',
@@ -184,10 +190,15 @@ export class IacDriftLiveClient implements IacDriftBackend {
         resources: [],
       };
     }
+    // ensureS3 loaded (and cached) the SDK module as a side effect — grab it
+    // for the typed GetObjectCommand construction below.
+    const sdk = this.s3Sdk;
 
     try {
-      const client = new sdk.S3Client({ region: source.region });
-      const resp = await client.send(new sdk.GetObjectCommand({ Bucket: source.bucket, Key: source.key }));
+      const cmd = sdk && !this.cfg.clients?.s3
+        ? new sdk.GetObjectCommand({ Bucket: source.bucket, Key: source.key })
+        : { commandName: 'GetObjectCommand', input: { Bucket: source.bucket, Key: source.key } };
+      const resp = await client.send(cmd) as S3SdkModule.GetObjectCommandOutput;
       const raw = await (resp.Body as { transformToString(): Promise<string> }).transformToString();
       const lastModifiedAt = resp.LastModified ? new Date(resp.LastModified).toISOString() : undefined;
       const staleDays = resp.LastModified
@@ -337,7 +348,7 @@ export class IacDriftLiveClient implements IacDriftBackend {
       return { existence: 'exists' };
     } catch (err) {
       if (this.isS3NotFound(err)) return { existence: 'missing' };
-      if (isAccessDeniedError(err)) return { permissionMissing: 's3:ListBucket' };
+      if (isAccessDeniedError(err) || this.isS3Forbidden(err)) return { permissionMissing: 's3:ListBucket' };
       return { existence: 'unknown', reason: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -347,6 +358,17 @@ export class IacDriftLiveClient implements IacDriftBackend {
     if (err.name === 'NotFound' || err.name === 'NoSuchBucket') return true;
     const metadata = (err as { $metadata?: { httpStatusCode?: number } }).$metadata;
     return metadata?.httpStatusCode === 404;
+  }
+
+  /** HeadBucket can return a bare HTTP 403 with no named error/body — the
+   *  generic AccessDenied name check in isAccessDeniedError() never sees it,
+   *  so this checks $metadata.httpStatusCode (and the rarer '403'/'Forbidden'
+   *  error names some clients synthesize) directly. */
+  private isS3Forbidden(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    if (err.name === '403' || err.name === 'Forbidden') return true;
+    const metadata = (err as { $metadata?: { httpStatusCode?: number } }).$metadata;
+    return metadata?.httpStatusCode === 403;
   }
 
   private async checkDynamoExistence(resource: IacResource): Promise<ResourceExistence | PermissionMissing> {

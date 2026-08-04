@@ -80,7 +80,12 @@ export function compareRdsInstance(intended: IacResource, observed: ObservedRdsF
       attribute: 'engine_version',
       intended: a['engine_version'],
       observed: observed.engineVersion,
-      equal: (i, o) => String(o).startsWith(String(i)),
+      // AWS reports a fuller version than Terraform's often-truncated intent
+      // (e.g. intended '16.1' vs observed '16.1.3') — but a bare startsWith
+      // also matches unrelated versions that share a numeral prefix (intended
+      // '16.1' vs observed '16.10'). Only an exact match or a '.'-bounded
+      // patch suffix counts as aligned.
+      equal: (i, o) => String(o) === String(i) || String(o).startsWith(`${String(i)}.`),
     },
     { attribute: 'multi_az', intended: a['multi_az'], observed: observed.multiAz },
     { attribute: 'backup_retention_period', intended: a['backup_retention_period'], observed: observed.backupRetentionPeriod },
