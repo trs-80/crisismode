@@ -153,6 +153,7 @@ Status legend:
 | Ceph | OSD down cascade, degraded PGs, pool near-full | Simulator |
 | Flink | Checkpoint failure cascade, TaskManager loss, backpressure | Simulator |
 | AWS | S3, DynamoDB, and RDS recovery; backup verification, PITR, snapshot staleness | Live (execute-capable) -- validated in dry-run against real AWS |
+| Terraform | Drift detection: intended state vs. observed AWS resources (RDS, S3, DynamoDB, ElastiCache); read-only, suggests reconciliation | Simulator |
 
 ### Host & Platform Health
 
