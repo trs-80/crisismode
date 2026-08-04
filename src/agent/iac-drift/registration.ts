@@ -28,11 +28,17 @@ export const iacDriftRegistration: AgentRegistration = {
         const message = err instanceof Error ? err.message : String(err);
         console.warn(
           `iac-drift live client initialization failed for target "${target.name}" (${message}). ` +
-            `Falling back to the simulator — drift results will NOT reflect the real Terraform state.`,
+            `Falling back to a "state unreadable" simulator — no drift findings will be fabricated for this real project.`,
         );
+        const { IacDriftSimulator } = await import('./simulator.js');
+        const backend = new IacDriftSimulator('state_unreadable');
+        const agent = new IacDriftRecoveryAgent(backend);
+        return { agent, backend, target };
       }
     }
 
+    // dir === 'simulator': explicit demo mode — the default 'drifted'
+    // scenario is intentional here, unlike the failure fallback above.
     const { IacDriftSimulator } = await import('./simulator.js');
     const backend = new IacDriftSimulator();
     const agent = new IacDriftRecoveryAgent(backend);
