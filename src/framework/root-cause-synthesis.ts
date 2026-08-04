@@ -275,12 +275,14 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     // Count how many agents share the rule's signal types
     let signalMatches = 0;
     let patternMatches = 0;
+    const passedSignalAgents: AgentEvidence[] = [];
 
     for (const agent of matchingAgents) {
       const types = agentSignalTypes.get(agent.agentKind);
       const requiredTypes = rule.requiredTypesByKind?.[agent.agentKind] ?? rule.sharedSignalTypes;
       if (types && requiredTypes.some((t) => types.has(t))) {
         signalMatches++;
+        passedSignalAgents.push(agent);
       }
       const patterns = agentPatterns.get(agent.agentKind);
       if (patterns && rule.sharedPatterns.some((p) => patterns.has(p))) {
@@ -291,14 +293,39 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     // Need at least 2 agents sharing signals to form a cluster
     if (signalMatches < 2) continue;
 
+    // Cluster membership defaults to every agent the rule matched; entity-id
+    // rules narrow this below to just the agents that actually share an id.
+    let clusterAgents = matchingAgents;
+
     if (rule.requireSharedEntityId) {
-      const idSets = matchingAgents.map((a) => new Set(a.entityIds ?? []));
-      const shared = [...(idSets[0] ?? [])].some((id) => idSets.every((s) => s.has(id)));
-      if (!shared) continue;
+      // Pair only agents that themselves passed the per-agent signal check —
+      // an evidence item that didn't match the rule's signal types shouldn't
+      // be able to veto (or corroborate) a pairing between two agents that
+      // did. Require the shared id to span at least two DISTINCT agent
+      // kinds: two evidence items of the same kind sharing an id says
+      // nothing about cross-system correlation, and a third same-kind
+      // target with a different id must not be able to block the pairing
+      // between the other two (the "third-target veto" bug).
+      const idToAgents = new Map<string, AgentEvidence[]>();
+      for (const agent of passedSignalAgents) {
+        for (const id of agent.entityIds ?? []) {
+          const group = idToAgents.get(id) ?? [];
+          group.push(agent);
+          idToAgents.set(id, group);
+        }
+      }
+      const sharingAgents = new Set<AgentEvidence>();
+      for (const group of idToAgents.values()) {
+        if (new Set(group.map((a) => a.agentKind)).size >= 2) {
+          for (const a of group) sharingAgents.add(a);
+        }
+      }
+      if (sharingAgents.size === 0) continue;
+      clusterAgents = matchingAgents.filter((a) => sharingAgents.has(a));
     }
 
-    const agentNames = matchingAgents.map((a) => a.agentKind);
-    const temporal = hasTemporalCorrelation(matchingAgents);
+    const agentNames = clusterAgents.map((a) => a.agentKind);
+    const temporal = hasTemporalCorrelation(clusterAgents);
 
     let confidence = 0.3 + (signalMatches / matchingAgents.length) * 0.3;
     // Rules that declare no patterns can never corroborate via patternMatches —

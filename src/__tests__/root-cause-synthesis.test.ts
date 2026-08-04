@@ -390,6 +390,31 @@ describe('Root cause synthesis (6.3)', () => {
       const result = synthesizeByRules([iacEvidence([]), rdsEvidence(['prod-db'])]);
       expect(result.clusters.find((c) => c.reasoning.includes('iac-out-of-band-change'))).toBeUndefined();
     });
+
+    it('does not let a third, unrelated same-kind target veto the pairing (regression)', () => {
+      // agentSignalTypes is keyed by agentKind, so with two aws-rds evidence
+      // items the later one in the evidence array wins the signal-type
+      // lookup for BOTH aws-rds entries — a pre-existing limitation of the
+      // per-kind signal map, unrelated to this test. What this test pins:
+      // under the old code, the entity-id gate intersected entityIds across
+      // EVERY matching agent (including ones that never even matched the
+      // rule's signal type), so this unrelated second aws-rds instance
+      // (other-db, no real signal) vetoed the correlation between iac-drift
+      // and the genuinely drifted aws-rds instance (prod-db) purely because
+      // it didn't share prod-db too. The fix pairs on a shared id among
+      // agents that themselves passed the per-agent signal check, and scopes
+      // the resulting cluster to just those pairing agents.
+      const rdsOther: AgentEvidence = {
+        agentKind: 'aws-rds', targetName: 'rds-us-east-1-other-db', entityIds: ['other-db'], signals: [],
+      };
+      const result = synthesizeByRules([iacEvidence(['prod-db']), rdsOther, rdsEvidence(['prod-db'])]);
+      const cluster = result.clusters.find((c) => c.reasoning.includes('iac-out-of-band-change'));
+      expect(cluster).toBeDefined();
+      // Scoped to the sharing pair only — the unrelated other-db instance
+      // must not appear in the cluster it had no part in.
+      expect(cluster!.agents).toEqual(['iac-drift', 'aws-rds']);
+      expect(cluster!.investigationOrder[0]).toBe('iac-drift');
+    });
   });
 
   describe('config-drift-cascade regression (iac-drift arc)', () => {
