@@ -88,7 +88,7 @@ from an agent package):
 
 Implemented by both `simulator.ts` and `live-client.ts`:
 
-- `getStateSummary()` — source kind, serial, last-modified time, resource
+- `getStateStatus()` — source kind, serial, last-modified time, resource
   counts by type.
 - `listManagedResources()` — the normalized `IacResource[]`.
 - `checkResourceExistence(resource)` — `exists | missing | unknown` (with
@@ -96,8 +96,11 @@ Implemented by both `simulator.ts` and `live-client.ts`:
   resource's service; otherwise `unknown` with an honest reason.
 - `getResourceDrift(resource)` — attribute-level comparison for the deep
   trio; returns per-attribute `{ attribute, intended, observed }` diffs plus
-  a count of uncompared attribute differences ("3 other attributes differ")
-  — the agent never pretends to understand attributes it doesn't model.
+  `comparedAttributes` (the attribute names actually checked) and
+  `intendedAttributeCount` (the total attribute keys recorded in state), so
+  callers can disclose coverage honestly (e.g. "compared 8 of 42 recorded
+  attributes") — the agent never pretends to understand attributes it
+  doesn't model.
 
 Compared attributes (v1), each chosen for a crisp could-go-wrong story:
 
