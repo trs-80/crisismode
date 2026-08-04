@@ -137,6 +137,16 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
     let anyWarningResource = false;
     let missingCount = 0;
     let driftCount = 0;
+    // Existence is the verification signal this coverage tally is built on:
+    // an 'exists'/'missing' answer is a real check against AWS, while
+    // PermissionMissing (denied) and non-permission 'unknown' (SDK absent,
+    // unwatched type, transient error) are both "we don't actually know" —
+    // assessHealth must never let either read as a verified clean state.
+    let verifiedCount = 0;
+    const unverifiedReasonCounts = new Map<string, number>();
+    const countUnverified = (reason: string): void => {
+      unverifiedReasonCounts.set(reason, (unverifiedReasonCounts.get(reason) ?? 0) + 1);
+    };
 
     for (const { resource, existence, drift } of items) {
       if (isPermissionMissing(existence)) {
@@ -147,7 +157,9 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
           observedAt,
         });
         anyWarningResource = true;
+        countUnverified(`IAM action ${existence.permissionMissing} not allowed`);
       } else if (existence.existence === 'missing') {
+        verifiedCount += 1;
         missingCount += 1;
         const critical = !stale;
         if (critical) anyCritical = true;
@@ -160,6 +172,10 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
           detail: stale ? `${baseDetail} (${STALE_CAVEAT})` : baseDetail,
           observedAt,
         });
+      } else if (existence.existence === 'unknown') {
+        countUnverified(existence.reason ?? 'unknown reason');
+      } else {
+        verifiedCount += 1;
       }
       // existence 'exists' or non-permission 'unknown' -> no existence-side signal (never guess)
 
@@ -186,22 +202,49 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
       }
     }
 
-    const healthStatus: HealthStatus = anyCritical ? 'unhealthy' : anyWarningResource ? 'recovering' : 'healthy';
+    const totalItems = items.length;
+    const unverifiedCount = totalItems - verifiedCount;
+    // Nothing verified means every existence check came back unknown or
+    // permission-denied — assessHealth has no evidence to call the state
+    // clean OR dirty, so it must say so rather than defaulting to "healthy".
+    const nothingVerified = totalItems > 0 && verifiedCount === 0;
+
+    let healthStatus: HealthStatus = anyCritical ? 'unhealthy' : anyWarningResource ? 'recovering' : 'healthy';
+    if (nothingVerified) healthStatus = 'unknown';
+
     const hasDriftOrMissing = missingCount > 0 || driftCount > 0;
 
-    const summary = anyCritical
+    let summary = anyCritical
       ? `Terraform drift: ${missingCount} resource(s) recorded in state no longer exist in AWS.`
       : anyWarningResource
         ? `Terraform drift: ${driftCount} resource(s) drifted from their intended configuration.`
         : 'Terraform state matches observed AWS infrastructure.';
 
+    if (nothingVerified) {
+      const dominantReason = [...unverifiedReasonCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown reason';
+      summary = `Terraform state found (${totalItems} resource(s)) but none could be verified against AWS: ${dominantReason}.`;
+    } else if (unverifiedCount > 0) {
+      summary += ` ${unverifiedCount} of ${totalItems} resource(s) could not be verified.`;
+    }
+
+    // Confidence tracks coverage: fully verified stays at the historical 0.9,
+    // partial coverage scales down proportionally, and a floor of 0.3 keeps
+    // an all-unverified run from reading as "very confident about nothing".
+    const confidence = stale
+      ? 0.5
+      : totalItems > 0
+        ? Math.max(0.3, Math.round((0.9 * verifiedCount / totalItems) * 100) / 100)
+        : 0.9;
+
     return {
       status: healthStatus,
-      confidence: stale ? 0.5 : 0.9,
+      confidence,
       summary,
       observedAt,
       signals,
-      recommendedActions: hasDriftOrMissing ? ['Run terraform plan to confirm what apply would change'] : [],
+      recommendedActions: nothingVerified
+        ? ['Restore AWS access (credentials, IAM permissions, or install the missing AWS SDK package), then re-run the drift scan.']
+        : hasDriftOrMissing ? ['Run terraform plan to confirm what apply would change'] : [],
     };
   }
 
@@ -247,6 +290,12 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
       // signal in assessHealth(); diagnose() stays silent on it.
       if (!isPermissionMissing(existence) && existence.existence === 'missing') {
         hasMissing = true;
+        // Intentional asymmetry with assessHealth(): assessHealth treats ANY
+        // missing resource as critical (severity is a coarse "call it
+        // unhealthy" signal), while diagnose() scales severity by whether the
+        // type is in the deep-comparator trio (WATCHABLE_TF_TYPES) — a
+        // missing type CrisisMode can't drift-compare is a real finding but a
+        // lower-confidence one than a missing RDS/S3/DynamoDB resource.
         const watchable = resource.type in WATCHABLE_TF_TYPES;
         const baseObservation = `${resource.type} ${resource.id} is recorded in Terraform state but no longer exists in AWS. If it was deleted on purpose, remove it from your Terraform config; if not, terraform apply can recreate it.`;
         findings.push({

@@ -384,7 +384,10 @@ export class IacDriftLiveClient implements IacDriftBackend {
   private async getRdsDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null> {
     const region = await this.resolveRegion(resource);
     const rds = await this.ensureRds(region);
-    if (!rds) return { permissionMissing: 'sdk:@aws-sdk/client-rds not installed' };
+    // Matches checkRdsExistence's modeling: an absent SDK is an installation
+    // problem, not an IAM denial — degrade to "drift unknown" rather than a
+    // PermissionMissing that would render as a false "grant this IAM action" hint.
+    if (!rds) return null;
     try {
       const cmd = this.rdsSdk && !this.cfg.clients?.rds
         ? new this.rdsSdk.DescribeDBInstancesCommand({ DBInstanceIdentifier: resource.id })
@@ -414,7 +417,8 @@ export class IacDriftLiveClient implements IacDriftBackend {
   private async getS3Drift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null> {
     const region = await this.resolveRegion(resource);
     const s3 = await this.ensureS3(region);
-    if (!s3) return { permissionMissing: 'sdk:@aws-sdk/client-s3 not installed' };
+    // See getRdsDrift: SDK absence is an install problem, not IAM — null it.
+    if (!s3) return null;
     const live = !this.cfg.clients?.s3 ? this.s3Sdk : null;
 
     let versioningEnabled: boolean;
@@ -457,7 +461,8 @@ export class IacDriftLiveClient implements IacDriftBackend {
   private async getDynamoDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null> {
     const region = await this.resolveRegion(resource);
     const dynamo = await this.ensureDynamo(region);
-    if (!dynamo) return { permissionMissing: 'sdk:@aws-sdk/client-dynamodb not installed' };
+    // See getRdsDrift: SDK absence is an install problem, not IAM — null it.
+    if (!dynamo) return null;
     const live = !this.cfg.clients?.dynamo ? this.dynamoSdk : null;
 
     let billingMode: string;

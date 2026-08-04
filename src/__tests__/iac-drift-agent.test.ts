@@ -80,6 +80,64 @@ class StaleMissingBackend implements IacDriftBackend {
   async close(): Promise<void> {}
 }
 
+/** A backend whose existence check comes back 'unknown' (non-permission) for
+ *  every resource — e.g. AWS SDKs absent, or a state full of types with no
+ *  existence check yet. Exercises the "nothing could be verified" honesty
+ *  override: assessHealth must not report a clean match when it verified
+ *  nothing. */
+class AllUnknownBackend implements IacDriftBackend {
+  async getStateStatus(): Promise<IacStateStatus> {
+    return { source: 'local', detail: 'terraform.tfstate', readable: true, serial: 1, resourceCounts: { aws_db_instance: 1, aws_s3_bucket: 1 } };
+  }
+  async listManagedResources(): Promise<IacResource[]> {
+    return [
+      PROD_DB,
+      { type: 'aws_s3_bucket', name: 'uploads', id: 'user-uploads', attributes: {} },
+    ];
+  }
+  async checkResourceExistence(): Promise<ResourceExistence | PermissionMissing> {
+    return { existence: 'unknown', reason: '@aws-sdk/client-rds is not installed' };
+  }
+  async getResourceDrift(): Promise<DriftComparison | PermissionMissing | null> {
+    return null;
+  }
+  async executeCommand(_command: Command): Promise<unknown> {
+    return {};
+  }
+  async evaluateCheck(_check: CheckExpression): Promise<boolean> {
+    return true;
+  }
+  async close(): Promise<void> {}
+}
+
+/** One resource verified ('exists'), one resource's existence unknown —
+ *  exercises the partial-coverage disclosure appended to the summary. */
+class PartiallyVerifiedBackend implements IacDriftBackend {
+  async getStateStatus(): Promise<IacStateStatus> {
+    return { source: 'local', detail: 'terraform.tfstate', readable: true, serial: 1, resourceCounts: { aws_db_instance: 1, aws_elasticache_cluster: 1 } };
+  }
+  async listManagedResources(): Promise<IacResource[]> {
+    return [
+      PROD_DB,
+      { type: 'aws_elasticache_cluster', name: 'cache', id: 'app-cache', attributes: {} },
+    ];
+  }
+  async checkResourceExistence(resource: IacResource): Promise<ResourceExistence | PermissionMissing> {
+    if (resource.type === 'aws_db_instance') return { existence: 'exists' };
+    return { existence: 'unknown', reason: 'no existence check for aws_elasticache_cluster yet' };
+  }
+  async getResourceDrift(): Promise<DriftComparison | PermissionMissing | null> {
+    return null;
+  }
+  async executeCommand(_command: Command): Promise<unknown> {
+    return {};
+  }
+  async evaluateCheck(_check: CheckExpression): Promise<boolean> {
+    return true;
+  }
+  async close(): Promise<void> {}
+}
+
 describe('IacDriftRecoveryAgent.assessHealth', () => {
   it('drifted: unhealthy, with entityIds on resource signals', async () => {
     const agent = new IacDriftRecoveryAgent(new IacDriftSimulator('drifted'));
@@ -103,6 +161,30 @@ describe('IacDriftRecoveryAgent.assessHealth', () => {
     const health = await agent.assessHealth(iacContext(agent));
     expect(health.status).toBe('unknown');
     expect(health.signals.find((s) => s.source === 'iac_state')!.detail).toContain('could not');
+  });
+
+  it('all-unknown existence: unknown status, honest "could not be verified" summary — never a false clean claim', async () => {
+    const agent = new IacDriftRecoveryAgent(new AllUnknownBackend());
+    const health = await agent.assessHealth(iacContext(agent));
+    expect(health.status).toBe('unknown');
+    expect(health.summary).toContain('none could be verified');
+    expect(health.summary).not.toContain('matches observed AWS infrastructure');
+    expect(health.confidence).toBeLessThan(0.9);
+  });
+
+  it('fully IAM-blocked: unknown status, never claims "0 resource(s) drifted" (implies verified-no-drift)', async () => {
+    const agent = new IacDriftRecoveryAgent(new PermissionMissingBackend());
+    const health = await agent.assessHealth(iacContext(agent));
+    expect(health.status).toBe('unknown');
+    expect(health.summary).toContain('none could be verified');
+    expect(health.summary).not.toContain('0 resource(s) drifted');
+  });
+
+  it('partial verification: summary discloses how many resources could not be verified', async () => {
+    const agent = new IacDriftRecoveryAgent(new PartiallyVerifiedBackend());
+    const health = await agent.assessHealth(iacContext(agent));
+    expect(health.status).not.toBe('unknown'); // one resource WAS verified
+    expect(health.summary).toContain('1 of 2 resource(s) could not be verified');
   });
 });
 
