@@ -6,6 +6,8 @@ import {
 } from '../framework/root-cause-synthesis.js';
 import type { AgentEvidence } from '../framework/root-cause-synthesis.js';
 import type { RoutingResult } from '../framework/symptom-router.js';
+import { healthToSignals } from '../framework/health-to-signals.js';
+import type { HealthAssessment } from '../types/health.js';
 
 // ── Helpers ──
 
@@ -387,6 +389,56 @@ describe('Root cause synthesis (6.3)', () => {
     it('does NOT fire when either side lacks entity ids (no guessing)', () => {
       const result = synthesizeByRules([iacEvidence([]), rdsEvidence(['prod-db'])]);
       expect(result.clusters.find((c) => c.reasoning.includes('iac-out-of-band-change'))).toBeUndefined();
+    });
+  });
+
+  describe('config-drift-cascade regression (iac-drift arc)', () => {
+    // The `drift|out-of-band|intended|mismatch` TYPE_PATTERN added for
+    // iac-drift's config_mismatch classification also reclassifies the
+    // pre-existing config-drift agent's "N env var(s) drifted from expected
+    // values" wording — previously unmatched (fell back to 'custom'), so
+    // config-drift-cascade (which requires a 'config_mismatch' signal from
+    // application-config) could never fire on it. Reviewed and accepted by
+    // the human as a deliberate improvement, not a regression: this test
+    // pins the new behavior and routes the application-config side through
+    // the real healthToSignals mapping so it breaks if the regex is later
+    // narrowed back.
+    it('fires when a drift-worded application-config signal co-occurs with a postgresql connection signal', () => {
+      const configHealth: HealthAssessment = {
+        status: 'recovering',
+        confidence: 0.8,
+        summary: 'config drift detected',
+        observedAt: new Date().toISOString(),
+        signals: [
+          {
+            source: 'environment_variables',
+            status: 'warning',
+            detail: '2 env var(s) drifted from expected values: DATABASE_URL, REDIS_URL.',
+            observedAt: new Date().toISOString(),
+          },
+        ],
+        recommendedActions: [],
+      };
+
+      const evidence: AgentEvidence[] = [
+        makeEvidence('application-config', { signals: healthToSignals(configHealth) }),
+        makeEvidence('postgresql', {
+          signals: [
+            { type: 'connection', source: 'pg_connection', detail: 'connect ECONNREFUSED', severity: 'critical' },
+          ],
+        }),
+      ];
+
+      // Sanity check that the reclassification is really what's driving this —
+      // if healthToSignals stops emitting config_mismatch here, this assertion
+      // (not just the cluster-not-found one below) is what should fail first.
+      expect(evidence[0]!.signals!.map((s) => s.type)).toEqual(['config_mismatch']);
+
+      const result = synthesizeByRules(evidence);
+      const cluster = result.clusters.find((c) => c.reasoning.includes('config-drift-cascade'));
+      expect(cluster).toBeDefined();
+      expect(cluster!.agents).toContain('application-config');
+      expect(cluster!.agents).toContain('postgresql');
     });
   });
 
