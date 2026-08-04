@@ -138,6 +138,39 @@ class PartiallyVerifiedBackend implements IacDriftBackend {
   async close(): Promise<void> {}
 }
 
+/** Existence succeeds for both resources, but drift is IAM-denied for one —
+ *  models a real asymmetric IAM policy (e.g. s3:ListBucket allowed but
+ *  s3:GetBucketVersioning/GetBucketLifecycleConfiguration denied, or
+ *  dynamodb:DescribeTable allowed but dynamodb:DescribeContinuousBackups
+ *  denied). The drift-denied resource's existence WAS verified, but its
+ *  drift status was not — it must still count toward the coverage
+ *  disclosure, not read as a silently-clean resource. */
+class DriftDeniedBackend implements IacDriftBackend {
+  async getStateStatus(): Promise<IacStateStatus> {
+    return { source: 'local', detail: 'terraform.tfstate', readable: true, serial: 1, resourceCounts: { aws_db_instance: 1, aws_s3_bucket: 1 } };
+  }
+  async listManagedResources(): Promise<IacResource[]> {
+    return [
+      PROD_DB,
+      { type: 'aws_s3_bucket', name: 'uploads', id: 'user-uploads', attributes: {} },
+    ];
+  }
+  async checkResourceExistence(): Promise<ResourceExistence | PermissionMissing> {
+    return { existence: 'exists' };
+  }
+  async getResourceDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null> {
+    if (resource.type === 'aws_db_instance') return { permissionMissing: 'rds:DescribeDBInstances' };
+    return null;
+  }
+  async executeCommand(_command: Command): Promise<unknown> {
+    return {};
+  }
+  async evaluateCheck(_check: CheckExpression): Promise<boolean> {
+    return true;
+  }
+  async close(): Promise<void> {}
+}
+
 describe('IacDriftRecoveryAgent.assessHealth', () => {
   it('drifted: unhealthy, with entityIds on resource signals', async () => {
     const agent = new IacDriftRecoveryAgent(new IacDriftSimulator('drifted'));
@@ -185,6 +218,20 @@ describe('IacDriftRecoveryAgent.assessHealth', () => {
     const health = await agent.assessHealth(iacContext(agent));
     expect(health.status).not.toBe('unknown'); // one resource WAS verified
     expect(health.summary).toContain('1 of 2 resource(s) could not be verified');
+  });
+
+  it('drift permission denied on an otherwise-verified resource still counts toward the unverified disclosure', async () => {
+    const agent = new IacDriftRecoveryAgent(new DriftDeniedBackend());
+    const health = await agent.assessHealth(iacContext(agent));
+    expect(health.status).not.toBe('unknown'); // the bucket WAS fully verified
+    expect(health.confidence).toBeLessThan(0.9);
+    expect(health.summary).toContain('1 of 2 resource(s) could not be verified');
+    // The original bug: a drift-permission-missing resource read as
+    // "0 resource(s) drifted" with no hint that drift was never actually
+    // checked. If that phrase appears, the disclosure MUST appear with it.
+    if (health.summary.includes('0 resource(s) drifted')) {
+      expect(health.summary).toContain('could not be verified');
+    }
   });
 });
 

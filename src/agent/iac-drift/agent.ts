@@ -149,6 +149,13 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
     };
 
     for (const { resource, existence, drift } of items) {
+      // Verification is per-resource, not per-check: existence 'missing' is
+      // fully verified on its own (drift is never independently checked for
+      // a missing resource — see collect()), but existence 'exists' only
+      // stays verified if drift was ALSO actually checked. A drift check
+      // that comes back PermissionMissing flips it back to unverified below.
+      let resourceVerified = false;
+
       if (isPermissionMissing(existence)) {
         signals.push({
           source: 'iac_iam_permissions',
@@ -159,7 +166,7 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
         anyWarningResource = true;
         countUnverified(`IAM action ${existence.permissionMissing} not allowed`);
       } else if (existence.existence === 'missing') {
-        verifiedCount += 1;
+        resourceVerified = true;
         missingCount += 1;
         const critical = !stale;
         if (critical) anyCritical = true;
@@ -175,7 +182,7 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
       } else if (existence.existence === 'unknown') {
         countUnverified(existence.reason ?? 'unknown reason');
       } else {
-        verifiedCount += 1;
+        resourceVerified = true;
       }
       // existence 'exists' or non-permission 'unknown' -> no existence-side signal (never guess)
 
@@ -188,6 +195,12 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
             observedAt,
           });
           anyWarningResource = true;
+          // Existence may have verified fine, but drift itself is unknown —
+          // this resource is not fully verified (the coverage-honesty bug:
+          // a real IAM policy can allow e.g. s3:ListBucket while denying
+          // s3:GetBucketVersioning, so existence succeeds but drift can't).
+          resourceVerified = false;
+          countUnverified(`IAM action ${drift.permissionMissing} not allowed`);
         } else if (drift.drifts.length > 0) {
           driftCount += 1;
           anyWarningResource = true;
@@ -200,6 +213,8 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
           });
         }
       }
+
+      if (resourceVerified) verifiedCount += 1;
     }
 
     const totalItems = items.length;
