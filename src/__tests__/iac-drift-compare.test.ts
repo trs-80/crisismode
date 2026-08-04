@@ -40,6 +40,26 @@ describe('compareRdsInstance', () => {
     expect(r.drifts).toEqual([]);
     expect(r.comparedAttributes).not.toContain('deletion_protection');
   });
+
+  it('flags engine_version drift when observed is a different version that merely shares a numeral prefix', () => {
+    // '16.10'.startsWith('16.1') is true — a naive prefix check would wrongly
+    // call this aligned. Only an exact match or a '.'-bounded patch suffix counts.
+    const r = compareRdsInstance(
+      rds({ ...RDS_ATTRS, engine_version: '16.1' }),
+      { ...OBSERVED_ALIGNED, engineVersion: '16.10' },
+    );
+    expect(r.drifts).toEqual([
+      { attribute: 'engine_version', intended: '16.1', observed: '16.10' },
+    ]);
+  });
+
+  it('does not flag engine_version drift when observed is a genuine patch-version match', () => {
+    const r = compareRdsInstance(
+      rds({ ...RDS_ATTRS, engine_version: '16.1' }),
+      { ...OBSERVED_ALIGNED, engineVersion: '16.1.3' },
+    );
+    expect(r.drifts).toEqual([]);
+  });
 });
 
 describe('compareS3Bucket', () => {

@@ -20,6 +20,8 @@ import { join } from 'node:path';
 const mockStsSend = vi.fn();
 const mockS3Send = vi.fn();
 const mockRdsConstructedRegions: string[] = [];
+const mockS3ConstructedRegions: string[] = [];
+const mockS3Destroyed: string[] = [];
 
 vi.mock('@aws-sdk/client-sts', () => ({
   STSClient: class { send = mockStsSend; },
@@ -27,7 +29,15 @@ vi.mock('@aws-sdk/client-sts', () => ({
 }));
 
 vi.mock('@aws-sdk/client-s3', () => ({
-  S3Client: class { send = mockS3Send; },
+  S3Client: class {
+    private readonly region: string;
+    constructor(config: { region: string }) {
+      this.region = config.region;
+      mockS3ConstructedRegions.push(config.region);
+    }
+    send = mockS3Send;
+    destroy(): void { mockS3Destroyed.push(this.region); }
+  },
   GetObjectCommand: class { constructor(public params?: unknown) {} },
   HeadBucketCommand: class { constructor(public params?: unknown) {} },
   GetBucketVersioningCommand: class { constructor(public params?: unknown) {} },
@@ -66,6 +76,8 @@ function makeResource(overrides: Partial<IacResource>): IacResource {
 beforeEach(() => {
   vi.clearAllMocks();
   mockRdsConstructedRegions.length = 0;
+  mockS3ConstructedRegions.length = 0;
+  mockS3Destroyed.length = 0;
 });
 
 describe('IacDriftLiveClient S3-backend state loading', () => {
@@ -104,6 +116,32 @@ describe('IacDriftLiveClient S3-backend state loading', () => {
     expect(status.reason).toContain('s3:GetObject');
     await client.close();
   });
+
+  it('reuses the S3Client built for state loading for later S3 resource checks in the same region, and close() destroys it', async () => {
+    mockStsSend.mockResolvedValue({ Account: '' });
+    mockS3Send.mockImplementation(async (cmd: { constructor: { name: string } }) => {
+      if (cmd.constructor.name === 'GetObjectCommand') {
+        return { Body: { transformToString: async () => V4_STATE }, LastModified: new Date() };
+      }
+      // HeadBucketCommand for the existence check below
+      return {};
+    });
+    const dir = await projectWithS3Backend('my-tf-state', 'prod/terraform.tfstate', 'us-west-2');
+    const client = new IacDriftLiveClient({ dir });
+
+    // Triggers state loading, which constructs an S3Client for GetObject.
+    await client.getStateStatus();
+    expect(mockS3ConstructedRegions).toEqual(['us-west-2']);
+
+    // A subsequent S3 resource check in the SAME region must reuse that
+    // client rather than constructing (and leaking) a second one.
+    const bucket = makeResource({ type: 'aws_s3_bucket', id: 'user-uploads', region: 'us-west-2' });
+    await client.checkResourceExistence(bucket);
+    expect(mockS3ConstructedRegions).toEqual(['us-west-2']);
+
+    await client.close();
+    expect(mockS3Destroyed).toEqual(['us-west-2']);
+  });
 });
 
 describe('IacDriftLiveClient region-scoped client caching', () => {
@@ -128,6 +166,29 @@ describe('IacDriftLiveClient existence + drift branches not covered by the brief
     const client = new IacDriftLiveClient({
       dir,
       clients: { s3: { send: async () => { throw Object.assign(new Error('denied'), { name: 'AccessDeniedException' }); } } },
+    });
+    const bucket = makeResource({ type: 'aws_s3_bucket', id: 'user-uploads' });
+    const result = await client.checkResourceExistence(bucket);
+    expect(isPermissionMissing(result) && result.permissionMissing).toBe('s3:ListBucket');
+    await client.close();
+  });
+
+  it('maps a bodyless HTTP 403 on HeadBucket (no named error) to PermissionMissing(s3:ListBucket)', async () => {
+    // Real AWS behavior: HeadBucket can return a bare 403 with no error name/
+    // message in the body — isAccessDeniedError() (which matches on err.name)
+    // never sees this as access-denied, so it must be caught via $metadata.
+    const dir = await mkdtemp(join(tmpdir(), 'iac-live-'));
+    const client = new IacDriftLiveClient({
+      dir,
+      clients: {
+        s3: {
+          send: async () => {
+            const err = new Error('');
+            (err as unknown as { $metadata: { httpStatusCode: number } }).$metadata = { httpStatusCode: 403 };
+            throw err;
+          },
+        },
+      },
     });
     const bucket = makeResource({ type: 'aws_s3_bucket', id: 'user-uploads' });
     const result = await client.checkResourceExistence(bucket);
