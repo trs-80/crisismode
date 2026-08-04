@@ -30,6 +30,7 @@ import type {
   IacDriftBackend,
   IacStateStatus,
   ResourceExistence,
+  DriftUnknown,
 } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
@@ -390,7 +391,7 @@ export class IacDriftLiveClient implements IacDriftBackend {
 
   // ── Drift (deep trio only) ──
 
-  async getResourceDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null> {
+  async getResourceDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | DriftUnknown | null> {
     switch (resource.type) {
       case 'aws_db_instance':
         return this.getRdsDrift(resource);
@@ -399,24 +400,26 @@ export class IacDriftLiveClient implements IacDriftBackend {
       case 'aws_dynamodb_table':
         return this.getDynamoDrift(resource);
       default:
+        // No deep comparator exists for this resource type at all — the
+        // one case that is genuinely `null`, not DriftUnknown.
         return null;
     }
   }
 
-  private async getRdsDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null> {
+  private async getRdsDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | DriftUnknown | null> {
     const region = await this.resolveRegion(resource);
     const rds = await this.ensureRds(region);
     // Matches checkRdsExistence's modeling: an absent SDK is an installation
-    // problem, not an IAM denial — degrade to "drift unknown" rather than a
+    // problem, not an IAM denial — degrade to DriftUnknown rather than a
     // PermissionMissing that would render as a false "grant this IAM action" hint.
-    if (!rds) return null;
+    if (!rds) return { driftUnknown: '@aws-sdk/client-rds is not installed' };
     try {
       const cmd = this.rdsSdk && !this.cfg.clients?.rds
         ? new this.rdsSdk.DescribeDBInstancesCommand({ DBInstanceIdentifier: resource.id })
         : { commandName: 'DescribeDBInstancesCommand', input: { DBInstanceIdentifier: resource.id } };
       const resp = await rds.send(cmd) as RdsSdkModule.DescribeDBInstancesCommandOutput;
       const instance = resp.DBInstances?.[0];
-      if (!instance) return null;
+      if (!instance) return { driftUnknown: `DescribeDBInstances returned no instance for ${resource.id}` };
       return compareRdsInstance(resource, {
         instanceClass: instance.DBInstanceClass ?? '',
         engine: instance.Engine ?? '',
@@ -429,18 +432,18 @@ export class IacDriftLiveClient implements IacDriftBackend {
       });
     } catch (err) {
       if (isAccessDeniedError(err)) return { permissionMissing: 'rds:DescribeDBInstances' };
-      // Unexpected/transient errors (throttling, network, etc.) degrade to "no
-      // drift comparison available" rather than crashing the caller — genuine
-      // reachability failures surface through checkResourceExistence instead.
-      return null;
+      // Unexpected/transient errors (throttling, network, etc.) degrade to
+      // DriftUnknown rather than crashing the caller — genuine reachability
+      // failures surface through checkResourceExistence instead.
+      return { driftUnknown: err instanceof Error ? err.message : String(err) };
     }
   }
 
-  private async getS3Drift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null> {
+  private async getS3Drift(resource: IacResource): Promise<DriftComparison | PermissionMissing | DriftUnknown | null> {
     const region = await this.resolveRegion(resource);
     const s3 = await this.ensureS3(region);
-    // See getRdsDrift: SDK absence is an install problem, not IAM — null it.
-    if (!s3) return null;
+    // See getRdsDrift: SDK absence is an install problem, not IAM.
+    if (!s3) return { driftUnknown: '@aws-sdk/client-s3 is not installed' };
     const live = !this.cfg.clients?.s3 ? this.s3Sdk : null;
 
     let versioningEnabled: boolean;
@@ -452,9 +455,9 @@ export class IacDriftLiveClient implements IacDriftBackend {
       versioningEnabled = resp.Status === 'Enabled';
     } catch (err) {
       if (isAccessDeniedError(err)) return { permissionMissing: 's3:GetBucketVersioning' };
-      // Unexpected/transient errors degrade to "no drift comparison available"
-      // rather than crashing the caller — see getRdsDrift for rationale.
-      return null;
+      // Unexpected/transient errors degrade to DriftUnknown rather than
+      // crashing the caller — see getRdsDrift for rationale.
+      return { driftUnknown: err instanceof Error ? err.message : String(err) };
     }
 
     let hasLifecycleRules: boolean;
@@ -470,9 +473,9 @@ export class IacDriftLiveClient implements IacDriftBackend {
       } else if (isAccessDeniedError(err)) {
         return { permissionMissing: 's3:GetBucketLifecycleConfiguration' };
       } else {
-        // Unexpected/transient errors degrade to "no drift comparison
-        // available" rather than crashing the caller — see getRdsDrift.
-        return null;
+        // Unexpected/transient errors degrade to DriftUnknown rather than
+        // crashing the caller — see getRdsDrift.
+        return { driftUnknown: err instanceof Error ? err.message : String(err) };
       }
     }
 
@@ -480,11 +483,11 @@ export class IacDriftLiveClient implements IacDriftBackend {
     return compareS3Bucket(resource, resources, { versioningEnabled, hasLifecycleRules });
   }
 
-  private async getDynamoDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null> {
+  private async getDynamoDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | DriftUnknown | null> {
     const region = await this.resolveRegion(resource);
     const dynamo = await this.ensureDynamo(region);
-    // See getRdsDrift: SDK absence is an install problem, not IAM — null it.
-    if (!dynamo) return null;
+    // See getRdsDrift: SDK absence is an install problem, not IAM.
+    if (!dynamo) return { driftUnknown: '@aws-sdk/client-dynamodb is not installed' };
     const live = !this.cfg.clients?.dynamo ? this.dynamoSdk : null;
 
     let billingMode: string;
@@ -496,9 +499,9 @@ export class IacDriftLiveClient implements IacDriftBackend {
       billingMode = resp.Table?.BillingModeSummary?.BillingMode ?? 'PROVISIONED';
     } catch (err) {
       if (isAccessDeniedError(err)) return { permissionMissing: 'dynamodb:DescribeTable' };
-      // Unexpected/transient errors degrade to "no drift comparison available"
-      // rather than crashing the caller — see getRdsDrift for rationale.
-      return null;
+      // Unexpected/transient errors degrade to DriftUnknown rather than
+      // crashing the caller — see getRdsDrift for rationale.
+      return { driftUnknown: err instanceof Error ? err.message : String(err) };
     }
 
     let pitrEnabled: boolean;
@@ -510,9 +513,9 @@ export class IacDriftLiveClient implements IacDriftBackend {
       pitrEnabled = resp.ContinuousBackupsDescription?.PointInTimeRecoveryDescription?.PointInTimeRecoveryStatus === 'ENABLED';
     } catch (err) {
       if (isAccessDeniedError(err)) return { permissionMissing: 'dynamodb:DescribeContinuousBackups' };
-      // Unexpected/transient errors degrade to "no drift comparison available"
-      // rather than crashing the caller — see getRdsDrift for rationale.
-      return null;
+      // Unexpected/transient errors degrade to DriftUnknown rather than
+      // crashing the caller — see getRdsDrift for rationale.
+      return { driftUnknown: err instanceof Error ? err.message : String(err) };
     }
 
     return compareDynamoTable(resource, { billingMode, pitrEnabled });

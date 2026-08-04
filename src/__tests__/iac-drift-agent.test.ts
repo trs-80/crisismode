@@ -8,6 +8,7 @@ import type {
   IacDriftBackend,
   IacStateStatus,
   ResourceExistence,
+  DriftUnknown,
 } from '../agent/iac-drift/backend.js';
 import type { IacResource } from '../agent/iac-drift/state-parser.js';
 import type { DriftComparison } from '../agent/iac-drift/drift-compare.js';
@@ -171,6 +172,38 @@ class DriftDeniedBackend implements IacDriftBackend {
   async close(): Promise<void> {}
 }
 
+/** Existence succeeds for both resources, but drift comes back DriftUnknown
+ *  (attempted but failed — throttling, empty response, etc.) for one, not
+ *  PermissionMissing. DriftUnknown must be treated like drift-PermissionMissing
+ *  for coverage purposes: not verified, counted in the disclosure, and never
+ *  surfaced as a diagnose() finding — but it must also never be conflated with
+ *  the simulator's "no comparator for this type" null. */
+class DriftUnknownBackend implements IacDriftBackend {
+  async getStateStatus(): Promise<IacStateStatus> {
+    return { source: 'local', detail: 'terraform.tfstate', readable: true, serial: 1, resourceCounts: { aws_db_instance: 1, aws_s3_bucket: 1 } };
+  }
+  async listManagedResources(): Promise<IacResource[]> {
+    return [
+      PROD_DB,
+      { type: 'aws_s3_bucket', name: 'uploads', id: 'user-uploads', attributes: {} },
+    ];
+  }
+  async checkResourceExistence(): Promise<ResourceExistence | PermissionMissing> {
+    return { existence: 'exists' };
+  }
+  async getResourceDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | DriftUnknown | null> {
+    if (resource.type === 'aws_db_instance') return { driftUnknown: 'ThrottlingException: Rate exceeded' };
+    return null;
+  }
+  async executeCommand(_command: Command): Promise<unknown> {
+    return {};
+  }
+  async evaluateCheck(_check: CheckExpression): Promise<boolean> {
+    return true;
+  }
+  async close(): Promise<void> {}
+}
+
 describe('IacDriftRecoveryAgent.assessHealth', () => {
   it('drifted: unhealthy, with entityIds on resource signals', async () => {
     const agent = new IacDriftRecoveryAgent(new IacDriftSimulator('drifted'));
@@ -220,18 +253,41 @@ describe('IacDriftRecoveryAgent.assessHealth', () => {
     expect(health.summary).toContain('1 of 2 resource(s) could not be verified');
   });
 
-  it('drift permission denied on an otherwise-verified resource still counts toward the unverified disclosure', async () => {
+  it('case (b) — drift permission denied on an otherwise-verified resource: summary never claims "0 resource(s) drifted"', async () => {
     const agent = new IacDriftRecoveryAgent(new DriftDeniedBackend());
     const health = await agent.assessHealth(iacContext(agent));
     expect(health.status).not.toBe('unknown'); // the bucket WAS fully verified
     expect(health.confidence).toBeLessThan(0.9);
+    // The original bug: this scenario has missingCount=0 and driftCount=0 (no
+    // resource earned either count — the RDS instance's drift was simply
+    // never checked), so the summary must NOT claim a verified-clean "0
+    // resource(s) drifted" — it must say coverage was incomplete instead.
+    expect(health.summary).not.toContain('0 resource(s) drifted');
+    expect(health.summary).toContain('could not fully verify all resources');
     expect(health.summary).toContain('1 of 2 resource(s) could not be verified');
-    // The original bug: a drift-permission-missing resource read as
-    // "0 resource(s) drifted" with no hint that drift was never actually
-    // checked. If that phrase appears, the disclosure MUST appear with it.
-    if (health.summary.includes('0 resource(s) drifted')) {
-      expect(health.summary).toContain('could not be verified');
-    }
+  });
+
+  it('case (a) — stale state + missing resource (critical downgraded to warning): summary names the missing resource, never "0 resource(s) drifted"', async () => {
+    const agent = new IacDriftRecoveryAgent(new StaleMissingBackend());
+    const health = await agent.assessHealth(iacContext(agent));
+    expect(health.status).toBe('recovering'); // downgraded from unhealthy by staleness
+    // The original bug: staleness downgrades anyCritical to false, so the old
+    // ternary fell through to the anyWarningResource branch and reported
+    // "0 resource(s) drifted" even though missingCount is 1.
+    expect(health.summary).not.toContain('0 resource(s) drifted');
+    expect(health.summary).toContain('1 resource(s) recorded in state no longer exist in AWS');
+  });
+
+  it('DriftUnknown (attempted-but-failed drift check) on an otherwise-verified resource is not counted as verified, and never reads as "0 resource(s) drifted"', async () => {
+    const agent = new IacDriftRecoveryAgent(new DriftUnknownBackend());
+    const health = await agent.assessHealth(iacContext(agent));
+    expect(health.status).not.toBe('unknown'); // the bucket WAS fully verified
+    expect(health.confidence).toBeLessThan(0.9);
+    expect(health.summary).not.toContain('0 resource(s) drifted');
+    expect(health.summary).toContain('1 of 2 resource(s) could not be verified');
+    // DriftUnknown never emits a health signal of its own (never a guess) —
+    // same treatment as a non-permission 'unknown' existence result.
+    expect(health.signals.some((s) => s.source === 'iac_iam_permissions')).toBe(false);
   });
 });
 
@@ -262,6 +318,12 @@ describe('IacDriftRecoveryAgent.diagnose', () => {
     // the same condition IS visible via the health assessment's iac_iam_permissions signal
     const health = await agent.assessHealth(iacContext(agent));
     expect(health.signals.some((s) => s.source === 'iac_iam_permissions')).toBe(true);
+  });
+
+  it('DriftUnknown (attempted-but-failed drift check) produces no finding — never a guess', async () => {
+    const agent = new IacDriftRecoveryAgent(new DriftUnknownBackend());
+    const d = await agent.diagnose(iacContext(agent));
+    expect(d.findings.some((f) => f.source === 'iac_attribute_drift')).toBe(false);
   });
 
   it('stale state: downgraded iac_resource_missing finding carries the staleness caveat', async () => {

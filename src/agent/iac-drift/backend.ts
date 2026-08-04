@@ -31,11 +31,26 @@ export type ResourceExistence =
   | { existence: 'exists' | 'missing' }
   | { existence: 'unknown'; reason: string };
 
+/** A drift check that was attempted but could not produce an answer — SDK
+ *  not installed, an empty/unexpected describe response, throttling, a
+ *  network error, etc. Distinct from `null` (see getResourceDrift): `null`
+ *  means "this resource type has no deep comparator at all", while
+ *  DriftUnknown means "there is a comparator, but this attempt failed" —
+ *  conflating the two would let a failed comparison read as "not applicable"
+ *  instead of "unverified". */
+export interface DriftUnknown {
+  driftUnknown: string;
+}
+
+export function isDriftUnknown(v: unknown): v is DriftUnknown {
+  return typeof v === 'object' && v !== null && 'driftUnknown' in v;
+}
+
 export interface IacDriftBackend extends ExecutionBackend {
   getStateStatus(): Promise<IacStateStatus>;
   listManagedResources(): Promise<IacResource[]>;
   checkResourceExistence(resource: IacResource): Promise<ResourceExistence | PermissionMissing>;
   /** null = resource type has no deep comparator (existence-only tier) */
-  getResourceDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | null>;
+  getResourceDrift(resource: IacResource): Promise<DriftComparison | PermissionMissing | DriftUnknown | null>;
   transition?(to: string): void;
 }

@@ -12,7 +12,8 @@ import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { isPermissionMissing } from '../aws-common.js';
 import type { PermissionMissing } from '../aws-common.js';
 import { iacDriftManifest } from './manifest.js';
-import type { IacDriftBackend, IacStateStatus, ResourceExistence } from './backend.js';
+import { isDriftUnknown } from './backend.js';
+import type { IacDriftBackend, IacStateStatus, ResourceExistence, DriftUnknown } from './backend.js';
 import { WATCHABLE_TF_TYPES } from './state-parser.js';
 import type { IacResource } from './state-parser.js';
 import type { AttributeDrift, DriftComparison } from './drift-compare.js';
@@ -24,7 +25,7 @@ const STALE_CAVEAT = 'state may be stale — re-run after terraform refresh';
 interface CollectedItem {
   resource: IacResource;
   existence: ResourceExistence | PermissionMissing;
-  drift: DriftComparison | PermissionMissing | null;
+  drift: DriftComparison | PermissionMissing | DriftUnknown | null;
 }
 
 interface CollectResult {
@@ -201,6 +202,13 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
           // s3:GetBucketVersioning, so existence succeeds but drift can't).
           resourceVerified = false;
           countUnverified(`IAM action ${drift.permissionMissing} not allowed`);
+        } else if (isDriftUnknown(drift)) {
+          // A drift check that was attempted but failed (SDK absent, an
+          // unexpected/empty response, throttling, network error) — never a
+          // guess, so no signal is pushed (same as a non-permission
+          // 'unknown' existence result), but it must not read as verified.
+          resourceVerified = false;
+          countUnverified(drift.driftUnknown);
         } else if (drift.drifts.length > 0) {
           driftCount += 1;
           anyWarningResource = true;
@@ -229,11 +237,22 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
 
     const hasDriftOrMissing = missingCount > 0 || driftCount > 0;
 
-    let summary = anyCritical
-      ? `Terraform drift: ${missingCount} resource(s) recorded in state no longer exist in AWS.`
-      : anyWarningResource
-        ? `Terraform drift: ${driftCount} resource(s) drifted from their intended configuration.`
-        : 'Terraform state matches observed AWS infrastructure.';
+    // Built from the actual counters, not from anyCritical/anyWarningResource
+    // — those flags also go true for stale-downgraded missing resources and
+    // for drift-permission-denied resources, neither of which means "0
+    // resource(s) drifted"; only the counts a resource actually earned can
+    // say that honestly.
+    let summary: string;
+    if (hasDriftOrMissing) {
+      const parts: string[] = [];
+      if (missingCount > 0) parts.push(`${missingCount} resource(s) recorded in state no longer exist in AWS`);
+      if (driftCount > 0) parts.push(`${driftCount} resource(s) drifted from their intended configuration`);
+      summary = `Terraform drift: ${parts.join('; ')}.`;
+    } else if (anyWarningResource) {
+      summary = 'Terraform drift check could not fully verify all resources — see the coverage details below.';
+    } else {
+      summary = 'Terraform state matches observed AWS infrastructure.';
+    }
 
     if (nothingVerified) {
       const dominantReason = [...unverifiedReasonCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'unknown reason';
@@ -322,7 +341,10 @@ export class IacDriftRecoveryAgent implements RecoveryAgent {
       }
       // existence 'exists' or non-permission 'unknown' -> no finding (never guess)
 
-      if (drift && !isPermissionMissing(drift) && drift.drifts.length > 0) {
+      // A permission-missing or DriftUnknown drift result is an unfinished
+      // check, not a confirmed drift — no finding, same "never guess" rule
+      // as the existence branch above.
+      if (drift && !isPermissionMissing(drift) && !isDriftUnknown(drift) && drift.drifts.length > 0) {
         hasDrift = true;
         const first = drift.drifts[0]!;
         findings.push({

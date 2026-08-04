@@ -55,9 +55,40 @@ vi.mock('@aws-sdk/client-rds', () => ({
 }));
 
 import { IacDriftLiveClient } from '../agent/iac-drift/live-client.js';
+import { IacDriftRecoveryAgent } from '../agent/iac-drift/agent.js';
 import { isPermissionMissing } from '../agent/aws-common.js';
 import type { IacResource } from '../agent/iac-drift/state-parser.js';
 import { V4_STATE } from './fixtures/iac-tfstate-v4.js';
+import { assembleContext } from '../framework/context.js';
+import type { AgentContext } from '../types/agent-context.js';
+
+function iacContext(agent: IacDriftRecoveryAgent): AgentContext {
+  return assembleContext(
+    { type: 'health_check', source: 'test', payload: {}, receivedAt: new Date().toISOString() },
+    agent.manifest,
+  );
+}
+
+/** A minimal local tfstate with a single aws_db_instance — used by the
+ *  throttled-drift regression below so only the injected RDS client is
+ *  exercised (no S3/DynamoDB resources to trip real SDK calls). */
+const SINGLE_RDS_STATE = JSON.stringify({
+  version: 4,
+  terraform_version: '1.9.0',
+  serial: 1,
+  lineage: 'abc',
+  resources: [
+    {
+      mode: 'managed', type: 'aws_db_instance', name: 'main',
+      instances: [{ attributes: {
+        id: 'prod-db', arn: 'arn:aws:rds:us-east-1::db:prod-db',
+        instance_class: 'db.t3.medium', engine: 'postgres', engine_version: '16',
+        multi_az: false, backup_retention_period: 7, deletion_protection: true,
+        storage_type: 'gp3', allocated_storage: 20,
+      } }],
+    },
+  ],
+});
 
 async function projectWithS3Backend(bucket: string, key: string, region: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'iac-live-s3-'));
@@ -248,6 +279,45 @@ describe('IacDriftLiveClient existence + drift branches not covered by the brief
     expect(await client.checkResourceExistence(table)).toEqual({ existence: 'exists' });
     const drift = await client.getResourceDrift(table);
     expect(drift).toMatchObject({ drifts: [] });
+    await client.close();
+  });
+});
+
+describe('IacDriftLiveClient + IacDriftRecoveryAgent: throttled drift check', () => {
+  it('existence exists but drift throws ThrottlingException -> resource counts unverified, confidence < 0.9, disclosure present', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'iac-live-throttle-'));
+    await writeFile(join(dir, 'terraform.tfstate'), SINGLE_RDS_STATE);
+
+    let callCount = 0;
+    const client = new IacDriftLiveClient({
+      dir,
+      clients: {
+        rds: {
+          send: async () => {
+            callCount += 1;
+            if (callCount === 1) {
+              // checkResourceExistence's DescribeDBInstances — resource is real.
+              return { DBInstances: [{ DBInstanceIdentifier: 'prod-db' }] };
+            }
+            // getResourceDrift's DescribeDBInstances — AWS is throttling us.
+            throw Object.assign(new Error('Rate exceeded'), { name: 'ThrottlingException' });
+          },
+        },
+      },
+    });
+
+    const agent = new IacDriftRecoveryAgent(client);
+    const health = await agent.assessHealth(iacContext(agent));
+
+    // Existence was verified, but drift could not be checked — with only
+    // this one resource in state, nothing ends up fully verified, so the
+    // honest "could not verify" disclosure must fire rather than a false
+    // "0 resource(s) drifted" clean bill of health.
+    expect(health.confidence).toBeLessThan(0.9);
+    expect(health.summary).toContain('none could be verified against AWS');
+    expect(health.summary).toContain('Rate exceeded');
+    expect(health.summary).not.toContain('0 resource(s) drifted');
+
     await client.close();
   });
 });
