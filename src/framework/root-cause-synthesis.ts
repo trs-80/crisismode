@@ -243,9 +243,14 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
   const clusteredAgents = new Set<string>();
   let clusterIdx = 0;
 
-  // Collect all signal types and patterns per agent
-  const agentSignalTypes = new Map<string, Set<SymptomSignal['type']>>();
-  const agentPatterns = new Map<string, Set<string>>();
+  // Collect all signal types and patterns per agent. Keyed by the
+  // AgentEvidence object reference, not agentKind — two evidence items can
+  // share a kind (e.g. two aws-rds targets), and keying by kind let a later
+  // same-kind item silently overwrite an earlier one's entry, making
+  // correlation order-dependent on the input array (see the reversed-order
+  // regression test for iac-out-of-band-change).
+  const agentSignalTypes = new Map<AgentEvidence, Set<SymptomSignal['type']>>();
+  const agentPatterns = new Map<AgentEvidence, Set<string>>();
 
   for (const e of evidence) {
     const signalTypes = new Set<SymptomSignal['type']>();
@@ -258,13 +263,13 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
         if (s.status === 'warning') signalTypes.add('latency');
       }
     }
-    agentSignalTypes.set(e.agentKind, signalTypes);
+    agentSignalTypes.set(e, signalTypes);
 
     const patterns = new Set<string>();
     if (e.patterns) {
       for (const p of e.patterns) patterns.add(p.pattern);
     }
-    agentPatterns.set(e.agentKind, patterns);
+    agentPatterns.set(e, patterns);
   }
 
   // Try each correlation rule
@@ -278,13 +283,13 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     const passedSignalAgents: AgentEvidence[] = [];
 
     for (const agent of matchingAgents) {
-      const types = agentSignalTypes.get(agent.agentKind);
+      const types = agentSignalTypes.get(agent);
       const requiredTypes = rule.requiredTypesByKind?.[agent.agentKind] ?? rule.sharedSignalTypes;
       if (types && requiredTypes.some((t) => types.has(t))) {
         signalMatches++;
         passedSignalAgents.push(agent);
       }
-      const patterns = agentPatterns.get(agent.agentKind);
+      const patterns = agentPatterns.get(agent);
       if (patterns && rule.sharedPatterns.some((p) => patterns.has(p))) {
         patternMatches++;
       }
