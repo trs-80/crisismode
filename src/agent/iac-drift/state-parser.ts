@@ -140,16 +140,32 @@ function parseS3BackendJson(backend: unknown): S3BackendConfig | undefined {
   };
 }
 
+/** The local backend's default path when no `path` attribute is configured
+ *  — matches Terraform's own default. */
+const DEFAULT_LOCAL_BACKEND_PATH = 'terraform.tfstate';
+
+function parseLocalBackendPath(backend: unknown): string | undefined {
+  const b = backend as { type?: unknown; config?: unknown } | undefined;
+  if (!b || b.type !== 'local') return undefined;
+  const config = (b.config ?? {}) as { path?: unknown };
+  return typeof config.path === 'string' ? config.path : DEFAULT_LOCAL_BACKEND_PATH;
+}
+
 const BACKEND_BLOCK = /backend\s+"([a-z0-9_]+)"\s*{([\s\S]*?)}/;
 const HCL_BUCKET = /bucket\s*=\s*"([^"]+)"/;
 const HCL_KEY = /key\s*=\s*"([^"]+)"/;
 const HCL_REGION = /region\s*=\s*"([^"]+)"/;
+const HCL_PATH = /path\s*=\s*"([^"]+)"/;
 
 function parseS3BackendHcl(body: string): S3BackendConfig | undefined {
   const bucket = HCL_BUCKET.exec(body)?.[1];
   const key = HCL_KEY.exec(body)?.[1];
   if (!bucket || !key) return undefined;
   return { bucket, key, region: HCL_REGION.exec(body)?.[1] };
+}
+
+function parseLocalBackendHclPath(body: string): string {
+  return HCL_PATH.exec(body)?.[1] ?? DEFAULT_LOCAL_BACKEND_PATH;
 }
 
 function resolveRegion(region: string | undefined): string {
@@ -188,6 +204,11 @@ export async function discoverStateSource(cwd: string): Promise<StateSource> {
       if (s3Config) {
         return { kind: 's3-backend', bucket: s3Config.bucket, key: s3Config.key, region: resolveRegion(s3Config.region) };
       }
+      const localPath = parseLocalBackendPath(backend);
+      if (localPath !== undefined) {
+        const resolvedPath = join(cwd, localPath);
+        return (await exists(resolvedPath)) ? { kind: 'local', path: resolvedPath } : { kind: 'none' };
+      }
       if (typeof backendType === 'string') {
         return { kind: 'unsupported-backend', backendType };
       }
@@ -216,6 +237,9 @@ export async function discoverStateSource(cwd: string): Promise<StateSource> {
       if (s3Config) {
         return { kind: 's3-backend', bucket: s3Config.bucket, key: s3Config.key, region: resolveRegion(s3Config.region) };
       }
+    } else if (backendType === 'local') {
+      const resolvedPath = join(cwd, parseLocalBackendHclPath(body!));
+      return (await exists(resolvedPath)) ? { kind: 'local', path: resolvedPath } : { kind: 'none' };
     } else {
       return { kind: 'unsupported-backend', backendType: backendType! };
     }

@@ -82,6 +82,26 @@ describe('discoverStateSource', () => {
     expect(await discoverStateSource(dir)).toEqual({ kind: 'unsupported-backend', backendType: 'remote' });
   });
 
+  it('resolves a local backend with a custom path from .terraform/terraform.tfstate JSON when the file exists', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'iac-'));
+    await mkdir(join(dir, '.terraform'), { recursive: true });
+    await writeFile(join(dir, '.terraform', 'terraform.tfstate'), JSON.stringify({
+      backend: { type: 'local', config: { path: 'state/custom.tfstate' } },
+    }));
+    await mkdir(join(dir, 'state'), { recursive: true });
+    await writeFile(join(dir, 'state', 'custom.tfstate'), V4_STATE);
+    expect(await discoverStateSource(dir)).toEqual({ kind: 'local', path: join(dir, 'state', 'custom.tfstate') });
+  });
+
+  it('reports none (not unsupported-backend) when a configured local backend path does not exist', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'iac-'));
+    await mkdir(join(dir, '.terraform'), { recursive: true });
+    await writeFile(join(dir, '.terraform', 'terraform.tfstate'), JSON.stringify({
+      backend: { type: 'local', config: { path: 'state/custom.tfstate' } },
+    }));
+    expect(await discoverStateSource(dir)).toEqual({ kind: 'none' });
+  });
+
   it('falls back to scanning *.tf for a backend "s3" block when .terraform/ is absent', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'iac-'));
     await writeFile(join(dir, 'main.tf'), [
@@ -96,6 +116,20 @@ describe('discoverStateSource', () => {
     expect(await discoverStateSource(dir)).toEqual({
       kind: 's3-backend', bucket: 'tf-states', key: 'app/terraform.tfstate', region: 'us-east-2',
     });
+  });
+
+  it('falls back to scanning *.tf for a backend "local" block when .terraform/ is absent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'iac-'));
+    await writeFile(join(dir, 'main.tf'), [
+      'terraform {',
+      '  backend "local" {',
+      '    path = "state/custom.tfstate"',
+      '  }',
+      '}',
+    ].join('\n'));
+    await mkdir(join(dir, 'state'), { recursive: true });
+    await writeFile(join(dir, 'state', 'custom.tfstate'), V4_STATE);
+    expect(await discoverStateSource(dir)).toEqual({ kind: 'local', path: join(dir, 'state', 'custom.tfstate') });
   });
 
   it('returns none for a directory without terraform', async () => {
