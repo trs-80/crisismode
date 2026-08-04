@@ -121,14 +121,18 @@ export function buildScanEvidence(
   const evidence: AgentEvidence[] = [];
   for (const r of results) {
     if (r.health && r.health.status !== 'healthy' && r.health.status !== 'unknown') {
+      const signals = healthToSignals(r.health);
+      // Derived from the signals actually emitted (warning/critical only),
+      // not every health signal — a healthy signal's entityId must not leak
+      // into correlation evidence when healthToSignals() already dropped it.
       const entityIds = [...new Set(
-        r.health.signals.map((s) => s.entityId).filter((x): x is string => typeof x === 'string'),
+        signals.map((s) => s.entityId).filter((x): x is string => typeof x === 'string'),
       )];
       evidence.push({
         agentKind: r.kind,
         targetName: r.finding.service,
         health: r.health,
-        signals: healthToSignals(r.health),
+        signals,
         ...(entityIds.length > 0 ? { entityIds } : {}),
       });
     } else if (r.health === null && r.finding.summary.startsWith('Error:')) {

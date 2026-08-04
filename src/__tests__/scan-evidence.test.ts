@@ -179,4 +179,32 @@ describe('buildScanEvidence (Task B2 follow-up)', () => {
       expect(e.signals).toBeDefined();
     }
   });
+
+  it('entityIds are derived only from the signals actually emitted, not every health signal', () => {
+    // healthToSignals() drops healthy signals (only warning/critical make it
+    // into `signals`) — a healthy signal's entityId must not leak into
+    // correlation evidence just because it shared a HealthAssessment with a
+    // real critical signal.
+    const results = [
+      {
+        kind: 'aws-rds',
+        health: {
+          status: 'unhealthy',
+          confidence: 0.9,
+          summary: 'One instance degraded, one healthy',
+          observedAt: new Date().toISOString(),
+          signals: [
+            { source: 'rds_instance_status', status: 'healthy', detail: 'db-healthy is available', entityId: 'db-healthy', observedAt: new Date().toISOString() },
+            { source: 'rds_instance_status', status: 'critical', detail: 'db-degraded is storage-full', entityId: 'db-degraded', observedAt: new Date().toISOString() },
+          ],
+          recommendedActions: [],
+        } as HealthAssessment,
+        finding: { service: 'aws-rds (multi)', summary: 'One instance degraded, one healthy' },
+      },
+    ];
+
+    const evidence = buildScanEvidence(results);
+    expect(evidence).toHaveLength(1);
+    expect(evidence[0]!.entityIds).toEqual(['db-degraded']);
+  });
 });
