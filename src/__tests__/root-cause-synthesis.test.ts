@@ -578,6 +578,55 @@ describe('Root cause synthesis (6.3)', () => {
         }
       }
     });
+
+    it('re-renders reasoning when a cluster loses agents to de-dup', () => {
+      // network-partition (with flapping, 0.9 confidence) scores higher than
+      // component-failure-cascade (0.85). network-partition matches/claims
+      // etcd, kafka, postgresql, ceph (all have connection signals and the top
+      // two have flapping patterns). component-failure-cascade originally
+      // matched 5 agents: postgresql, redis, kafka, etcd, application (all
+      // have connection or error signals). After de-dup, it loses the 3 claimed
+      // by network-partition (postgresql, kafka, etcd) and survives with 2
+      // (redis, application). Its reasoning must accurately say "2 agents"
+      // not "5 agents" — the honest count of survivors.
+      const flapping = { pattern: 'flapping', occurrences: 3, firstSeen: '', lastSeen: '', description: '' };
+      const result = synthesizeByRules([
+        makeEvidence('etcd', {
+          signals: [
+            { type: 'connection', source: 'etcd', detail: 'leader lost', severity: 'critical' },
+            { type: 'timeout', source: 'etcd', detail: 'raft timeout', severity: 'critical' },
+          ],
+          patterns: [flapping],
+        }),
+        makeEvidence('kafka', {
+          signals: [
+            { type: 'connection', source: 'kafka', detail: 'broker unreachable', severity: 'critical' },
+            { type: 'timeout', source: 'kafka', detail: 'ISR shrunk', severity: 'warning' },
+          ],
+          patterns: [flapping],
+        }),
+        makeEvidence('postgresql', {
+          signals: [{ type: 'connection', source: 'pg', detail: 'connection refused', severity: 'critical' }],
+        }),
+        makeEvidence('redis', {
+          signals: [{ type: 'connection', source: 'redis', detail: 'unreachable', severity: 'critical' }],
+        }),
+        makeEvidence('ceph', {
+          signals: [{ type: 'connection', source: 'ceph', detail: 'mon unreachable', severity: 'critical' }],
+        }),
+        makeEvidence('application', {
+          signals: [{ type: 'connection', source: 'app', detail: 'cannot reach dependencies', severity: 'critical' }],
+        }),
+      ]);
+
+      const cascadeCluster = result.clusters.find((c) => c.reasoning.includes('component-failure-cascade'));
+      expect(cascadeCluster).toBeDefined();
+      // After de-dup, only redis and application remain (postgresql, kafka, etcd
+      // claimed by higher-confidence network-partition).
+      expect(cascadeCluster!.agents).toHaveLength(2);
+      // Reasoning must accurately reflect survivors, not original count.
+      expect(cascadeCluster!.reasoning).toContain('2 agents share signal types');
+    });
   });
 
   describe('config-drift-cascade regression (iac-drift arc)', () => {
