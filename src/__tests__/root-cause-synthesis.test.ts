@@ -643,6 +643,67 @@ describe('Root cause synthesis (6.3)', () => {
       // Reasoning must accurately reflect survivors, not original count.
       expect(cascadeCluster!.reasoning).toContain('2 agents share signal types');
     });
+
+    it('does not claim temporal correlation the surviving evidence does not support', () => {
+      // Same claim/trim shape as the test above (network-partition outscores
+      // component-failure-cascade and claims postgresql, kafka, etcd, leaving
+      // redis + application as component-failure-cascade's survivors) but here
+      // the trimmed-away agents (postgresql, kafka, etcd) are the ones with
+      // snapshot data placing their most recent unhealthy transition within the
+      // 5-minute correlation window of each other. The survivors (redis,
+      // application) carry no snapshot/health data at all, so on their own they
+      // supply fewer than 2 timestamps and hasTemporalCorrelation is false.
+      // The ORIGINAL 5-agent computation (done before de-dup trims the cluster)
+      // sees the 3 tightly-clustered trimmed-agent timestamps and is true — the
+      // bug this pins is the re-render block copying that stale `true` onto the
+      // 2-agent survivor cluster instead of recomputing over just redis and
+      // application.
+      const base = Date.now();
+      const flapping = { pattern: 'flapping', occurrences: 3, firstSeen: '', lastSeen: '', description: '' };
+      const result = synthesizeByRules([
+        makeEvidence('etcd', {
+          signals: [
+            { type: 'connection', source: 'etcd', detail: 'leader lost', severity: 'critical' },
+            { type: 'timeout', source: 'etcd', detail: 'raft timeout', severity: 'critical' },
+          ],
+          patterns: [flapping],
+          snapshots: [
+            { cycle: 1, status: 'unhealthy', confidence: 0.3, signalCount: 2, timestamp: new Date(base).toISOString() },
+          ],
+        }),
+        makeEvidence('kafka', {
+          signals: [
+            { type: 'connection', source: 'kafka', detail: 'broker unreachable', severity: 'critical' },
+            { type: 'timeout', source: 'kafka', detail: 'ISR shrunk', severity: 'warning' },
+          ],
+          patterns: [flapping],
+          snapshots: [
+            { cycle: 1, status: 'unhealthy', confidence: 0.3, signalCount: 2, timestamp: new Date(base + 30_000).toISOString() },
+          ],
+        }),
+        makeEvidence('postgresql', {
+          signals: [{ type: 'connection', source: 'pg', detail: 'connection refused', severity: 'critical' }],
+          snapshots: [
+            { cycle: 1, status: 'unhealthy', confidence: 0.3, signalCount: 1, timestamp: new Date(base + 90_000).toISOString() },
+          ],
+        }),
+        makeEvidence('redis', {
+          signals: [{ type: 'connection', source: 'redis', detail: 'unreachable', severity: 'critical' }],
+        }),
+        makeEvidence('ceph', {
+          signals: [{ type: 'connection', source: 'ceph', detail: 'mon unreachable', severity: 'critical' }],
+        }),
+        makeEvidence('application', {
+          signals: [{ type: 'connection', source: 'app', detail: 'cannot reach dependencies', severity: 'critical' }],
+        }),
+      ]);
+
+      const cascadeCluster = result.clusters.find((c) => c.reasoning.includes('component-failure-cascade'));
+      expect(cascadeCluster).toBeDefined();
+      expect(cascadeCluster!.agents).toEqual(['redis', 'application']);
+      expect(cascadeCluster!.temporalCorrelation).toBe(false);
+      expect(cascadeCluster!.reasoning).not.toContain('temporally correlated');
+    });
   });
 
   describe('config-drift-cascade regression (iac-drift arc)', () => {

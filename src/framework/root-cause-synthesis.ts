@@ -280,9 +280,14 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     };
   }
 
-  // Clusters are built alongside the rule that produced them so the de-dup
-  // pass below can re-render a cluster's text if it loses agents.
-  const built: Array<{ cluster: CorrelationCluster; rule: CorrelationRule }> = [];
+  // Clusters are built alongside the rule that produced them and the
+  // specific evidence references that matched (clusterAgents), so the de-dup
+  // pass below can re-render a cluster's text — and recompute claims like
+  // temporal correlation — from the survivors' actual evidence if it loses
+  // agents. Re-deriving those refs from `evidence` by agentKind instead would
+  // reintroduce the kind-keyed lookup bug fixed elsewhere in this file (see
+  // the header comment): two same-kind targets need distinct references.
+  const built: Array<{ cluster: CorrelationCluster; rule: CorrelationRule; clusterAgents: AgentEvidence[] }> = [];
 
   // Collect all signal types and patterns per agent. Keyed by the
   // AgentEvidence object reference, not agentKind — two evidence items can
@@ -401,6 +406,7 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
         ),
       },
       rule,
+      clusterAgents,
     });
   }
 
@@ -432,7 +438,7 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
   const advisory: CorrelationCluster[] = [];
   const claimed = new Set<string>();
 
-  for (const { cluster, rule } of built) {
+  for (const { cluster, rule, clusterAgents } of built) {
     if (ADVISORY_RULE_NAMES.has(rule.name)) {
       advisory.push(cluster);
       continue;
@@ -441,28 +447,27 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     if (agents.length < 2) continue;
     for (const a of agents) claimed.add(a);
 
-    // If this cluster lost agents during de-dup, recalculate reasoning so it
-    // reflects the actual survivors (not the original counts).
+    // If this cluster lost agents during de-dup, recalculate reasoning and
+    // temporal correlation so both reflect the actual survivors, not the
+    // original (pre-trim) membership — a trimmed cluster must never claim
+    // support its surviving evidence doesn't have.
     let reasoning = cluster.reasoning;
+    let temporalCorrelation = cluster.temporalCorrelation;
     if (agents.length < cluster.agents.length) {
-      // Recount signals and patterns for the survivors
-      let signalMatches = 0;
+      // Every survivor came from `passedSignalAgents`, so it passed the
+      // rule's per-agent signal check by construction — signalMatches is
+      // just the survivor count, no re-checking needed.
+      const survivingAgents = clusterAgents.filter((a) => agents.includes(a.agentKind));
+      const signalMatches = agents.length;
       let patternMatches = 0;
-      for (const agentName of agents) {
-        const agentEv = evidence.find((e) => e.agentKind === agentName);
-        if (!agentEv) continue;
-        const types = agentSignalTypes.get(agentEv);
-        const requiredTypes = rule.requiredTypesByKind?.[agentName] ?? rule.sharedSignalTypes;
-        if (types && requiredTypes.some((t) => types.has(t))) {
-          signalMatches++;
-        }
+      for (const agentEv of survivingAgents) {
         const patterns = agentPatterns.get(agentEv);
         if (patterns && rule.sharedPatterns.some((p) => patterns.has(p))) {
           patternMatches++;
         }
       }
-      const temporal = cluster.temporalCorrelation;
-      reasoning = `Rule "${rule.name}": ${signalMatches} agents share signal types [${rule.sharedSignalTypes.join(', ')}]${patternMatches > 0 ? `, ${patternMatches} share patterns` : ''}${temporal ? ', temporally correlated' : ''}`;
+      temporalCorrelation = hasTemporalCorrelation(survivingAgents);
+      reasoning = `Rule "${rule.name}": ${signalMatches} agents share signal types [${rule.sharedSignalTypes.join(', ')}]${patternMatches > 0 ? `, ${patternMatches} share patterns` : ''}${temporalCorrelation ? ', temporally correlated' : ''}`;
     }
 
     specific.push({
@@ -471,6 +476,7 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
       rootCause: rule.rootCauseTemplate.replace('{agents}', agents.join(', ')),
       investigationOrder: rule.investigationOrder.filter((a) => agents.includes(a)),
       reasoning,
+      temporalCorrelation,
     });
   }
 

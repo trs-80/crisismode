@@ -135,12 +135,12 @@ describe('CLI output — JSON mode', () => {
       },
     ]);
 
-    if (result.clusters.length === 0) {
-      // Test may find no correlation depending on rules; that's ok — focus on
-      // the contract if a cluster exists.
-      expect(result).toBeDefined();
-      return;
-    }
+    // This fixture (postgresql + redis sharing a connection signal) is
+    // expected to produce a correlation cluster (observer-environment at
+    // minimum) — assert that rather than silently passing if the fixture
+    // stops producing clusters, which would let this contract test pass
+    // without ever exercising printSynthesis's cluster-rendering path.
+    expect(result.clusters.length).toBeGreaterThan(0);
 
     printSynthesis(result);
 
