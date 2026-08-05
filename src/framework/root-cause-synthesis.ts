@@ -399,11 +399,37 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     const agents = cluster.agents.filter((a) => !claimed.has(a));
     if (agents.length < 2) continue;
     for (const a of agents) claimed.add(a);
+
+    // If this cluster lost agents during de-dup, recalculate reasoning so it
+    // reflects the actual survivors (not the original counts).
+    let reasoning = cluster.reasoning;
+    if (agents.length < cluster.agents.length) {
+      // Recount signals and patterns for the survivors
+      let signalMatches = 0;
+      let patternMatches = 0;
+      for (const agentName of agents) {
+        const agentEv = evidence.find((e) => e.agentKind === agentName);
+        if (!agentEv) continue;
+        const types = agentSignalTypes.get(agentEv);
+        const requiredTypes = rule.requiredTypesByKind?.[agentName] ?? rule.sharedSignalTypes;
+        if (types && requiredTypes.some((t) => types.has(t))) {
+          signalMatches++;
+        }
+        const patterns = agentPatterns.get(agentEv);
+        if (patterns && rule.sharedPatterns.some((p) => patterns.has(p))) {
+          patternMatches++;
+        }
+      }
+      const temporal = cluster.temporalCorrelation;
+      reasoning = `Rule "${rule.name}": ${signalMatches} agents share signal types [${rule.sharedSignalTypes.join(', ')}]${patternMatches > 0 ? `, ${patternMatches} share patterns` : ''}${temporal ? ', temporally correlated' : ''}`;
+    }
+
     specific.push({
       ...cluster,
       agents,
       rootCause: rule.rootCauseTemplate.replace('{agents}', agents.join(', ')),
       investigationOrder: rule.investigationOrder.filter((a) => agents.includes(a)),
+      reasoning,
     });
   }
 
