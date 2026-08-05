@@ -109,26 +109,31 @@ describe('Root cause synthesis (6.3)', () => {
     });
 
     it('correlates network-partition across distributed systems', () => {
+      // network-partition declares sharedPatterns: ['flapping'], so its
+      // confidence boost needs pattern evidence from two agents. Without it
+      // the rule scores 0.6 and this incident is claimed by
+      // component-failure-cascade instead — assert the rule by name so the
+      // test cannot pass on another rule's similarly-worded template.
+      const flapping = { pattern: 'flapping', occurrences: 3, firstSeen: '', lastSeen: '', description: '' };
       const evidence: AgentEvidence[] = [
         makeEvidence('etcd', {
           signals: [
             { type: 'connection', source: 'etcd', detail: 'leader lost', severity: 'critical' },
             { type: 'timeout', source: 'etcd', detail: 'raft timeout', severity: 'critical' },
           ],
+          patterns: [flapping],
         }),
         makeEvidence('kafka', {
           signals: [
             { type: 'connection', source: 'kafka', detail: 'broker unreachable', severity: 'critical' },
             { type: 'timeout', source: 'kafka', detail: 'ISR shrunk', severity: 'warning' },
           ],
+          patterns: [flapping],
         }),
       ];
 
       const result = synthesizeByRules(evidence);
-      expect(result.clusters.length).toBeGreaterThanOrEqual(1);
-      const networkCluster = result.clusters.find((c) =>
-        c.rootCause.toLowerCase().includes('network'),
-      );
+      const networkCluster = result.clusters.find((c) => c.reasoning.includes('network-partition'));
       expect(networkCluster).toBeDefined();
       expect(networkCluster!.agents).toContain('etcd');
       expect(networkCluster!.agents).toContain('kafka');
@@ -455,6 +460,123 @@ describe('Root cause synthesis (6.3)', () => {
       expect(cluster).toBeDefined();
       expect(cluster!.agents).toEqual(['iac-drift', 'aws-rds']);
       expect(cluster!.investigationOrder[0]).toBe('iac-drift');
+    });
+  });
+
+  describe('one agent, one cluster', () => {
+    it('fires exactly one RDS rule on a mixed platform/reachability incident', () => {
+      // aws-rds reports BOTH storage exhaustion and a connection-path
+      // problem, so rds-platform-degraded and rds-reachability both match.
+      // Reporting both as separate "root causes" for the same two agents
+      // double-counts one incident.
+      const result = synthesizeByRules([
+        makeEvidence('postgresql', {
+          signals: [{ type: 'connection', source: 'pg_connection', detail: 'connection refused', severity: 'critical' }],
+        }),
+        makeEvidence('aws-rds', {
+          targetName: 'rds-mydb',
+          signals: [
+            { type: 'resource_exhaustion', source: 'rds_storage', detail: 'storage is full', severity: 'critical' },
+            { type: 'connection', source: 'rds_security_group', detail: 'security group allows no sources on port 5432', severity: 'critical' },
+          ],
+        }),
+      ]);
+
+      const rdsClusters = result.clusters.filter((c) => c.agents.includes('aws-rds'));
+      expect(rdsClusters).toHaveLength(1);
+      // The stronger rule wins: rds-platform-degraded boosts 0.3 vs 0.25.
+      expect(rdsClusters[0]!.reasoning).toContain('rds-platform-degraded');
+      expect(result.clusters.filter((c) => c.reasoning.includes('rds-reachability'))).toHaveLength(0);
+    });
+
+    it('numbers surviving clusters contiguously', () => {
+      const result = synthesizeByRules([
+        makeEvidence('postgresql', {
+          signals: [{ type: 'connection', source: 'pg_connection', detail: 'connection refused', severity: 'critical' }],
+        }),
+        makeEvidence('aws-rds', {
+          targetName: 'rds-mydb',
+          signals: [
+            { type: 'resource_exhaustion', source: 'rds_storage', detail: 'storage is full', severity: 'critical' },
+            { type: 'connection', source: 'rds_security_group', detail: 'security group allows no sources', severity: 'critical' },
+          ],
+        }),
+      ]);
+      expect(result.clusters.map((c) => c.id)).toEqual(
+        result.clusters.map((_, i) => `cluster-${i}`),
+      );
+    });
+
+    it('keeps the observer-environment advisory alongside the winning specific cluster', () => {
+      // Both agents report connection + timeout AND flapping, so
+      // network-partition scores 0.9 (0.3 base + 0.3 signal agreement + 0.3
+      // pattern boost) and wins the specific contest over
+      // component-failure-cascade (0.85). observer-environment also scores
+      // 0.9, but it is an advisory overlay: it must survive without
+      // suppressing the specific answer, and without claiming its agents.
+      const flapping = { pattern: 'flapping', occurrences: 3, firstSeen: '', lastSeen: '', description: '' };
+      const result = synthesizeByRules([
+        makeEvidence('etcd', {
+          signals: [
+            { type: 'connection', source: 'etcd', detail: 'leader lost', severity: 'critical' },
+            { type: 'timeout', source: 'etcd', detail: 'raft timeout', severity: 'critical' },
+          ],
+          patterns: [flapping],
+        }),
+        makeEvidence('kafka', {
+          signals: [
+            { type: 'connection', source: 'kafka', detail: 'broker unreachable', severity: 'critical' },
+            { type: 'timeout', source: 'kafka', detail: 'ISR shrunk', severity: 'warning' },
+          ],
+          patterns: [flapping],
+        }),
+      ]);
+
+      const networkPartition = result.clusters.find((c) => c.reasoning.includes('network-partition'));
+      const advisory = result.clusters.find((c) => c.reasoning.includes('observer-environment'));
+      expect(networkPartition).toBeDefined();
+      expect(advisory).toBeDefined();
+      // The specific answer leads; the advisory rides along behind it.
+      expect(result.clusters.indexOf(networkPartition!)).toBeLessThan(result.clusters.indexOf(advisory!));
+      // The advisory claimed nothing, so the weaker specific rule still lost.
+      expect(result.clusters.filter((c) => c.reasoning.includes('component-failure-cascade'))).toHaveLength(0);
+    });
+
+    it('claims each agent for at most one specific cluster', () => {
+      const flapping = { pattern: 'flapping', occurrences: 3, firstSeen: '', lastSeen: '', description: '' };
+      const result = synthesizeByRules([
+        makeEvidence('etcd', {
+          signals: [
+            { type: 'connection', source: 'etcd', detail: 'leader lost', severity: 'critical' },
+            { type: 'timeout', source: 'etcd', detail: 'raft timeout', severity: 'critical' },
+          ],
+          patterns: [flapping],
+        }),
+        makeEvidence('kafka', {
+          signals: [
+            { type: 'connection', source: 'kafka', detail: 'broker unreachable', severity: 'critical' },
+            { type: 'timeout', source: 'kafka', detail: 'ISR shrunk', severity: 'warning' },
+          ],
+          patterns: [flapping],
+        }),
+      ]);
+
+      const seen = new Set<string>();
+      for (const cluster of result.clusters) {
+        // Advisory overlays deliberately re-name agents a specific cluster
+        // already claimed — the uniqueness rule applies to specific rules.
+        if (cluster.reasoning.includes('observer-environment')) continue;
+        for (const agent of cluster.agents) {
+          expect(seen.has(agent), `agent '${agent}' appears in more than one specific cluster`).toBe(false);
+          seen.add(agent);
+        }
+      }
+      // Rendered text must match the agents each cluster actually kept.
+      for (const cluster of result.clusters) {
+        for (const agent of cluster.investigationOrder) {
+          expect(cluster.agents).toContain(agent);
+        }
+      }
     });
   });
 
