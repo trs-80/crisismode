@@ -27,6 +27,7 @@ import {
 } from '../incident-summary.js';
 import { generatePlainEnglishSummary } from '../ai-summary.js';
 import { buildVisibilityReport, type VisibilityEntry } from '../visibility.js';
+import type { AgentMaturity } from '../../framework/agent-maturity.js';
 import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
 import { buildConfigFromDetection } from '../runtime.js';
 import { synthesizeByRules } from '../../framework/root-cause-synthesis.js';
@@ -337,6 +338,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   console.log('');
 
   const registry = new AgentRegistry({ ...config, targets });
+  const maturityByKind = registry.maturityByKind();
   const findings: ScanFinding[] = [];
   let findingCounter = 0;
   let pluginFindingCounter = 0;
@@ -355,7 +357,11 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   // Push agent findings in target order (not completion order)
   for (const { finding, kind } of agentResults) {
-    findings.push(enrichScanFinding({ id: findingId(kind, findingCounter++), ...finding }, explanationCtx));
+    findings.push(markBestEffort(
+      enrichScanFinding({ id: findingId(kind, findingCounter++), ...finding }, explanationCtx),
+      kind,
+      maturityByKind,
+    ));
   }
 
   // Cross-system root-cause correlation — only meaningful with 2+ degraded targets
@@ -419,7 +425,11 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     // Await all in parallel, then push in discovery order so IDs are deterministic
     const pluginResults = await Promise.all(pluginPromises);
     for (const result of pluginResults) {
-      findings.push(enrichScanFinding({ id: findingId('plugin', pluginFindingCounter++), ...result }, explanationCtx));
+      findings.push(markBestEffort(
+        enrichScanFinding({ id: findingId('plugin', pluginFindingCounter++), ...result }, explanationCtx),
+        'plugin',
+        maturityByKind,
+      ));
     }
   }
 
@@ -443,7 +453,13 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   // What CrisisMode can see, what it found but can't check, and what's invisible by design.
   const ranKinds = watchedKinds(agentResults);
-  result.visibility = buildVisibilityReport(stackProfile, ranKinds, configSource, iamBlockedEntries(findings));
+  result.visibility = buildVisibilityReport(
+    stackProfile,
+    ranKinds,
+    configSource,
+    iamBlockedEntries(findings),
+    maturityByKind,
+  );
 
   // Generate plain-English AI summary (non-blocking — falls back gracefully)
   const plainEnglish = await generatePlainEnglishSummary(incidentSummary, result.recentChanges, result.visibility);
@@ -486,6 +502,21 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
  */
 export function watchedKinds(agentResults: Array<{ kind: string; agentAvailable: boolean }>): string[] {
   return [...new Set(agentResults.filter((r) => r.agentAvailable).map((r) => r.kind))];
+}
+
+/**
+ * Flag a finding whose agent has never been validated against real
+ * infrastructure. A kind with no registered agent — external check plugins,
+ * unknown kinds — is best-effort too: the honest default is the pessimistic
+ * one. This changes no count and no score; it only labels the claim.
+ */
+export function markBestEffort<T extends { bestEffort?: true }>(
+  finding: T,
+  kind: string,
+  maturityByKind: Map<string, AgentMaturity>,
+): T {
+  if (maturityByKind.get(kind) === 'live_validated') return finding;
+  return { ...finding, bestEffort: true };
 }
 
 /**
