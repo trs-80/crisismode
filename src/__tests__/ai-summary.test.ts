@@ -6,6 +6,7 @@ import { configure, printPlainEnglishSummary } from '../cli/output.js';
 import type { IncidentSummary } from '../cli/incident-summary.js';
 import type { RecentChange } from '../cli/output.js';
 import type { PlainEnglishSummary } from '../cli/ai-summary.js';
+import type { VisibilityReport } from '../cli/visibility.js';
 
 function makeIncidentSummary(overrides?: Partial<IncidentSummary>): IncidentSummary {
   return {
@@ -149,6 +150,24 @@ describe('AI summary — AI path with mocked SDK', () => {
     expect(callArgs.max_tokens).toBe(512);
     expect(callArgs.system).toContain('friendly infrastructure assistant');
   });
+
+  it('tells the model which systems are best-effort', async () => {
+    const { generatePlainEnglishSummary } = await import('../cli/ai-summary.js');
+    await generatePlainEnglishSummary(makeIncidentSummary(), [], {
+      watching: [
+        { label: 'postgresql', detail: 'via DATABASE_URL', maturity: 'live_validated' },
+        { label: 'kafka', detail: 'detected automatically', maturity: 'simulator_only' },
+      ],
+      blocked: [],
+      invisible: [],
+    });
+
+    const [callArgs] = mockCreate.mock.calls[0]!;
+    const userMessage = callArgs.messages[0].content as string;
+    expect(userMessage).toContain('live-validated checks for postgresql');
+    expect(userMessage).toContain('Best-effort checks');
+    expect(userMessage).toContain('kafka');
+  });
 });
 
 describe('AI summary — error handling', () => {
@@ -285,5 +304,65 @@ describe('printPlainEnglishSummary', () => {
     printPlainEnglishSummary(summary);
 
     expect(logSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('AI summary — coverage honesty', () => {
+  // Same save/restore convention as the other describes in this file: the
+  // env var is process-global and vitest runs files in one process.
+  let originalApiKey: string | undefined;
+
+  beforeEach(() => {
+    originalApiKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+  });
+
+  afterEach(() => {
+    if (originalApiKey !== undefined) {
+      process.env.ANTHROPIC_API_KEY = originalApiKey;
+    } else {
+      delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
+
+  const mixedVisibility: VisibilityReport = {
+    watching: [
+      { label: 'postgresql', detail: 'via DATABASE_URL', maturity: 'live_validated' },
+      { label: 'kafka', detail: 'detected automatically', maturity: 'simulator_only' },
+      { label: 'redis', detail: 'via REDIS_URL', maturity: 'simulator_only' },
+    ],
+    blocked: [],
+    invisible: [],
+  };
+
+  it('counts only live-validated systems in the coverage sentence', async () => {
+    const { buildFallbackSummary } = await import('../cli/ai-summary.js');
+    const result = buildFallbackSummary(makeIncidentSummary(), mixedVisibility);
+    expect(result.text).toContain('1 of 3 watched systems have live-validated checks');
+    expect(result.text).toContain('kafka, redis');
+    expect(result.text).toContain('best-effort');
+  });
+
+  it('omits the coverage sentence when nothing is best-effort', async () => {
+    const { buildFallbackSummary } = await import('../cli/ai-summary.js');
+    const result = buildFallbackSummary(makeIncidentSummary(), {
+      watching: [{ label: 'dns', detail: 'local checks on this machine', maturity: 'live_validated' }],
+      blocked: [],
+      invisible: [],
+    });
+    expect(result.text).not.toContain('best-effort');
+    expect(result.text).toContain('Scanned 3 services.');
+  });
+
+  it('keeps working with no visibility report at all', async () => {
+    const { buildFallbackSummary } = await import('../cli/ai-summary.js');
+    expect(buildFallbackSummary(makeIncidentSummary()).text).toContain('Scanned 3 services.');
+  });
+
+  it('passes the visibility report through to the fallback when there is no API key', async () => {
+    const { generatePlainEnglishSummary } = await import('../cli/ai-summary.js');
+    const result = await generatePlainEnglishSummary(makeIncidentSummary(), [], mixedVisibility);
+    expect(result.source).toBe('fallback');
+    expect(result.text).toContain('best-effort');
   });
 });
