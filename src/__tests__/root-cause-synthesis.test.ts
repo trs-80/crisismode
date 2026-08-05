@@ -390,6 +390,21 @@ describe('Root cause synthesis (6.3)', () => {
       expect(cluster!.confidence).toBeCloseTo(0.6, 2);
       expect(cluster!.investigationOrder[0]).toBe('kubernetes');
     });
+
+    it('frames the narrative as a possible pattern match, not a root cause', () => {
+      const result = synthesizeByRules([
+        makeEvidence('dns', {
+          signals: [{ type: 'connection', source: 'dns', detail: 'resolver unreachable', severity: 'critical' }],
+        }),
+        makeEvidence('postgresql', {
+          signals: [{ type: 'connection', source: 'pg', detail: 'connect ECONNREFUSED', severity: 'critical' }],
+        }),
+      ]);
+      expect(result.narrative).toContain('Possible pattern match');
+      expect(result.narrative).toContain('Start by checking');
+      expect(result.narrative).not.toContain('Primary root cause');
+      expect(result.narrative).not.toMatch(/\d+% confidence/);
+    });
   });
 
   describe('iac-out-of-band-change rule', () => {

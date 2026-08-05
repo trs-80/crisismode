@@ -310,3 +310,46 @@ describe('CLI output — escalation badges', () => {
     }
   });
 });
+
+describe('CLI output — synthesis framing (human mode)', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    configure({ mode: 'human', noColor: true, json: false, verbose: false });
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, verbose: false, mode: 'human' });
+  });
+
+  it('frames a correlation as a hint, without a confidence number', () => {
+    const synthesis: SynthesisResult = {
+      clusters: [
+        {
+          id: 'cluster-0',
+          rootCause: 'Database backpressure propagating through caching and messaging layers',
+          confidence: 0.7,
+          agents: ['postgresql', 'redis'],
+          reasoning: 'Rule "database-backpressure": 2 agents share signal types [latency, timeout, connection]',
+          temporalCorrelation: false,
+          investigationOrder: ['postgresql', 'redis'],
+        },
+      ],
+      uncorrelated: [],
+      narrative: 'Possible pattern match: Database backpressure propagating through caching and messaging layers. Start by checking: postgresql → redis.',
+      source: 'rules',
+      synthesizedAt: new Date().toISOString(),
+    };
+
+    printSynthesis(synthesis);
+
+    const output = logSpy.mock.calls.map((c: unknown[]) => c[0]).join('\n');
+    expect(output).toContain('Possible pattern match');
+    expect(output).toContain('not a diagnosis');
+    expect(output).toContain('Investigate in this order: postgresql -> redis');
+    expect(output).not.toContain('root cause');
+    expect(output).not.toContain('70%');
+  });
+});
