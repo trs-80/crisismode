@@ -21,6 +21,8 @@ import type { PlainEnglishSummary } from './ai-summary.js';
 import { enrichHealth, enrichDiagnosis } from '../framework/signal-explanations.js';
 import type { ExplanationContext } from '../framework/signal-explanations.js';
 import type { VisibilityReport } from './visibility.js';
+import { liveValidatedWatching, bestEffortWatching } from './visibility.js';
+import { BEST_EFFORT_GROUP_HINT } from '../framework/agent-maturity.js';
 import { buildRiskFraming } from './risk-framing.js';
 
 /**
@@ -575,15 +577,27 @@ export function printVisibility(report: VisibilityReport): void {
   if (outputOptions.mode === 'pipe' || outputOptions.terse) return;
 
   console.log(chalk.bold('  What CrisisMode can see'));
-  for (const e of report.watching) {
-    console.log(chalk.green('    watching  ') + `${e.label} ` + chalk.dim(`— ${e.detail}`));
+
+  // Two watching buckets, never one number: only live-validated agents are
+  // claimed as watched. Best-effort agents run the same checks but have
+  // never been proven against real infrastructure.
+  for (const e of liveValidatedWatching(report)) {
+    console.log(chalk.green('    watching     ') + `${e.label} ` + chalk.dim(`— ${e.detail}`));
   }
+  const bestEffort = bestEffortWatching(report);
+  for (const e of bestEffort) {
+    console.log(chalk.yellow('    best-effort  ') + `${e.label} ` + chalk.dim(`— ${e.detail}`));
+  }
+  if (bestEffort.length > 0) {
+    console.log(chalk.dim(`                 ${BEST_EFFORT_GROUP_HINT}`));
+  }
+
   for (const e of report.blocked) {
-    console.log(chalk.yellow('    found     ') + `${e.label} ` + chalk.dim(`— ${e.detail}`));
-    if (e.hint) console.log(chalk.dim(`              ${e.hint}`));
+    console.log(chalk.yellow('    found        ') + `${e.label} ` + chalk.dim(`— ${e.detail}`));
+    if (e.hint) console.log(chalk.dim(`                 ${e.hint}`));
   }
   for (const e of report.invisible) {
-    console.log(chalk.dim(`    invisible ${e.label} — ${e.detail}`));
+    console.log(chalk.dim(`    invisible    ${e.label} — ${e.detail}`));
   }
   console.log('');
 }
