@@ -42,6 +42,8 @@ Thumbs.db
 .vscode/
 .claude/settings.local.json
 .claude/projects/
+.claude/worktrees/
+.superpowers/
 *.swp
 *.swo
 *~
