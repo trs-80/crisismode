@@ -22,7 +22,7 @@ import { enrichHealth, enrichDiagnosis } from '../framework/signal-explanations.
 import type { ExplanationContext } from '../framework/signal-explanations.js';
 import type { VisibilityReport } from './visibility.js';
 import { liveValidatedWatching, bestEffortWatching } from './visibility.js';
-import { BEST_EFFORT_GROUP_HINT } from '../framework/agent-maturity.js';
+import { BEST_EFFORT_GROUP_HINT, BEST_EFFORT_FINDING_SUFFIX } from '../framework/agent-maturity.js';
 import { buildRiskFraming } from './risk-framing.js';
 
 /**
@@ -447,6 +447,12 @@ export interface ScanFinding {
   /** Plain-language explanation of the dominant signal (static knowledge map). */
   explanation?: string;
   learnMoreUrl?: string;
+  /**
+   * True when the agent behind this finding has never been validated against
+   * real infrastructure. The finding is still a real probe result — it counts
+   * in the headline and score — but it is a lead, not a conclusion.
+   */
+  bestEffort?: true;
 }
 
 export interface RecentChange {
@@ -560,6 +566,9 @@ function printFindingGroup(findings: ScanFinding[]): void {
     if (!outputOptions.terse && f.explanation) {
       console.log(chalk.dim(`      ${f.explanation}`));
       if (f.learnMoreUrl) console.log(chalk.dim(`      Learn more: ${f.learnMoreUrl}`));
+    }
+    if (!outputOptions.terse && f.bestEffort) {
+      console.log(chalk.dim(`      ${BEST_EFFORT_FINDING_SUFFIX}`));
     }
   }
 }
