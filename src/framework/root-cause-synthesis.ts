@@ -12,6 +12,36 @@
  * Two modes:
  * - Rule-based correlation: fast, deterministic, no external calls
  * - AI-assisted synthesis: uses Claude to reason across multi-system evidence
+ *
+ * ── THE CORRELATION RULE SET IS FROZEN ──
+ *
+ * `CORRELATION_RULES` is closed. Do not add a rule unless BOTH hold:
+ *
+ *   1. A new agent class ships, and
+ *   2. it brings a concretely evidenced signal pairing — an incident actually
+ *      observed, with the two signals named, not a plausible-sounding story.
+ *
+ * No speculative incident templates. Real incidents are combinatorial: each
+ * rule multiplies the cross-rule interaction surface, and every bug in this
+ * file so far (pairwise `requiredTypesByKind`, evidence-reference keying of
+ * the signal maps, the third-target veto, the dead per-agent de-dup) came
+ * from rules interacting, not from a rule being individually wrong.
+ *
+ * What a match means: these signals have co-occurred in this shape before.
+ * That is an investigation hint, not a diagnosis, and output layers must
+ * render it that way. `CorrelationCluster.confidence` is an ordering weight,
+ * never odds. `CORRELATION_RULE_NAMES` is enforced by a test; CONTRIBUTING.md
+ * carries the same policy for contributors.
+ *
+ * ── ADVISORY OVERLAYS ──
+ *
+ * `ADVISORY_RULE_NAMES` (currently just `observer-environment`) lists rules
+ * that answer "is the problem this machine?" rather than "which system
+ * broke?". They are exempt from the one-agent-one-cluster de-dup: they claim
+ * no agents and co-exist with the specific cluster. Adding a rule to that set
+ * is as much a policy decision as adding a rule at all — an overlay is never
+ * suppressed by a stronger cluster, so it must be one an operator always
+ * wants to see.
  */
 
 import { sanitizeInput } from './ai-diagnosis.js';
@@ -221,6 +251,13 @@ const CORRELATION_RULES: CorrelationRule[] = [
     confidenceBoost: 0.3,
   },
 ];
+
+/**
+ * The frozen roster, derived from the rules themselves so the two can never
+ * disagree. A test pins this list — changing it is a deliberate act that
+ * requires updating the freeze policy above and in CONTRIBUTING.md.
+ */
+export const CORRELATION_RULE_NAMES: readonly string[] = CORRELATION_RULES.map((r) => r.name);
 
 // ── Rule-based correlation ──
 

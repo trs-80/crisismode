@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   synthesizeByRules,
   synthesizeFromRoutingResults,
+  CORRELATION_RULE_NAMES,
 } from '../framework/root-cause-synthesis.js';
 import type { AgentEvidence } from '../framework/root-cause-synthesis.js';
 import type { RoutingResult } from '../framework/symptom-router.js';
@@ -728,6 +729,31 @@ describe('Root cause synthesis (6.3)', () => {
       const result = synthesizeFromRoutingResults(results);
       // Low confidence scenario (0.1 < 0.3 threshold) should be filtered
       expect(result.clusters).toHaveLength(0);
+    });
+  });
+
+  describe('correlation rule freeze', () => {
+    // The rule set is frozen: see the policy in the header of
+    // src/framework/root-cause-synthesis.ts and in CONTRIBUTING.md. A new rule
+    // requires a new agent class shipping with a concretely evidenced signal
+    // pairing — no speculative incident templates. Changing this list without
+    // updating both documents is the failure this test is here to catch.
+    const FROZEN_RULES = [
+      'deploy-cascade',
+      'database-backpressure',
+      'resource-exhaustion-cascade',
+      'network-partition',
+      'config-drift-cascade',
+      'streaming-backpressure',
+      'component-failure-cascade',
+      'observer-environment',
+      'rds-platform-degraded',
+      'rds-reachability',
+      'iac-out-of-band-change',
+    ];
+
+    it('contains exactly the frozen rules, in order', () => {
+      expect([...CORRELATION_RULE_NAMES]).toEqual(FROZEN_RULES);
     });
   });
 });
