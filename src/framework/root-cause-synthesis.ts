@@ -239,9 +239,9 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     };
   }
 
-  const clusters: CorrelationCluster[] = [];
-  const clusteredAgents = new Set<string>();
-  let clusterIdx = 0;
+  // Clusters are built alongside the rule that produced them so the de-dup
+  // pass below can re-render a cluster's text if it loses agents.
+  const built: Array<{ cluster: CorrelationCluster; rule: CorrelationRule }> = [];
 
   // Collect all signal types and patterns per agent. Keyed by the
   // AgentEvidence object reference, not agentKind — two evidence items can
@@ -347,42 +347,77 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     confidence = Math.min(confidence, 1.0);
     confidence = Math.round(confidence * 100) / 100;
 
-    const rootCause = rule.rootCauseTemplate.replace(
-      '{agents}',
-      agentNames.join(', '),
-    );
-
-    const investigationOrder = rule.investigationOrder.filter((a) =>
-      agentNames.includes(a),
-    );
-
-    clusters.push({
-      id: `cluster-${clusterIdx++}`,
-      rootCause,
-      confidence,
-      agents: agentNames,
-      reasoning: `Rule "${rule.name}": ${signalMatches} agents share signal types [${rule.sharedSignalTypes.join(', ')}]${patternMatches > 0 ? `, ${patternMatches} share patterns` : ''}${temporal ? ', temporally correlated' : ''}`,
-      temporalCorrelation: temporal,
-      investigationOrder,
+    built.push({
+      cluster: {
+        id: 'pending',
+        rootCause: rule.rootCauseTemplate.replace('{agents}', agentNames.join(', ')),
+        confidence,
+        agents: agentNames,
+        reasoning: `Rule "${rule.name}": ${signalMatches} agents share signal types [${rule.sharedSignalTypes.join(', ')}]${patternMatches > 0 ? `, ${patternMatches} share patterns` : ''}${temporal ? ', temporally correlated' : ''}`,
+        temporalCorrelation: temporal,
+        investigationOrder: rule.investigationOrder.filter((a) =>
+          agentNames.includes(a),
+        ),
+      },
+      rule,
     });
-
-    for (const name of agentNames) clusteredAgents.add(name);
   }
 
-  // De-duplicate: if an agent appears in multiple clusters, keep highest confidence
-  const bestClusterPerAgent = new Map<string, number>();
-  for (let i = 0; i < clusters.length; i++) {
-    const cluster = clusters[i]!;
-    for (const agent of cluster.agents) {
-      const existing = bestClusterPerAgent.get(agent);
-      if (existing === undefined || cluster.confidence > clusters[existing]!.confidence) {
-        bestClusterPerAgent.set(agent, i);
-      }
+  /**
+   * Advisory overlays are exempt from the winner-take-all pass below — see
+   * the freeze-policy header. `observer-environment` answers a different
+   * question than the specific rules ("is the problem this machine?" vs
+   * "which system broke?"), so both answers are worth having at once. It
+   * also declares no `sharedPatterns`, which means its 0.3 boost applies on
+   * signal agreement alone: it scores 0.9 against any two agents reporting
+   * connection/timeout, above every specific rule that lacks pattern
+   * evidence. Letting it compete would make it the near-universal winner
+   * and silence the specific answer.
+   */
+  const ADVISORY_RULE_NAMES = new Set(['observer-environment']);
+
+  // De-duplicate the specific rules: an agent contributes to at most its
+  // best-matching cluster. Rules overlap by design (two RDS rules can both
+  // match one aws-rds target reporting two kinds of signal), and reporting
+  // the same agents twice presents one incident as two. Strongest first —
+  // ties keep rule declaration order, since the sort is stable — each agent
+  // is claimed once, and a cluster left with fewer than two agents is
+  // dropped: a "cluster" of one is not cross-system correlation. A cluster
+  // that loses an agent gets its rootCause and investigationOrder
+  // re-rendered so its text never names an agent it no longer contains.
+  built.sort((a, b) => b.cluster.confidence - a.cluster.confidence);
+
+  const specific: CorrelationCluster[] = [];
+  const advisory: CorrelationCluster[] = [];
+  const claimed = new Set<string>();
+
+  for (const { cluster, rule } of built) {
+    if (ADVISORY_RULE_NAMES.has(rule.name)) {
+      advisory.push(cluster);
+      continue;
     }
+    const agents = cluster.agents.filter((a) => !claimed.has(a));
+    if (agents.length < 2) continue;
+    for (const a of agents) claimed.add(a);
+    specific.push({
+      ...cluster,
+      agents,
+      rootCause: rule.rootCauseTemplate.replace('{agents}', agents.join(', ')),
+      investigationOrder: rule.investigationOrder.filter((a) => agents.includes(a)),
+    });
   }
 
-  // Sort by confidence descending
-  clusters.sort((a, b) => b.confidence - a.confidence);
+  // Specific clusters first, so the narrative leads with what broke and the
+  // advisory rides along behind it. Ids are assigned last, over the
+  // combined list, so they stay contiguous.
+  const clusters: CorrelationCluster[] = [...specific, ...advisory].map((cluster, i) => ({
+    ...cluster,
+    id: `cluster-${i}`,
+  }));
+
+  // An agent named in ANY surviving cluster — advisory included — is not
+  // uncorrelated.
+  const clusteredAgents = new Set(clusters.flatMap((c) => c.agents));
 
   const uncorrelated = evidence
     .map((e) => e.agentKind)
