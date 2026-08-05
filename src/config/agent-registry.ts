@@ -13,6 +13,8 @@
  */
 
 import semver from 'semver';
+import { buildMaturityByKind } from '../framework/agent-maturity.js';
+import type { AgentMaturity, MaturitySource } from '../framework/agent-maturity.js';
 import type { AgentRegistration, AgentInstance } from './agent-registration.js';
 import type { SiteConfig, ResolvedTarget } from './schema.js';
 import { resolveTargets } from './resolve.js';
@@ -66,6 +68,22 @@ export class AgentRegistry {
    */
   supportedKinds(): string[] {
     return [...this.byKind.keys()];
+  }
+
+  /**
+   * Coarse maturity per registered kind, for the honesty layer. A kind is
+   * 'live_validated' only when every agent registered for it declares that;
+   * kinds with no registration are absent from the map, and callers treat
+   * "absent" as best-effort.
+   */
+  maturityByKind(): Map<string, AgentMaturity> {
+    const sources: MaturitySource[] = [];
+    for (const [kind, registrations] of this.byKind) {
+      for (const registration of registrations) {
+        sources.push({ kind, manifest: registration.manifest });
+      }
+    }
+    return buildMaturityByKind(sources);
   }
 
   /**
