@@ -298,9 +298,14 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     // Need at least 2 agents sharing signals to form a cluster
     if (signalMatches < 2) continue;
 
-    // Cluster membership defaults to every agent the rule matched; entity-id
-    // rules narrow this below to just the agents that actually share an id.
-    let clusterAgents = matchingAgents;
+    // Cluster membership is the agents the rule actually matched. An agent
+    // whose kind merely appears in `rule.agentKinds`, but which reported none
+    // of the rule's signal types, is not evidence for this pattern: naming it
+    // in the cluster (and removing it from `uncorrelated`) asserts a link the
+    // evidence does not support. The confidence arithmetic above is unchanged
+    // — its denominator stays the full kind-matched set, so scoping the claim
+    // never inflates the number attached to it.
+    let clusterAgents = passedSignalAgents;
 
     if (rule.requireSharedEntityId) {
       // Pair only agents that themselves passed the per-agent signal check —
@@ -326,7 +331,7 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
         }
       }
       if (sharingAgents.size === 0) continue;
-      clusterAgents = matchingAgents.filter((a) => sharingAgents.has(a));
+      clusterAgents = passedSignalAgents.filter((a) => sharingAgents.has(a));
     }
 
     const agentNames = clusterAgents.map((a) => a.agentKind);

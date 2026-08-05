@@ -150,6 +150,29 @@ describe('Root cause synthesis (6.3)', () => {
       expect(result.synthesizedAt).toBeTruthy();
     });
 
+    it('names only the agents whose signals matched the rule', () => {
+      // redis is in database-backpressure's agentKinds, but its only signal
+      // (deploy_change) is not one of the rule's signal types. Claiming redis
+      // as part of the pattern — and dropping it from `uncorrelated` — is a
+      // claim the evidence does not support.
+      const result = synthesizeByRules([
+        makeEvidence('postgresql', {
+          signals: [{ type: 'latency', source: 'pg', detail: 'slow queries', severity: 'warning' }],
+        }),
+        makeEvidence('kafka', {
+          signals: [{ type: 'timeout', source: 'kafka', detail: 'producer timeouts', severity: 'critical' }],
+        }),
+        makeEvidence('redis', {
+          signals: [{ type: 'deploy_change', source: 'ci', detail: 'sidecar redeployed', severity: 'warning' }],
+        }),
+      ]);
+
+      const cluster = result.clusters.find((c) => c.reasoning.includes('database-backpressure'));
+      expect(cluster).toBeDefined();
+      expect(cluster!.agents).toEqual(['postgresql', 'kafka']);
+      expect(result.uncorrelated).toContain('redis');
+    });
+
     it('includes investigation order in clusters', () => {
       const evidence: AgentEvidence[] = [
         makeEvidence('application', {
