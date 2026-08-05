@@ -19,6 +19,7 @@ import { getNetworkProfile } from '../framework/network-profile.js';
 import type { IncidentSummary } from './incident-summary.js';
 import type { RecentChange } from './output.js';
 import type { VisibilityReport } from './visibility.js';
+import { liveValidatedWatching, bestEffortWatching } from './visibility.js';
 import { defaultAiModel } from '../framework/ai-model.js';
 import { callClaude } from '../framework/ai-client.js';
 
@@ -44,19 +45,19 @@ export async function generatePlainEnglishSummary(
 ): Promise<PlainEnglishSummary> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return buildFallbackSummary(summary);
+    return buildFallbackSummary(summary, visibility);
   }
 
   const profile = getNetworkProfile();
   if (profile && profile.internet.status === 'unavailable') {
-    return buildFallbackSummary(summary);
+    return buildFallbackSummary(summary, visibility);
   }
 
   try {
     return await callAi(summary, recentChanges, apiKey, visibility);
   } catch (err) {
     console.error('AI summary failed:', err instanceof Error ? err.message : err);
-    return buildFallbackSummary(summary);
+    return buildFallbackSummary(summary, visibility);
   }
 }
 
@@ -93,8 +94,12 @@ async function callAi(
     parts.push(`Recent changes: ${changeDescs.join('; ')}`);
   }
 
+  // The model is told which systems are actually validated, so it cannot
+  // describe best-effort checks as if they were proven coverage.
   const visibilityText = visibility
-    ? `\nVisibility: watching ${visibility.watching.map((e) => e.label).join(', ') || 'nothing'}. ` +
+    ? `\nVisibility: live-validated checks for ${liveValidatedWatching(visibility).map((e) => e.label).join(', ') || 'nothing'}. ` +
+      `Best-effort checks (never validated against a real system — describe these findings as leads, not conclusions): ` +
+      `${bestEffortWatching(visibility).map((e) => e.label).join(', ') || 'none'}. ` +
       `Known gaps: ${visibility.blocked.map((e) => e.detail).join('; ') || 'none'}.`
     : '';
 
@@ -114,12 +119,22 @@ async function callAi(
 
 /**
  * Build a fallback summary from structured data without AI.
+ *
+ * The service count is a finding count (every probe that ran), not a coverage
+ * claim. The coverage claim is a separate sentence that counts only
+ * live-validated systems — best-effort systems are named, never folded in.
  */
-export function buildFallbackSummary(summary: IncidentSummary): PlainEnglishSummary {
+export function buildFallbackSummary(
+  summary: IncidentSummary,
+  visibility?: VisibilityReport,
+): PlainEnglishSummary {
   const total = summary.critical.length + summary.warning.length + summary.healthy.length;
   const parts: string[] = [];
 
   parts.push(`Scanned ${total} services.`);
+
+  const coverage = visibility ? coverageSentence(visibility) : null;
+  if (coverage) parts.push(coverage);
 
   if (summary.critical.length > 0) {
     const names = summary.critical.map((f) => f.service).join(', ');
@@ -136,4 +151,19 @@ export function buildFallbackSummary(summary: IncidentSummary): PlainEnglishSumm
   }
 
   return { text: parts.join(' '), source: 'fallback' };
+}
+
+/**
+ * The coverage claim. Returns null when every watched system is
+ * live-validated — the plain count is unambiguous then, and an extra
+ * sentence would just be noise.
+ */
+function coverageSentence(visibility: VisibilityReport): string | null {
+  const bestEffort = bestEffortWatching(visibility);
+  if (bestEffort.length === 0) return null;
+  const live = liveValidatedWatching(visibility);
+  const labels = bestEffort.map((e) => e.label).join(', ');
+  const verb = bestEffort.length === 1 ? 'is' : 'are';
+  return `${live.length} of ${visibility.watching.length} watched systems have live-validated checks; ` +
+    `${labels} ${verb} best-effort, so treat those findings as leads.`;
 }
