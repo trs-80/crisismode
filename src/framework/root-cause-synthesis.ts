@@ -42,7 +42,11 @@ export interface CorrelationCluster {
   id: string;
   /** Human-readable label for the shared root cause */
   rootCause: string;
-  /** Confidence that these agents share a common root cause (0-1) */
+  /**
+   * Ordering weight for this cluster (0-1) — NOT a probability that the
+   * pattern is the real cause. It ranks clusters against each other and
+   * drives de-duplication; rendered output must never present it as odds.
+   */
   confidence: number;
   /** Which agents are involved */
   agents: string[];
@@ -622,17 +626,21 @@ function buildNarrative(
   const parts: string[] = [];
 
   if (clusters.length > 0) {
+    // Investigation-path framing, not root-cause assertion: a rule match
+    // means these signals have co-occurred in this shape before, nothing
+    // more. The numeric confidence stays out of the prose — it orders
+    // clusters, it does not measure how likely the pattern is.
     const top = clusters[0]!;
-    parts.push(`Primary root cause (${(top.confidence * 100).toFixed(0)}% confidence): ${top.rootCause}.`);
-    parts.push(`Investigate in this order: ${top.investigationOrder.join(' → ')}.`);
+    parts.push(`Possible pattern match: ${top.rootCause}.`);
+    parts.push(`Start by checking: ${top.investigationOrder.join(' → ')}.`);
 
     if (clusters.length > 1) {
-      parts.push(`${clusters.length - 1} additional correlated failure cluster(s) detected.`);
+      parts.push(`${clusters.length - 1} additional pattern match(es) detected.`);
     }
   }
 
   if (uncorrelated.length > 0) {
-    parts.push(`Independent issues in: ${uncorrelated.join(', ')}.`);
+    parts.push(`No pattern matched for: ${uncorrelated.join(', ')}.`);
   }
 
   return parts.join(' ');

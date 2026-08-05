@@ -213,16 +213,20 @@ export function printSynthesis(result: SynthesisResult): void {
   }
   if (result.clusters.length === 0) return;
 
-  console.log(chalk.bold('  Cross-system correlation'));
+  // A correlation rule firing means these signals have co-occurred in this
+  // shape before — it is a place to start looking, not a diagnosis. The
+  // actionable content is the investigation order; the rule's own wording is
+  // demoted to a labelled pattern description, and the numeric confidence
+  // (an ordering weight, not odds) is not shown to humans at all.
+  console.log(chalk.bold('  Possible pattern match') + chalk.dim(' — investigation hint, not a diagnosis'));
   console.log(chalk.dim(`  ${result.narrative}`));
   console.log('');
   for (const cluster of result.clusters) {
     console.log(
-      chalk.cyan('    Likely shared root cause: ')
-      + chalk.white(cluster.rootCause)
-      + chalk.dim(` (${Math.round(cluster.confidence * 100)}% confidence)`),
+      chalk.cyan('    Investigate in this order: ')
+      + chalk.white(cluster.investigationOrder.join(' -> ')),
     );
-    console.log(chalk.dim(`    Investigate in this order: ${cluster.investigationOrder.join(' -> ')}`));
+    console.log(chalk.dim(`    Pattern matched: ${cluster.rootCause}`));
   }
   console.log('');
 }
