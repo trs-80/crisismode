@@ -8,11 +8,19 @@
  */
 
 import type { StackProfile } from './autodiscovery.js';
+import type { AgentMaturity } from '../framework/agent-maturity.js';
 
 export interface VisibilityEntry {
   label: string;
   detail: string;
   hint?: string;
+  /**
+   * Coarse maturity of the agent watching this entry. Set on `watching`
+   * entries only — `blocked` and `invisible` describe things no agent
+   * watches. Anything other than 'live_validated' (including absent) is
+   * rendered as best-effort.
+   */
+  maturity?: AgentMaturity;
 }
 
 export interface VisibilityReport {
@@ -35,6 +43,7 @@ export function buildVisibilityReport(
   ranKinds: string[],
   configSource: string,
   extraBlocked?: VisibilityEntry[],
+  maturityByKind?: Map<string, AgentMaturity>,
 ): VisibilityReport {
   const watching: VisibilityEntry[] = [];
   const blocked: VisibilityEntry[] = [];
@@ -43,14 +52,19 @@ export function buildVisibilityReport(
   const presentHints = profile.envHints.filter((h) => h.present);
   const ran = new Set(ranKinds);
 
+  // An unregistered kind, or one whose agent declares anything short of
+  // live_validated, is best-effort — the honest default.
+  const maturityOf = (kind: string): AgentMaturity =>
+    maturityByKind?.get(kind) ?? 'simulator_only';
+
   for (const kind of ranKinds) {
     if (LOCAL_KINDS.has(kind)) {
-      watching.push({ label: kind, detail: 'local checks on this machine' });
+      watching.push({ label: kind, detail: 'local checks on this machine', maturity: maturityOf(kind) });
       continue;
     }
     const hint = presentHints.find((h) => h.inferredService === kind);
     if (hint) {
-      watching.push({ label: kind, detail: `via ${hint.name}` });
+      watching.push({ label: kind, detail: `via ${hint.name}`, maturity: maturityOf(kind) });
       continue;
     }
     const derivedTarget = profile.derivedTargets.find((t) => t.kind === kind);
@@ -58,6 +72,7 @@ export function buildVisibilityReport(
     watching.push({
       label: kind,
       detail: derivedNote ?? (CONFIG_SOURCE_DETAIL[configSource] ?? 'configured'),
+      maturity: maturityOf(kind),
     });
   }
 
@@ -142,4 +157,18 @@ export function buildVisibilityReport(
   blocked.push(...(extraBlocked ?? []));
 
   return { watching, blocked, invisible };
+}
+
+/**
+ * The watching entries CrisisMode can honestly claim as watched: only agents
+ * validated against real infrastructure. Every coverage claim counts these
+ * and nothing else.
+ */
+export function liveValidatedWatching(report: VisibilityReport): VisibilityEntry[] {
+  return report.watching.filter((e) => e.maturity === 'live_validated');
+}
+
+/** The rest — anything not explicitly live-validated, including unknown kinds. */
+export function bestEffortWatching(report: VisibilityReport): VisibilityEntry[] {
+  return report.watching.filter((e) => e.maturity !== 'live_validated');
 }

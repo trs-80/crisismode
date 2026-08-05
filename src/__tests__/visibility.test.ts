@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from 'vitest';
-import { buildVisibilityReport } from '../cli/visibility.js';
+import { buildVisibilityReport, liveValidatedWatching, bestEffortWatching } from '../cli/visibility.js';
 import type { StackProfile } from '../cli/autodiscovery.js';
 
 function profileWith(overrides: Partial<StackProfile>): StackProfile {
@@ -171,5 +171,66 @@ describe('buildVisibilityReport', () => {
       label: 'iac-drift (remote state)',
       detail: expect.stringContaining('remote'),
     }));
+  });
+
+  it('marks a watched kind live-validated when the maturity map says so', () => {
+    const profile = profileWith({
+      envHints: [{ name: 'DATABASE_URL', present: true, kind: 'database_url', inferredService: 'postgresql' }],
+    });
+    const report = buildVisibilityReport(
+      profile,
+      ['postgresql', 'kafka'],
+      'env-fallback',
+      undefined,
+      new Map([['postgresql', 'live_validated'], ['kafka', 'simulator_only']]),
+    );
+    expect(report.watching.find((e) => e.label === 'postgresql')!.maturity).toBe('live_validated');
+    expect(report.watching.find((e) => e.label === 'kafka')!.maturity).toBe('simulator_only');
+  });
+
+  it('defaults a kind with no maturity entry to best-effort', () => {
+    const profile = profileWith({});
+    const report = buildVisibilityReport(profile, ['mongodb'], 'file', undefined, new Map());
+    expect(report.watching.find((e) => e.label === 'mongodb')!.maturity).toBe('simulator_only');
+  });
+
+  it('defaults every watched kind to best-effort when no maturity map is given', () => {
+    const profile = profileWith({});
+    const report = buildVisibilityReport(profile, ['postgresql', 'dns'], 'file');
+    for (const entry of report.watching) {
+      expect(entry.maturity).toBe('simulator_only');
+    }
+  });
+
+  it('marks local-kind entries from the maturity map too', () => {
+    const profile = profileWith({});
+    const report = buildVisibilityReport(
+      profile,
+      ['dns', 'disk'],
+      'none',
+      undefined,
+      new Map([['dns', 'live_validated'], ['disk', 'live_validated']]),
+    );
+    expect(report.watching.every((e) => e.maturity === 'live_validated')).toBe(true);
+  });
+});
+
+describe('watching-bucket split helpers', () => {
+  const report = {
+    watching: [
+      { label: 'postgresql', detail: 'via DATABASE_URL', maturity: 'live_validated' as const },
+      { label: 'kafka', detail: 'detected automatically', maturity: 'simulator_only' as const },
+      { label: 'mongodb', detail: 'detected automatically' },
+    ],
+    blocked: [],
+    invisible: [],
+  };
+
+  it('counts only explicitly live-validated entries as validated', () => {
+    expect(liveValidatedWatching(report).map((e) => e.label)).toEqual(['postgresql']);
+  });
+
+  it('treats a missing maturity as best-effort', () => {
+    expect(bestEffortWatching(report).map((e) => e.label)).toEqual(['kafka', 'mongodb']);
   });
 });
