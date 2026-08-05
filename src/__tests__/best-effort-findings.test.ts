@@ -84,3 +84,29 @@ describe('best-effort findings in machine output', () => {
     expect(parsed.findings.find((f) => f.id === 'PG-001')!.bestEffort).toBeUndefined();
   });
 });
+
+describe('markBestEffort', () => {
+  it('leaves a live-validated kind untouched', async () => {
+    const { markBestEffort } = await import('../cli/commands/scan.js');
+    const marked = markBestEffort(validatedFinding, 'postgresql', new Map([['postgresql', 'live_validated']]));
+    expect(marked.bestEffort).toBeUndefined();
+    expect(marked).toBe(validatedFinding);
+  });
+
+  it('marks a simulator-only kind', async () => {
+    const { markBestEffort } = await import('../cli/commands/scan.js');
+    const marked = markBestEffort(validatedFinding, 'kafka', new Map([['kafka', 'simulator_only']]));
+    expect(marked.bestEffort).toBe(true);
+  });
+
+  it('marks an unregistered kind — external check plugins included', async () => {
+    const { markBestEffort } = await import('../cli/commands/scan.js');
+    expect(markBestEffort(validatedFinding, 'plugin', new Map()).bestEffort).toBe(true);
+  });
+
+  it('does not mutate the finding it was given', async () => {
+    const { markBestEffort } = await import('../cli/commands/scan.js');
+    markBestEffort(validatedFinding, 'kafka', new Map());
+    expect(validatedFinding.bestEffort).toBeUndefined();
+  });
+});
