@@ -13,6 +13,8 @@ import { builtinAgents } from '../../config/builtin-agents.js';
 import { discoverAgentPlugins } from '../../framework/registry/local.js';
 import type { DiscoveredAgentPlugin } from '../../framework/registry/types.js';
 import { printInfo, printError } from '../output.js';
+import { agentMaturity, bestEffortHint } from '../../framework/agent-maturity.js';
+import type { AgentMaturity } from '../../framework/agent-maturity.js';
 
 export interface AgentCommandOptions {
   subcommand: string;
@@ -45,6 +47,7 @@ async function runList(opts: AgentCommandOptions): Promise<void> {
         type: 'builtin' as const,
         targetSystems: a.manifest.spec.targetSystems.map((t) => t.technology),
         riskLevel: a.manifest.spec.riskProfile.maxRiskLevel,
+        maturity: agentMaturity(a.manifest),
         description: a.manifest.metadata.description,
         source: 'builtin',
       })),
@@ -53,6 +56,8 @@ async function runList(opts: AgentCommandOptions): Promise<void> {
         type: 'plugin' as const,
         targetSystems: p.manifest.targetKinds,
         riskLevel: p.manifest.riskProfile?.maxRiskLevel ?? 'unknown',
+        // Plugin manifests declare no maturity — best-effort by default.
+        maturity: 'simulator_only' as AgentMaturity,
         description: p.manifest.description,
         source: p.source,
       })),
@@ -64,20 +69,21 @@ async function runList(opts: AgentCommandOptions): Promise<void> {
   const totalCount = builtinAgents.length + plugins.length;
   printInfo(`${totalCount} agent(s) registered\n`);
 
-  // Header
   const nameW = 38;
   const typeW = 10;
   const targetW = 24;
   const riskW = 10;
+  const maturityW = 16;
   const sourceW = 14;
   console.log(
     pad('Name', nameW) +
       pad('Type', typeW) +
       pad('Targets', targetW) +
       pad('Risk', riskW) +
+      pad('Maturity', maturityW) +
       pad('Source', sourceW),
   );
-  console.log('-'.repeat(nameW + typeW + targetW + riskW + sourceW));
+  console.log('-'.repeat(nameW + typeW + targetW + riskW + maturityW + sourceW));
 
   // Built-in agents
   for (const agent of builtinAgents) {
@@ -87,6 +93,7 @@ async function runList(opts: AgentCommandOptions): Promise<void> {
         pad('builtin', typeW) +
         pad(targets, targetW) +
         pad(agent.manifest.spec.riskProfile.maxRiskLevel, riskW) +
+        pad(maturityLabel(agentMaturity(agent.manifest)), maturityW) +
         pad('builtin', sourceW),
     );
   }
@@ -99,6 +106,7 @@ async function runList(opts: AgentCommandOptions): Promise<void> {
         pad('plugin', typeW) +
         pad(targets, targetW) +
         pad(plugin.manifest.riskProfile?.maxRiskLevel ?? '-', riskW) +
+        pad(maturityLabel('simulator_only'), maturityW) +
         pad(plugin.source, sourceW),
     );
   }
@@ -132,6 +140,7 @@ async function runInfo(opts: AgentCommandOptions): Promise<void> {
         version: builtin.manifest.metadata.version,
         targetSystems: builtin.manifest.spec.targetSystems,
         riskProfile: builtin.manifest.spec.riskProfile,
+        maturity: agentMaturity(builtin.manifest),
         tags: builtin.manifest.metadata.tags,
         license: builtin.manifest.metadata.license,
       }, null, 2));
@@ -149,6 +158,9 @@ async function runInfo(opts: AgentCommandOptions): Promise<void> {
       console.log(JSON.stringify({
         ...plugin.manifest,
         type: 'plugin',
+        // AgentPluginManifest declares no maturity — an unvalidated external
+        // agent is exactly what the best-effort default exists for.
+        maturity: 'simulator_only' as AgentMaturity,
         pluginDir: plugin.pluginDir,
         source: plugin.source,
       }, null, 2));
@@ -174,6 +186,11 @@ function printBuiltinInfo(agent: (typeof builtinAgents)[number]): void {
   console.log(`Targets:       ${m.spec.targetSystems.map((t) => t.technology).join(', ')}`);
   console.log(`Risk level:    ${m.spec.riskProfile.maxRiskLevel}`);
   console.log(`Data loss:     ${m.spec.riskProfile.dataLossPossible ? 'possible' : 'no'}`);
+  const maturity = agentMaturity(m);
+  console.log(`Maturity:      ${maturityLabel(maturity)}`);
+  if (maturity !== 'live_validated') {
+    console.log(`Note:          ${bestEffortHint(agent.kind)}`);
+  }
   console.log(`Tags:          ${m.metadata.tags.join(', ')}`);
   console.log(`License:       ${m.metadata.license}`);
 }
@@ -188,6 +205,8 @@ function printPluginInfo(plugin: DiscoveredAgentPlugin): void {
   console.log(`Targets:       ${m.targetKinds.join(', ')}`);
   console.log(`Risk level:    ${m.riskProfile?.maxRiskLevel ?? '-'}`);
   console.log(`Data loss:     ${m.riskProfile ? (m.riskProfile.dataLossPossible ? 'possible' : 'no') : '-'}`);
+  console.log(`Maturity:      ${maturityLabel('simulator_only')}`);
+  console.log(`Note:          ${bestEffortHint(m.targetKinds[0] ?? m.name)}`);
   console.log(`Min version:   ${m.crisismode.minVersion}`);
   console.log(`Source:        ${plugin.source}`);
   console.log(`Directory:     ${plugin.pluginDir}`);
@@ -199,4 +218,9 @@ function printPluginInfo(plugin: DiscoveredAgentPlugin): void {
 
 function pad(str: string, width: number): string {
   return str.length >= width ? str + '  ' : str + ' '.repeat(width - str.length);
+}
+
+/** Human label for the roster. Plugin manifests carry no maturity — best-effort. */
+function maturityLabel(maturity: AgentMaturity): string {
+  return maturity === 'live_validated' ? 'live-validated' : 'best-effort';
 }
