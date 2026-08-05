@@ -17,7 +17,7 @@ When a vibe coder's stack is unreachable, the first question is not "what is wro
 ## Non-goals
 
 - Diagnosing remote/cloud systems while offline (impossible by definition — triage tells the user it's "them", not what's wrong with them).
-- New dependencies. Node built-ins only (`node:dns`, `node:net`, `node:os`, global `fetch`), respecting the 256Mi spoke target.
+- New dependencies. Node built-ins only (`node:dns`, `node:net`, `node:os`, `node:child_process` for the read-only gateway-route lookup, global `fetch`), respecting the 256Mi spoke target. The only subprocess invocations are the fixed, argument-free route-table reads named below — no user-influenced input reaches a shell.
 - Replacing per-target health checks — triage localizes; agents diagnose.
 
 ## Design
@@ -29,7 +29,7 @@ Builds on the existing `network-profile.ts` (`probeNetwork`, `isInternetAvailabl
 1. **Interfaces** — `os.networkInterfaces()`: any non-loopback interface with an address? No → `local`.
 2. **Gateway** — discover the default gateway (parse `ip route`/`route -n get default` per platform; both invocations read-only). Unresolvable gateway discovery → record `unknown`, continue (honesty over guessing). TCP/ICMP-less probe: attempt a TCP connect to the gateway on common ports is unreliable; instead treat gateway reachability as inferred from later layers and report gateway address as context only.
 3. **DNS, two-step** — resolve a known name via the system resolver (`dns.promises.resolve`), then via a direct public resolver (`dns.promises.Resolver` with servers `1.1.1.1`, `8.8.8.8`). System fails + direct succeeds → "your DNS resolver is broken" (local). Both fail → network.
-4. **Captive portal** — fetch a known HTTP 204 endpoint (`http://connectivitycheck.gstatic.com/generate_204`, fallback `http://captive.apple.com`). A redirect or a 200 with a body → captive portal (network, with a specific hint: "open a browser and complete the network sign-in page").
+4. **Captive portal** — fetch a known connectivity-check endpoint with a **per-endpoint expected response**: `http://connectivitycheck.gstatic.com/generate_204` expects exactly HTTP 204 with an empty body; fallback `http://captive.apple.com` expects HTTP 200 with a body containing "Success" (that is its healthy response — a bare "200 with a body" rule would misclassify it). Any redirect, or a response that doesn't match the endpoint's expectation → captive portal (network, with a specific hint: "open a browser and complete the network sign-in page").
 5. **Internet** — HTTPS HEAD to two well-known hosts. Both fail with DNS OK → network.
 6. **Per-target reachability** — TCP connect to each discovered/configured target (host:port from autodiscovery + crisismode.yaml). Only runs in the standalone command and full scan (not the fast subset), since scan's agents already probe targets.
 
@@ -59,11 +59,15 @@ Detect laptop vs. cloud VM cheaply and without network calls: presence of cloud 
 - If verdict is `healthy`/`remote`, scan output is unchanged (one added line in the visibility/context section noting triage passed).
 - The existing `observer-environment` correlation rule becomes redundant for this path; it is kept (freeze policy is about additions) but scan's deterministic reframe takes precedence in presentation.
 
+### Relationship to the cached NetworkProfile
+
+`network-profile.ts` maintains a process-lifetime singleton (`probeNetwork` → `getNetworkProfile`) consumed by `ai-summary.ts` and `environment-guard.ts`; today scan never populates it (only diagnose does). Triage becomes the single prober: after its layers run, it **writes its DNS/internet results into the cached NetworkProfile** (via the existing profile-setting path) so `generatePlainEnglishSummary`'s offline gate and the environment guard see consistent state during scan, and no surface runs two overlapping probe systems. `probeNetwork` remains for callers that need only the lightweight profile (diagnose), internally sharing the same probe implementations.
+
 ## Error handling
 
 - Every probe failure is a data point, never a thrown error; a probe that errors unexpectedly records `unknown` for its layer.
 - Total time is bounded; a slow network cannot hang scan (Promise.race with per-probe timeout).
-- No probe writes anything anywhere; all checks are read-only (Observe escalation level).
+- No probe writes anything anywhere; all checks are read-only. Escalation level is **Diagnose** (level 2), chosen deliberately: triage makes active network probes to live third-party endpoints (public resolvers, connectivity-check hosts), which fits "read-only queries against live systems" rather than Observe's no-system-interaction contract (`src/framework/escalation.ts`).
 
 ## Testing
 

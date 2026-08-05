@@ -41,6 +41,16 @@ export interface RemediationGuide {
 
 Zero runtime dependencies preserved (types only in the SDK; content and registry live in the main package).
 
+### Anchoring contract (what `applicableFindingTypes` matches against)
+
+Today's scan findings carry only display ids (`AI-001`), so "finding type" needs a definition. The contract, by surface:
+
+- **Readiness findings:** the rule id (`connection-headroom`, `serverless-pooling`, `connection-limit-tier`, `vector-index-missing`, `ivfflat-lists-mismatch`) — these already exist as stable identifiers.
+- **Scan/diagnose findings:** the `checkId` field introduced by PR 3 (`llm-provider.key_valid`, `llm-provider.quota_billing`, `llm-provider.rate_limit_headroom`, `llm-provider.model_deprecated`, `llm-provider.provider_status`) and PR 4 (`vector-store.reachable`, `vector-store.auth_valid`, `vector-store.index_status`).
+- **aws-rds findings:** have no `checkId` today; **this PR adds them during the migration** (`aws-rds.storage_full`, `aws-rds.instance_class`, `aws-rds.sg_inbound`, `aws-rds.instance_stopped` — final names fixed at implementation to match the migrated strings one-to-one).
+
+The enforcement test resolves `applicableFindingTypes` against the union of registered readiness rule ids and the `checkId` constants exported by each agent — so a renamed rule or check breaks the build, not the lookup at runtime.
+
 ### Registry + attachment
 
 - `src/framework/guidance/registry.ts` — static registry of guides, indexed by `applicableFindingTypes`. Pure data + lookup; no I/O.
@@ -77,7 +87,7 @@ Guidance is static data — the only failure modes are lookup misses (finding ty
 
 ## Testing
 
-- Registry validation test (ids unique, dates valid, every `applicableFindingTypes` entry matches a real emitted finding type — enforcement-style, so a renamed finding type can't silently orphan its guides).
+- Registry validation test (ids unique, dates valid, every `applicableFindingTypes` entry resolves per the anchoring contract above — enforcement-style, so a renamed rule id or `checkId` can't silently orphan its guides).
 - Renderer tests across the three output modes, including `--terse`.
 - aws-rds migration: existing suggestion-plan tests updated; assert the same console paths survive in structured form.
 - Freshness test as described.
