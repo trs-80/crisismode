@@ -208,6 +208,8 @@ export function printDiagnosis(diagnosis: DiagnosisResult, ctx?: ExplanationCont
 
 export function printSynthesis(result: SynthesisResult): void {
   if (outputOptions.mode === 'machine') {
+    // Machine contract: JSON structure and numeric confidence stable; narrative text
+    // intentionally updated to "Possible pattern match:" framing per honesty spec.
     jsonOut('synthesis', { synthesis: result });
     return;
   }

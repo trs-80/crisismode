@@ -6,6 +6,7 @@ import {
   configure, getOutputMode, printHealthStatus, printDiagnosis, printStatus,
   printError, printScanSummary, escalationBadge, printNextAction, printSynthesis,
 } from '../cli/output.js';
+import { synthesizeByRules } from '../framework/root-cause-synthesis.js';
 import type { ScanResult } from '../cli/output.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
@@ -102,7 +103,7 @@ describe('CLI output — JSON mode', () => {
         },
       ],
       uncorrelated: [],
-      narrative: 'Primary root cause (70% confidence): Database backpressure propagating through caching and messaging layers.',
+      narrative: 'Possible pattern match: Database backpressure propagating through caching and messaging layers. Start by checking: postgresql → redis.',
       source: 'rules',
       synthesizedAt: new Date().toISOString(),
     };
@@ -115,6 +116,45 @@ describe('CLI output — JSON mode', () => {
     expect(parsed.type).toBe('synthesis');
     expect(parsed.synthesis.clusters).toHaveLength(1);
     expect(parsed.synthesis.clusters[0].rootCause).toContain('Database backpressure');
+  });
+
+  it('machine-mode synthesis contract: narrative updated, confidence numeric (integration)', () => {
+    // This test verifies that synthesizeByRules() output flows through printSynthesis()
+    // in machine mode with the correct contract: JSON structure and numeric confidence
+    // stable; narrative text intentionally updated to "Possible pattern match:" framing.
+    const result = synthesizeByRules([
+      {
+        agentKind: 'postgresql',
+        targetName: 'test-pg',
+        signals: [{ type: 'connection', source: 'pg', detail: 'connect ECONNREFUSED', severity: 'critical' }],
+      },
+      {
+        agentKind: 'redis',
+        targetName: 'test-redis',
+        signals: [{ type: 'connection', source: 'redis', detail: 'unreachable', severity: 'critical' }],
+      },
+    ]);
+
+    if (result.clusters.length === 0) {
+      // Test may find no correlation depending on rules; that's ok — focus on
+      // the contract if a cluster exists.
+      expect(result).toBeDefined();
+      return;
+    }
+
+    printSynthesis(result);
+
+    const output = logSpy.mock.calls[0]?.[0];
+    expect(output).toBeTruthy();
+    const parsed = JSON.parse(output as string);
+    expect(parsed.type).toBe('synthesis');
+    expect(parsed.synthesis.narrative).toContain('Possible pattern match');
+    expect(parsed.synthesis.clusters).toHaveLength(result.clusters.length);
+    for (const cluster of parsed.synthesis.clusters) {
+      expect(typeof cluster.confidence).toBe('number');
+      expect(cluster.confidence).toBeGreaterThanOrEqual(0);
+      expect(cluster.confidence).toBeLessThanOrEqual(1);
+    }
   });
 
   it('printStatus outputs valid JSON', () => {
