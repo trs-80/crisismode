@@ -115,6 +115,31 @@ See the [Your First Agent](docs/guides/your-first-agent.md) tutorial for a step-
   docs(guides): add check plugin tutorial
   ```
 
+## Correlation Rules Are Frozen
+
+`CORRELATION_RULES` in `src/framework/root-cause-synthesis.ts` is a closed set.
+**Do not add a correlation rule** unless both of these are true:
+
+1. A new agent class is shipping, and
+2. it brings a concretely evidenced signal pairing -- an incident actually
+   observed, with both signals named. Not a plausible-sounding story.
+
+No speculative incident templates. Real incidents are combinatorial: every
+rule multiplies the interaction surface between rules, and every bug this file
+has had came from rules interacting rather than from a rule being individually
+wrong.
+
+A rule match means "these signals have co-occurred in this shape before" -- an
+investigation hint, not a diagnosis. Output surfaces must render it that way,
+and `CorrelationCluster.confidence` is an ordering weight, never a probability.
+The same applies to `ADVISORY_RULE_NAMES`, the small set of overlay rules that
+answer "is the problem this machine?" and are exempt from the
+one-agent-one-cluster de-dup: adding to it is a policy decision, because an
+overlay is never suppressed by a stronger cluster.
+`CORRELATION_RULE_NAMES` is pinned by a test in
+`src/__tests__/root-cause-synthesis.test.ts`; changing the rule set means
+updating that test, this section, and the policy header in the source file.
+
 ## Testing Requirements
 
 - All new code needs tests
@@ -181,6 +206,7 @@ When you open a pull request:
 - **Don't modify hub code** -- hub coordination is managed separately
 - **Don't skip pre-commit hooks** -- they enforce safety invariants
 - **Don't create agents with `maxRiskLevel: 'critical'`** without explicit discussion
+- **Don't add correlation rules** -- the rule set is frozen; see [Correlation Rules Are Frozen](#correlation-rules-are-frozen)
 
 ## Further Reading
 
