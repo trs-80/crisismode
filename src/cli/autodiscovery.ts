@@ -19,7 +19,7 @@ import type { DetectedService } from './detect.js';
 import { parseRdsEndpoint } from './aws-endpoint.js';
 import { INFRA_PKG_NAMES } from '../config/service-registry.js';
 import type { TargetConfig } from '../config/schema.js';
-import { AI_ENV_VARS } from '../agent/ai-provider/provider-table.js';
+import { AI_ENV_VARS, detectConfiguredProviders, hasConfiguredKey } from '../agent/llm-provider/provider-table.js';
 import { findEnvExample } from '../agent/config-drift/env-example.js';
 import { discoverStateSource, parseTfState, WATCHABLE_TF_TYPES } from '../agent/iac-drift/state-parser.js';
 
@@ -185,6 +185,9 @@ const AI_PROVIDER_DEPS: Record<string, string> = {
   '@anthropic-ai/sdk': 'anthropic',
   'cohere-ai': 'cohere',
   '@google/generative-ai': 'google',
+  '@google/genai': 'google',
+  '@openrouter/ai-sdk-provider': 'openrouter',
+  '@openrouter/sdk': 'openrouter',
   '@mistralai/mistralai': 'mistral',
   '@huggingface/inference': 'huggingface',
   'replicate': 'replicate',
@@ -381,17 +384,22 @@ export async function deriveGatedTargets(
     }
   }
 
-  // ai-provider: an API key present OR an AI SDK dependency
-  const aiKeyName = AI_ENV_VARS.find((v) => env[v.envVar] !== undefined)?.envVar;
-  const aiDep = appStack.dependencies.find((d) => d in AI_PROVIDER_DEPS);
-  if (aiKeyName || aiDep) {
+  // llm-provider.<provider>: one target per provider whose API key is in this
+  // environment, under that provider's own kind — never a blanket
+  // 'llm-provider' kind (see the design doc's Maturity claim for why).
+  // Deliberately NOT derived from an SDK dependency alone: a vibe coder's key
+  // usually lives in .env, which CrisisMode does not read, so "dep but no key"
+  // would produce a false "your key is missing" alarm. That case surfaces as a
+  // visibility entry instead (see aiKeyBlockedEntries in scan.ts).
+  for (const { provider, envVar, spec } of detectConfiguredProviders(env)) {
     const target: TargetConfig = {
-      name: 'derived-ai-provider',
-      kind: 'ai-provider',
-      primary: { host: 'auto', port: 0 },
+      name: `derived-llm-${provider}`,
+      kind: `llm-provider.${provider}`,
+      primary: { host: spec.apiHost, port: 443 },
+      llm: { provider },
     };
     targets.push(target);
-    notes[target.name] = aiKeyName ? `from ${aiKeyName}` : `from ${aiDep} dependency`;
+    notes[target.name] = `from ${envVar}`;
   }
 
   // application-config: an env template file exists
@@ -600,18 +608,21 @@ function scanEnvHints(): EnvHint[] {
 
 function detectAiProviders(appStack: AppStackInfo): AiProviderInfo[] {
   const providers: AiProviderInfo[] = [];
+  const seen = new Set<string>();
 
+  // Pass 1: providers with a key in the environment.
   for (const { envVar, provider } of AI_ENV_VARS) {
-    const fromDep = appStack.dependencies.some((d) => AI_PROVIDER_DEPS[d] === provider);
-    const fromEnv = process.env[envVar] !== undefined;
+    if (seen.has(provider) || !hasConfiguredKey(process.env, envVar)) continue;
+    seen.add(provider);
+    providers.push({ provider, configured: true, envVar });
+  }
 
-    if (fromDep || fromEnv) {
-      providers.push({
-        provider,
-        configured: fromEnv,
-        envVar,
-      });
-    }
+  // Pass 2: providers detected from an SDK dependency but with no key here.
+  for (const { envVar, provider } of AI_ENV_VARS) {
+    if (seen.has(provider)) continue;
+    if (!appStack.dependencies.some((d) => AI_PROVIDER_DEPS[d] === provider)) continue;
+    seen.add(provider);
+    providers.push({ provider, configured: false, envVar });
   }
 
   return providers;

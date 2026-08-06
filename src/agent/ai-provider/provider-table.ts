@@ -3,8 +3,12 @@
 
 /**
  * Static probe table for known AI providers: health endpoint, auth shape,
- * and the env var carrying the API key. Source of truth for both live
- * probing (registration) and autodiscovery detection (AI_ENV_VARS).
+ * and the env var carrying the API key. Drives ai-provider's live probing for
+ * explicitly configured targets and demo mode.
+ *
+ * NOTE: the AI env-var detection list is no longer defined here. It lives in
+ * src/agent/llm-provider/provider-table.ts (one source of truth for every
+ * consumer) and is re-exported below for compatibility.
  *
  * SECURITY: API keys are read from env at backend-creation time and passed
  * directly to the live client. Never logged.
@@ -41,9 +45,8 @@ export const PROVIDER_PROBE_TABLE: ProviderProbeSpec[] = [
   { provider: 'huggingface', envVar: 'HUGGINGFACE_API_KEY', endpoint: 'https://huggingface.co', healthPath: '/api/whoami-v2' },
 ];
 
-/** Env-var detection list, derived from the probe table (single source of truth). */
-export const AI_ENV_VARS: Array<{ envVar: string; provider: string }> =
-  PROVIDER_PROBE_TABLE.map(({ envVar, provider }) => ({ envVar, provider }));
+/** Env-var detection list — single source of truth lives with the llm-provider agent. */
+export { AI_ENV_VARS } from '../llm-provider/provider-table.js';
 
 /**
  * Build live-client provider configs for every provider whose API key is

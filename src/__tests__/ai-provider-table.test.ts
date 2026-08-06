@@ -26,8 +26,14 @@ describe('AI provider probe table', () => {
     expect(anthropic.extraHeaders?.['anthropic-version']).toBeTruthy();
   });
 
-  it('AI_ENV_VARS mirrors the probe table', () => {
-    expect(AI_ENV_VARS).toHaveLength(PROVIDER_PROBE_TABLE.length);
+  it('AI_ENV_VARS is re-exported from the llm-provider table and still covers every probe-table provider', () => {
+    const names = AI_ENV_VARS.map((v) => v.envVar);
+    for (const spec of PROVIDER_PROBE_TABLE) {
+      expect(names, `${spec.provider} key missing from AI_ENV_VARS`).toContain(spec.envVar);
+    }
     expect(AI_ENV_VARS.map((v) => v.provider)).toContain('openai');
+    // The llm-provider table adds google's alternate key names.
+    expect(names).toContain('GEMINI_API_KEY');
+    expect(names.length).toBeGreaterThan(PROVIDER_PROBE_TABLE.length);
   });
 });
