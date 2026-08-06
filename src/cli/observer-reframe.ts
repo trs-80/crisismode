@@ -67,7 +67,9 @@ export function reframeFindings(
   const code = primaryFailureCode(report.layers);
   const cause = code === null ? 'a network check on this machine failed' : layerCauseLabel(code);
   const affectedIds = new Set(affected.map((f) => f.id));
-  const flagged = findings.map((f) => (affectedIds.has(f.id) ? { ...f, possiblyObserverCaused: true } : f));
+  const flagged: ScanFinding[] = findings.map((f) =>
+    (affectedIds.has(f.id) ? { ...f, possiblyObserverCaused: true as const } : f),
+  );
   const subject = affected.length === 1 ? 'service appears' : 'services appear';
 
   return {

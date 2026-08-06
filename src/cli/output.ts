@@ -460,7 +460,7 @@ export interface ScanFinding {
    */
   bestEffort?: true;
   /** Triage attributed this unreachable finding to the observer's own machine/network. */
-  possiblyObserverCaused?: boolean;
+  possiblyObserverCaused?: true;
 }
 
 export interface RecentChange {
