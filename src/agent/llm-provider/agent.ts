@@ -7,6 +7,8 @@ import type { DiagnosisResult, DiagnosisFinding } from '../../types/diagnosis-re
 import type { ExecutionState } from '../../types/execution-state.js';
 import type { HealthAssessment, HealthSignal, HealthSignalStatus, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
+import type { RecoveryStep } from '../../types/step-types.js';
+import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { defaultReplan } from '../interface.js';
 import { buildLlmProviderManifest } from './manifest.js';
 import { getProviderSpec } from './provider-table.js';
@@ -444,8 +446,137 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
     };
   }
 
-  async plan(_context: AgentContext, _diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    throw new Error('not implemented — Task 6');
+  async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
+    const target = String(context.trigger.payload.instance || `llm-${this.backend.getProviderId()}`);
+    // A null scenario means diagnose found nothing actionable. Defaulting to a
+    // real failure scenario here would make the plan assert a provider incident
+    // that no check observed — the plan must not out-claim its diagnosis.
+    const scenario = diagnosis.scenario ?? 'no_finding';
+    const label = this.label;
+
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'diagnosis_action',
+        name: `Re-read ${label} provider state`,
+        executionContext: 'llm_read',
+        target,
+        command: {
+          type: 'api_call',
+          operation: 'llm_provider_check',
+          parameters: { provider: this.backend.getProviderId() },
+        },
+        outputCapture: {
+          name: 'llm_provider_baseline',
+          format: 'structured',
+          availableTo: 'subsequent_steps',
+        },
+        timeout: 'PT30S',
+      },
+      {
+        stepId: 'step-002',
+        type: 'human_notification',
+        name: `Report the ${label} check result and its fix direction`,
+        recipients: [
+          {
+            role: 'on_call_engineer',
+            urgency: scenario === 'no_finding' ? 'low' : scenario === 'provider_incident' ? 'medium' : 'high',
+          },
+        ],
+        message: {
+          summary:
+            scenario === 'no_finding'
+              ? `${label}: no actionable provider issue found (${target})`
+              : `${label}: ${scenario.replace(/_/g, ' ')} (${target})`,
+          detail: this.fixDirection(scenario, label),
+          contextReferences: ['llm_provider_baseline'],
+          actionRequired: scenario !== 'provider_incident' && scenario !== 'no_finding',
+        },
+        channel: 'auto',
+      },
+      {
+        stepId: 'step-003',
+        type: 'replanning_checkpoint',
+        name: `Re-check ${label} after the operator acts`,
+        // Deliberately neutral wording: this description is emitted for every
+        // scenario including 'no_finding', so it must not name a failure the
+        // diagnosis did not find.
+        description: `Re-run the ${label} checks and confirm whether the reported state has changed.`,
+        fastReplan: true,
+        replanTimeout: 'PT30S',
+        diagnosticCaptures: [
+          {
+            name: 'post_fix_llm_state',
+            captureType: 'command_output',
+            statement: 'llm_provider_check',
+            captureCost: 'negligible',
+            capturePolicy: 'required',
+          },
+        ],
+      },
+    ];
+
+    return {
+      ...createPlanEnvelope({
+        // Suffixed with the provider id, not the bare 'llm-provider' family
+        // name — four provider agents can each produce a plan in the same
+        // scan run, and plan ids need to stay unique across them.
+        planIdSuffix: `llm-provider-${this.backend.getProviderId()}`,
+        agentName: 'llm-provider-diagnosis',
+        agentVersion: '1.0.0',
+        scenario,
+        estimatedDuration: 'PT2M',
+        summary:
+          scenario === 'no_finding'
+            ? `Re-read ${label} provider state for ${target} and record the result. No actionable provider issue was found, so this plan asserts nothing and asks for nothing.`
+            : `Report the ${label} ${scenario.replace(/_/g, ' ')} on ${target} and tell the operator exactly what to change. Read-only: CrisisMode cannot rotate keys, pay bills, or change provider state.`,
+      }),
+      impact: {
+        affectedSystems: [
+          {
+            identifier: target,
+            technology: `llm-provider.${this.backend.getProviderId()}`,
+            role: 'ai-inference',
+            impactType: 'diagnosis_and_notification',
+          },
+        ],
+        affectedServices: [`${label} API`],
+        estimatedUserImpact:
+          scenario === 'no_finding'
+            ? 'None observed — the provider checks that ran all passed.'
+            : scenario === 'api_key_missing' || scenario === 'api_key_invalid' || scenario === 'quota_or_billing_exhausted'
+              ? 'Every AI feature in the app is failing until the provider account is fixed.'
+              : 'AI features may fail intermittently.',
+        dataLossRisk: 'none',
+      },
+      steps,
+      rollbackStrategy: {
+        type: 'stepwise',
+        description: 'This plan only reads provider metadata and notifies humans. There are no mutations to roll back.',
+      },
+    };
+  }
+
+  /** The one thing the operator should change, per diagnosed scenario. */
+  private fixDirection(scenario: string, label: string): string {
+    switch (scenario) {
+      case 'no_finding':
+        return `No actionable ${label} issue was found: the key works, quota and headroom are fine, the configured model exists, and the provider reports nothing. Nothing to change here — if the app is still failing, the cause is elsewhere.`;
+      case 'api_key_missing':
+        return `No ${label} API key is set in the environment CrisisMode ran in. Export the key in the shell or platform environment your app uses. CrisisMode never reads .env files, so a key that only lives in .env will keep looking missing here even when the app works.`;
+      case 'api_key_invalid':
+        return `${label} rejected the API key. It has most likely been rotated, revoked, or copied incompletely. Create a fresh key in the ${label} console and replace it everywhere the app reads it — local shell, CI secrets, and the deploy platform.`;
+      case 'quota_or_billing_exhausted':
+        return `${label} accepted the key but refused to serve requests because the account is out of quota or credit. Add credit or raise the spend limit in the ${label} billing settings; no code change will fix this.`;
+      case 'configured_model_unavailable':
+        return `The model id the app is configured to use is not in ${label}'s live model list — it has been retired or misspelled. Update the model id to one of the models listed in the diagnosis findings.`;
+      case 'rate_limit_headroom_low':
+        return `The app is close to its ${label} rate limit. Add retry-with-backoff on the client, spread bursts out, or request a limit increase in the ${label} console.`;
+      case 'provider_incident':
+        return `${label} is reporting an ongoing incident on its status page. This is on the provider's side: nothing in the app is broken. Watch the status page and add retry-with-backoff so short incidents degrade instead of failing outright.`;
+      default:
+        return `Review the ${label} diagnosis findings and address the failing check.`;
+    }
   }
 
   async replan(
