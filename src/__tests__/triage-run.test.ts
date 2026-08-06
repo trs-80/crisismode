@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import { describe, it, expect, vi } from 'vitest';
-import { runTriage } from '../framework/triage.js';
-import type { DnsProbeResult, TriageProbes } from '../framework/triage.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { runTriage, getTriageReport, resetTriageReport, toNetworkProfile } from '../framework/triage.js';
+import type { DnsProbeResult, TriageProbes, TriageReport } from '../framework/triage.js';
+import { getNetworkProfile, resetNetworkProfile } from '../framework/network-profile.js';
 
 function healthyProbes(overrides: Partial<TriageProbes> = {}): TriageProbes {
   return {
@@ -196,5 +197,133 @@ describe('runTriage', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+afterEach(() => {
+  resetNetworkProfile();
+  resetTriageReport();
+});
+
+const offlineReport: TriageReport = {
+  verdict: 'network',
+  explanation: 'x',
+  nextStep: 'y',
+  observerContext: 'laptop',
+  observerContextEvidence: 'test fixture',
+  escalationLevel: 2,
+  checkedAt: '2026-08-05T00:00:00.000Z',
+  durationMs: 100,
+  layers: [
+    { layer: 'interfaces', status: 'pass', detail: 'en0', durationMs: 1 },
+    { layer: 'dns', status: 'fail', code: 'dns-unreachable', detail: 'no resolver answered', durationMs: 40 },
+    {
+      layer: 'internet', status: 'fail', code: 'internet-unreachable', detail: 'nothing answered', durationMs: 60,
+      probes: [{ target: 'https://api.anthropic.com', reachable: false, latencyMs: 60, error: 'fetch failed' }],
+    },
+    { layer: 'targets', status: 'skipped', detail: 'No targets to probe.', durationMs: 0 },
+  ],
+};
+
+describe('toNetworkProfile', () => {
+  it('maps failing triage layers onto an isolated network profile', () => {
+    const profile = toNetworkProfile(offlineReport);
+    expect(profile.dns.available).toBe(false);
+    expect(profile.internet.status).toBe('unavailable');
+    expect(profile.internet.probes).toHaveLength(1);
+    expect(profile.hub.status).toBe('unknown');
+    expect(profile.targets.status).toBe('unknown');
+    expect(profile.mode).toBe('isolated');
+    expect(profile.profiledAt).toBe('2026-08-05T00:00:00.000Z');
+  });
+
+  it('maps a healthy DNS layer to an available profile', () => {
+    const healthy: TriageReport = {
+      ...offlineReport,
+      verdict: 'healthy',
+      layers: [
+        { layer: 'dns', status: 'pass', detail: 'ok', durationMs: 12 },
+        {
+          layer: 'internet', status: 'pass', detail: 'ok', durationMs: 30,
+          probes: [{ target: 'https://api.anthropic.com', reachable: true, latencyMs: 30 }],
+        },
+      ],
+    };
+    const profile = toNetworkProfile(healthy);
+    expect(profile.dns.available).toBe(true);
+    expect(profile.dns.latencyMs).toBe(12);
+    expect(profile.internet.status).toBe('available');
+    expect(profile.mode).toBe('full');
+  });
+});
+
+describe('runTriage caching', () => {
+  it('caches a network profile so ai-summary and the environment guard agree', async () => {
+    expect(getNetworkProfile()).toBeNull();
+    await runTriage({ probes: healthyProbes(), observerContext: laptop });
+    expect(getNetworkProfile()).not.toBeNull();
+    expect(getNetworkProfile()!.internet.status).toBe('available');
+  });
+
+  it('returns null from getTriageReport until triage has run in this process', () => {
+    expect(getTriageReport()).toBeNull();
+  });
+
+  it('caches the report so agents can read the verdict without re-probing', async () => {
+    const report = await runTriage({ probes: healthyProbes(), observerContext: laptop });
+    expect(getTriageReport()).not.toBeNull();
+    expect(getTriageReport()!.verdict).toBe(report.verdict);
+  });
+
+  it('writes nothing global when cacheResults is false', async () => {
+    await runTriage({ probes: healthyProbes(), observerContext: laptop, cacheResults: false });
+    expect(getNetworkProfile()).toBeNull();
+    expect(getTriageReport()).toBeNull();
+  });
+
+  it('does not publish a DNS claim it never measured', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = runTriage({
+        probes: healthyProbes({ resolveDns: () => new Promise<DnsProbeResult>(() => {}) }),
+        observerContext: laptop,
+        timeoutMs: 800,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const report = await pending;
+      expect(report.layers.find((l) => l.layer === 'dns')!.status).toBe('unknown');
+      // NetworkProfile.dns cannot express "unknown", and environment-guard
+      // reads `available: false` as "this machine cannot resolve DNS names".
+      expect(getNetworkProfile()).toBeNull();
+      // The report cache can express it, so it is still published.
+      expect(getTriageReport()).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not publish a DNS claim from a skipped layer either', async () => {
+    // No active interface short-circuits everything after layer 1, so DNS
+    // is `skipped`, not `unknown` — both are "never measured" and neither
+    // may be published as a false `available: false`.
+    const report = await runTriage({
+      probes: healthyProbes({ listInterfaces: async () => ({ activeInterfaces: [] }) }),
+      observerContext: laptop,
+    });
+    expect(report.layers.find((l) => l.layer === 'dns')!.status).toBe('skipped');
+    expect(getNetworkProfile()).toBeNull();
+  });
+
+  it('clears a stale network profile when a later run cannot measure DNS', async () => {
+    await runTriage({ probes: healthyProbes(), observerContext: laptop });
+    expect(getNetworkProfile()).not.toBeNull();
+
+    await runTriage({
+      probes: healthyProbes({ listInterfaces: async () => ({ activeInterfaces: [] }) }),
+      observerContext: laptop,
+    });
+    // The earlier healthy run's profile must not survive a run whose DNS
+    // layer was never measured — a stale profile is a false claim too.
+    expect(getNetworkProfile()).toBeNull();
   });
 });

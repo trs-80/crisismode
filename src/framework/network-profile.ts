@@ -104,7 +104,7 @@ export async function probeNetwork(options: {
   const internet = buildLayer(internetProbes);
   const hub = buildLayer(hubProbes);
   const targets = buildLayer(targetProbes);
-  const mode = inferMode(internet, hub, targets, dnsResult.available);
+  const mode = inferNetworkMode(internet, hub, targets, dnsResult.available);
 
   const profile: NetworkProfile = {
     internet,
@@ -124,6 +124,15 @@ export async function probeNetwork(options: {
  */
 export function resetNetworkProfile(): void {
   cachedProfile = null;
+}
+
+/**
+ * Replace the cached profile. This is the write path triage uses after its
+ * layers run, so the offline gate in ai-summary.ts and the environment guard
+ * see the same connectivity picture without a second probe system.
+ */
+export function setNetworkProfile(profile: NetworkProfile): void {
+  cachedProfile = profile;
 }
 
 // ── Internal probing functions ──
@@ -216,7 +225,11 @@ function buildLayer(probes: ProbeResult[]): NetworkLayer {
   return { status, probes, checkedAt: new Date().toISOString() };
 }
 
-function inferMode(
+/**
+ * Classify overall connectivity from the layer statuses. Exported so triage
+ * can reuse the exact same rules rather than re-deriving them.
+ */
+export function inferNetworkMode(
   internet: NetworkLayer,
   hub: NetworkLayer,
   targets: NetworkLayer,
