@@ -102,3 +102,14 @@ export function buildLlmProviderManifest(provider: LlmProviderId): AgentManifest
 export const llmProviderManifests: Record<LlmProviderId, AgentManifest> = Object.fromEntries(
   LLM_PROVIDERS.map((spec) => [spec.id, buildLlmProviderManifest(spec.id)]),
 ) as Record<LlmProviderId, AgentManifest>;
+
+/**
+ * Same per-provider maturity as each manifest's `metadata.plugin.maturity`,
+ * exposed directly so the live client's `listCapabilityProviders()` (Task 7)
+ * can look it up without importing a whole manifest to read one field.
+ */
+export const LLM_PROVIDER_MATURITY: Record<LlmProviderId, 'live_validated' | 'simulator_only'> =
+  Object.fromEntries(LLM_PROVIDERS.map((spec) => [spec.id, getMaturityForProvider(spec.id)])) as Record<
+    LlmProviderId,
+    'live_validated' | 'simulator_only'
+  >;
