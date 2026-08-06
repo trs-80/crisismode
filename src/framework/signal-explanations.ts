@@ -143,14 +143,18 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://docs.aws.amazon.com/whitepapers/latest/practicing-continuous-integration-continuous-delivery/deployment-methods.html',
   },
   {
+    // Matches findings from any of the four supported providers (Anthropic,
+    // OpenAI, Google, OpenRouter) — the link must not describe one vendor's
+    // behavior as if it were universal.
     match: /^llm_key|^llm_quota/,
     explanation: 'Your app authenticates to its LLM provider with an API key. A missing, rotated, or unpaid key makes every AI feature fail with errors that look like application bugs — the fix is in the provider dashboard, not the code.',
-    learnMoreUrl: 'https://docs.claude.com/en/api/errors',
+    learnMoreUrl: 'https://developer.mozilla.org/en-US/docs/Web/HTTP/Authentication',
   },
   {
+    // Same multi-provider caveat as above.
     match: /^llm_/,
     explanation: 'LLM provider health: rate-limit headroom, whether the model id your app names still exists, and whether the provider is having an incident. Any of these makes the app fail while your own infrastructure is perfectly healthy.',
-    learnMoreUrl: 'https://docs.claude.com/en/api/rate-limits',
+    learnMoreUrl: 'https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429',
   },
   {
     match: /^provider_health|^ai_provider|model_availability/,
