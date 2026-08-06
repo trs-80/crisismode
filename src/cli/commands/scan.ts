@@ -91,6 +91,20 @@ function findingId(kind: string, index: number): string {
 }
 
 /**
+ * The check id a finding should carry: the first failing signal's, falling
+ * back to the first signal that has one. Mirrors how enrichScanFinding picks
+ * the dominant signal for the plain-language explanation, so the explanation
+ * and the check id always describe the same signal.
+ */
+export function dominantCheckId(
+  signals: Array<{ status: string; checkId?: string }>,
+): string | undefined {
+  const failing = signals.find((s) => s.status !== 'healthy' && s.checkId !== undefined);
+  if (failing) return failing.checkId;
+  return signals.find((s) => s.checkId !== undefined)?.checkId;
+}
+
+/**
  * Attach a plain-language explanation to a finding from its dominant signal,
  * preferring the first non-healthy signal with a knowledge-map hit and
  * falling back to any signal with a hit. Healthy findings and findings with
@@ -227,6 +241,14 @@ export async function checkTargetHealth(
 
     await backend.close();
 
+    const signals = health.signals.map((s) => ({
+      status: s.status,
+      detail: s.detail,
+      source: s.source,
+      ...(s.checkId !== undefined ? { checkId: s.checkId } : {}),
+    }));
+    const checkId = dominantCheckId(signals);
+
     return {
       kind: target.kind,
       health,
@@ -237,7 +259,8 @@ export async function checkTargetHealth(
         summary: health.summary,
         confidence: health.confidence,
         escalationLevel: health.status === 'healthy' ? 1 : 2,
-        signals: health.signals.map((s) => ({ status: s.status, detail: s.detail, source: s.source })),
+        signals,
+        ...(checkId !== undefined ? { checkId } : {}),
       },
     };
   } catch (err) {

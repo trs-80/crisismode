@@ -451,7 +451,7 @@ export interface ScanFinding {
   summary: string;
   confidence: number;
   escalationLevel: EscalationLevel;
-  signals: Array<{ status: string; detail: string; source?: string }>;
+  signals: Array<{ status: string; detail: string; source?: string; checkId?: string }>;
   /** Plain-language explanation of the dominant signal (static knowledge map). */
   explanation?: string;
   learnMoreUrl?: string;
@@ -463,6 +463,8 @@ export interface ScanFinding {
   bestEffort?: true;
   /** Triage attributed this unreachable finding to the observer's own machine/network. */
   possiblyObserverCaused?: true;
+  /** Stable id of the check behind the dominant signal (e.g. 'llm-provider.key_valid'). Present only for agents that emit check ids. */
+  checkId?: string;
 }
 
 export interface RecentChange {
