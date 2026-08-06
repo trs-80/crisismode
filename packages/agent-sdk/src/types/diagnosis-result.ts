@@ -18,4 +18,6 @@ export interface DiagnosisFinding {
   explanation?: string;
   /** Where an unfamiliar operator can learn more about this concept. */
   learnMoreUrl?: string;
+  /** Stable id of the check that produced this finding (e.g. 'llm-provider.key_valid') — consumed by the guidance registry. Optional: agents adopt it incrementally. */
+  checkId?: string;
 }
