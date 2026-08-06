@@ -11,6 +11,7 @@
 import chalk, { type ChalkInstance } from 'chalk';
 import type { HealthStatus, HealthSignalStatus } from '../types/health.js';
 import type { DiagnosisFinding } from '../types/diagnosis-result.js';
+import type { TriageVerdict } from '../framework/triage.js';
 
 export const HEALTH_STATUS_COLOR: Record<HealthStatus, ChalkInstance> = {
   healthy: chalk.green,
@@ -42,4 +43,16 @@ export function signalStatusColor(status: HealthSignalStatus): ChalkInstance {
 
 export function findingSeverityColor(severity: DiagnosisFinding['severity']): ChalkInstance {
   return FINDING_SEVERITY_COLOR[severity] ?? chalk.dim;
+}
+
+export const TRIAGE_VERDICT_COLOR: Record<TriageVerdict, ChalkInstance> = {
+  local: chalk.red,
+  network: chalk.red,
+  mixed: chalk.yellow,
+  remote: chalk.cyan,
+  healthy: chalk.green,
+};
+
+export function triageVerdictColor(verdict: TriageVerdict): ChalkInstance {
+  return TRIAGE_VERDICT_COLOR[verdict] ?? chalk.dim;
 }
