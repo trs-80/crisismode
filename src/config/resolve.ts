@@ -25,6 +25,7 @@ export function resolveTarget(target: TargetConfig): ResolvedTarget {
     queue: target.queue,
     configDrift: target.configDrift,
     iac: target.iac,
+    llm: target.llm,
   };
 }
 

@@ -84,6 +84,18 @@ export interface IacTargetOptions {
   dir?: string;
 }
 
+export interface LlmTargetOptions {
+  /**
+   * Provider id: 'anthropic' | 'openai' | 'google' | 'openrouter'. Optional —
+   * the target's kind (`llm-provider.<provider>`) already names the provider;
+   * set this only to get a loud error if a target is ever misfiled under the
+   * wrong provider's kind.
+   */
+  provider?: string;
+  /** Model id the app uses. Falls back to the provider's model env var when omitted. */
+  model?: string;
+}
+
 // ── Target config ──
 
 export interface TargetConfig {
@@ -104,6 +116,8 @@ export interface TargetConfig {
   configDrift?: ConfigDriftTargetOptions;
   /** Terraform project options for iac-drift targets. */
   iac?: IacTargetOptions;
+  /** LLM provider options for llm-provider.<provider> targets. */
+  llm?: LlmTargetOptions;
 }
 
 // ── Site config ──
@@ -165,4 +179,6 @@ export interface ResolvedTarget {
   configDrift?: ConfigDriftTargetOptions | undefined;
   /** Terraform project options for iac-drift targets. */
   iac?: IacTargetOptions | undefined;
+  /** LLM provider options for llm-provider.<provider> targets. */
+  llm?: LlmTargetOptions | undefined;
 }
