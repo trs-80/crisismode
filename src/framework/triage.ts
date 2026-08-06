@@ -23,10 +23,11 @@
  * contract. It never mutates anything.
  */
 
-import type { ProbeResult } from '@crisismode/agent-sdk';
+import type { ConnectivityStatus, NetworkLayer, NetworkProfile, ProbeResult } from '@crisismode/agent-sdk';
 import type { EscalationLevel } from './escalation.js';
 import { detectObserverContext, nodeTriageProbes, runBounded } from './triage-probes.js';
 import type { BoundedOutcome } from './triage-probes.js';
+import { inferNetworkMode, resetNetworkProfile, setNetworkProfile } from './network-profile.js';
 
 // ── Verdict and layer model ──
 
@@ -523,6 +524,12 @@ export interface TriageOptions {
   targets?: TriageTarget[] | undefined;
   /** Override observer detection (tests). */
   observerContext?: ObserverContextResult | undefined;
+  /**
+   * Publish the results to the process-lifetime caches — the triage report
+   * (read by agents via getTriageReport) and the NetworkProfile singleton.
+   * Default true; set false for a side-effect-free run.
+   */
+  cacheResults?: boolean | undefined;
 }
 
 /** Report order, which is the spec's layer numbering — not execution order. */
@@ -607,11 +614,11 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
     for (const name of remaining) {
       layers.push(skippedLayer(name, 'Skipped — this machine has no active network interface.', 0));
     }
-    return buildReport(layers, observer, wallClockStartedAt, startedAt);
+    return finish(layers, observer, wallClockStartedAt, startedAt, options);
   }
 
   // Stage 2 — gateway (context) and DNS, concurrently
-  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt, options);
   const stage2Budget = budget();
   const [gatewayOutcome, dnsOutcome] = await Promise.all([
     runBounded(() => probes.findDefaultGateway(), stage2Budget),
@@ -626,7 +633,7 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
 
   // Stage 3 — captive portal and internet. Independent HTTP probes, so they
   // run concurrently; serializing them is what pushed the worst case past 5s.
-  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt, options);
   const stage3Budget = budget();
   const stage3Start = performance.now();
   const captiveWork: Promise<TriageLayerResult> = observer.context === 'server'
@@ -658,7 +665,7 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
   // sequential batches, and a fixed per-batch timeout would let enough
   // batches add up past the deadline the same way unbounded per-probe
   // timeouts did before this whole-run bound existed.
-  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt, options);
   const targetsStart = performance.now();
   const boundedTargets = targets.slice(0, MAX_STAGE4_TARGETS);
   const omittedTargets = targets.length - boundedTargets.length;
@@ -674,7 +681,7 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
   );
   layers.push(buildTargetsLayer(targetProbes, performance.now() - targetsStart, omittedTargets));
 
-  return buildReport(layers, observer, wallClockStartedAt, startedAt);
+  return finish(layers, observer, wallClockStartedAt, startedAt, options);
 }
 
 /**
@@ -688,6 +695,7 @@ function finishExpired(
   observer: ObserverContextResult,
   wallClockStartedAt: number,
   startedAt: number,
+  options: TriageOptions,
 ): TriageReport {
   for (const name of LAYER_ORDER) {
     if (layers.some((l) => l.layer === name)) continue;
@@ -698,7 +706,7 @@ function finishExpired(
       durationMs: 0,
     });
   }
-  return buildReport(layers, observer, wallClockStartedAt, startedAt);
+  return finish(layers, observer, wallClockStartedAt, startedAt, options);
 }
 
 function buildReport(
@@ -724,6 +732,111 @@ function buildReport(
 
 function unknownLayer(layer: TriageLayerName, error: string, durationMs: number): TriageLayerResult {
   return { layer, status: 'unknown', detail: `Probe did not complete: ${error}`, durationMs };
+}
+
+function finish(
+  layers: TriageLayerResult[],
+  observer: ObserverContextResult,
+  wallClockStartedAt: number,
+  startedAt: number,
+  options: TriageOptions,
+): TriageReport {
+  const report = buildReport(layers, observer, wallClockStartedAt, startedAt);
+  if (options.cacheResults !== false) {
+    cachedReport = report;
+    // Publish a NetworkProfile only from a DNS layer we actually measured —
+    // see the "only measured layers" note above. `unknown` is not the only
+    // unmeasured state: the deadline can truncate a run before DNS ever
+    // runs (`skipped`, via the interfaces short-circuit or finishExpired's
+    // fill-in), and that is just as unmeasured as `unknown`. Require the
+    // status to have actually resolved to pass or fail before publishing.
+    const dnsStatus = report.layers.find((l) => l.layer === 'dns')?.status;
+    const dnsMeasured = dnsStatus === 'pass' || dnsStatus === 'fail';
+    if (dnsMeasured) {
+      setNetworkProfile(toNetworkProfile(report));
+    } else {
+      // A profile published by an earlier, fully-measured run must not
+      // silently outlive a run that could not measure DNS this time —
+      // otherwise a caller reads a stale connectivity picture instead of
+      // the honest "no profile yet" that a first run would have given them.
+      resetNetworkProfile();
+    }
+  }
+  return report;
+}
+
+// ── Cached report ──
+
+let cachedReport: TriageReport | null = null;
+
+/**
+ * The last triage report from this process, or null if triage has not run.
+ *
+ * Cross-PR contract: agents call this from `assessHealth()` to skip network
+ * checks when triage already localized the problem to this machine or its
+ * network. `null` means "triage never ran here" — no information, not
+ * "offline". Non-blocking read; never triggers a probe.
+ */
+export function getTriageReport(): TriageReport | null {
+  return cachedReport;
+}
+
+/** Clear the cached report. Used by tests. */
+export function resetTriageReport(): void {
+  cachedReport = null;
+}
+
+// ── NetworkProfile bridge ──
+
+/**
+ * Project a triage report onto the NetworkProfile shape the rest of the CLI
+ * already consumes. Triage never probes the hub, so that layer stays
+ * 'unknown' rather than claiming a result we did not measure.
+ */
+export function toNetworkProfile(report: TriageReport): NetworkProfile {
+  const find = (name: TriageLayerName): TriageLayerResult | undefined =>
+    report.layers.find((l) => l.layer === name);
+  const checkedAt = report.checkedAt;
+  const dnsLayer = find('dns');
+  const internetLayer = find('internet');
+  const targetsLayer = find('targets');
+
+  const internet: NetworkLayer = {
+    status: layerConnectivity(internetLayer),
+    probes: internetLayer?.probes ?? [],
+    checkedAt,
+  };
+  const hub: NetworkLayer = { status: 'unknown', probes: [], checkedAt };
+  const targets: NetworkLayer = {
+    status: layerConnectivity(targetsLayer),
+    probes: targetsLayer?.probes ?? [],
+    checkedAt,
+  };
+  const dns = {
+    available: dnsLayer?.status === 'pass',
+    latencyMs: dnsLayer?.durationMs ?? 0,
+  };
+
+  return {
+    internet,
+    hub,
+    targets,
+    dns,
+    mode: inferNetworkMode(internet, hub, targets, dns.available),
+    profiledAt: checkedAt,
+  };
+}
+
+function layerConnectivity(layer: TriageLayerResult | undefined): ConnectivityStatus {
+  if (layer === undefined) return 'unknown';
+  if (layer.status === 'pass') {
+    const probes = layer.probes ?? [];
+    return probes.some((p) => !p.reachable) ? 'degraded' : 'available';
+  }
+  if (layer.status === 'fail') {
+    return layer.code === 'targets-partial' ? 'degraded' : 'unavailable';
+  }
+  return 'unknown';
 }
 
 /**
