@@ -726,7 +726,9 @@ function buildReport(
     observerContextEvidence: observer.evidence,
     escalationLevel: TRIAGE_ESCALATION_LEVEL,
     checkedAt: new Date(wallClockStartedAt).toISOString(),
-    durationMs: performance.now() - startedAt,
+    // performance.now() arithmetic is a float; human/pipe output prints this
+    // verbatim, so round it or an operator sees "2034.5830000001ms".
+    durationMs: Math.round(performance.now() - startedAt),
   };
 }
 
@@ -814,7 +816,10 @@ export function toNetworkProfile(report: TriageReport): NetworkProfile {
   };
   const dns = {
     available: dnsLayer?.status === 'pass',
-    latencyMs: dnsLayer?.durationMs ?? 0,
+    // dnsLayer.durationMs is float performance.now() arithmetic — round it
+    // before it lands in the published profile (same fix as probeDns in
+    // network-profile.ts, commit 80c3624).
+    latencyMs: Math.round(dnsLayer?.durationMs ?? 0),
   };
 
   return {

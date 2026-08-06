@@ -14,7 +14,7 @@
 import chalk from 'chalk';
 import { runTriage } from '../../framework/triage.js';
 import { getEscalationInfo } from '../../framework/escalation.js';
-import { getOutputMode, jsonOut, printBanner, printInfo, printWarning } from '../output.js';
+import { getOutputMode, jsonOut, printBanner, printWarning } from '../output.js';
 import { triageVerdictColor } from '../status-presentation.js';
 import { discoverStack } from '../autodiscovery.js';
 import { ConfigNotFoundError, loadConfigWithDetection } from '../../config/loader.js';
@@ -46,8 +46,11 @@ export function renderTriageReport(report: TriageReport): string[] {
   const escalation = getEscalationInfo(report.escalationLevel);
   const lines: string[] = [];
   // The verdict is the headline — bold + severity color, matching how
-  // printScanSummary renders the health score (output.ts:487-490). chalk
-  // emits nothing when --no-color or pipe mode set chalk.level = 0, so
+  // printScanSummary renders the health score (output.ts:512). These lines
+  // are printed with console.log in runTriageCommand's human branch, not
+  // printInfo — printInfo wraps every line in chalk.dim, which would gray
+  // out this feature's flagship plain-language explanation and next step.
+  // chalk emits nothing when --no-color or pipe mode set chalk.level = 0, so
   // substring assertions in tests are unaffected.
   lines.push(chalk.bold(triageVerdictColor(report.verdict)(VERDICT_HEADLINE[report.verdict])));
   lines.push(report.explanation);
@@ -136,7 +139,9 @@ export async function runTriageCommand(opts: TriageCommandOptions = {}): Promise
     for (const line of renderTriagePipe(report)) console.log(line);
   } else {
     printBanner();
-    for (const line of renderTriageReport(report)) printInfo(line);
+    // console.log, not printInfo — printInfo dims every line (chalk.dim),
+    // which would gray out the explanation and next-step lines below.
+    for (const line of renderTriageReport(report)) console.log(line);
   }
 
   const code = triageExitCode(report.verdict);

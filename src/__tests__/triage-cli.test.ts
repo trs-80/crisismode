@@ -2,9 +2,51 @@
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { describe, it, expect } from 'vitest';
-import { renderTriagePipe, renderTriageReport, triageExitCode } from '../cli/commands/triage.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import chalk from 'chalk';
+import { renderTriagePipe, renderTriageReport, runTriageCommand, triageExitCode } from '../cli/commands/triage.js';
+import { configure } from '../cli/output.js';
+import type * as TriageFramework from '../framework/triage.js';
 import type { TriageReport } from '../framework/triage.js';
+
+// The runTriageCommand human-output test below exercises the command for
+// real. Autodiscovery reads the real filesystem and environment, so it is
+// stubbed to keep the test from probing this machine — mirrors
+// src/__tests__/observer-reframe.test.ts. runTriage is replaced with a fixed
+// report so the test asserts on rendering, not probing.
+const { commandReport } = vi.hoisted(() => ({
+  commandReport: {
+    verdict: 'healthy' as const,
+    explanation: 'This machine, its network, and everything triage could reach look fine.',
+    nextStep: 'Nothing to fix here — if a service is failing, run `crisismode scan` to check the services themselves.',
+    observerContext: 'laptop' as const,
+    observerContextEvidence: 'macOS host with no server markers (assumption, not a measurement)',
+    escalationLevel: 2 as const,
+    checkedAt: '2026-08-05T12:00:00.000Z',
+    durationMs: 42,
+    layers: [
+      { layer: 'interfaces' as const, status: 'pass' as const, detail: 'Active interfaces: en0', durationMs: 1 },
+      { layer: 'targets' as const, status: 'skipped' as const, detail: 'No targets to probe.', durationMs: 0 },
+    ],
+  },
+}));
+
+vi.mock('../cli/autodiscovery.js', () => ({
+  discoverStack: vi.fn(async () => ({
+    services: [],
+    appStack: { framework: null, language: null, hasDockerfile: false, hasCIConfig: false, dependencies: [] },
+    envHints: [],
+    platform: { platform: null, detected: false, signals: [] },
+    aiProviders: [],
+    derivedTargets: [],
+    derivedNotes: {},
+    confidence: 0.5,
+  })),
+}));
+vi.mock('../framework/triage.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof TriageFramework>()),
+  runTriage: vi.fn(async () => commandReport),
+}));
 
 const report: TriageReport = {
   verdict: 'network',
@@ -74,6 +116,42 @@ describe('renderTriagePipe', () => {
   it('emits one tab-separated line per layer', () => {
     expect(lines).toHaveLength(1 + report.layers.length);
     expect(lines[1]).toBe('layer\tinterfaces\tpass\tActive interfaces: en0');
+  });
+});
+
+describe('runTriageCommand human output', () => {
+  let lines: string[];
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let savedLevel: typeof chalk.level;
+
+  beforeEach(() => {
+    savedLevel = chalk.level;
+    configure({ json: false, noColor: false, mode: 'human' });
+    chalk.level = 1; // force ANSI (after configure, which zeroes it off-TTY)
+    lines = [];
+    logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    });
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    chalk.level = savedLevel;
+    configure({ json: false, noColor: false, mode: 'human' });
+  });
+
+  // The explanation and next-step lines are this feature's flagship
+  // plain-language output. printInfo wraps every line in chalk.dim(`  ${msg}`),
+  // graying them out and adding a two-space indent — this asserts the printed
+  // lines are renderTriageReport's output verbatim, undimmed and unindented.
+  it('prints renderTriageReport lines directly via console.log, not through printInfo', async () => {
+    await runTriageCommand({});
+    const expected = renderTriageReport(commandReport);
+    // printBanner writes 3 lines first ('', the banner, '').
+    const reportLines = lines.slice(3);
+    expect(reportLines).toEqual(expected);
+    expect(reportLines).toContain(commandReport.explanation);
+    expect(reportLines).toContain(`Next: ${commandReport.nextStep}`);
   });
 });
 

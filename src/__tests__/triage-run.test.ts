@@ -46,6 +46,14 @@ describe('runTriage', () => {
     expect(report.nextStep.length).toBeGreaterThan(0);
   });
 
+  // performance.now() arithmetic is a float; human/pipe output must not print
+  // "2034.5830000001ms" — see toNetworkProfile's dns.latencyMs below for the
+  // same class of bug.
+  it('rounds the whole-run duration to a whole millisecond', async () => {
+    const report = await runTriage({ probes: healthyProbes(), observerContext: laptop });
+    expect(Number.isInteger(report.durationMs)).toBe(true);
+  });
+
   it('short-circuits every later layer when no interface is up', async () => {
     const report = await runTriage({
       probes: healthyProbes({ listInterfaces: async () => ({ activeInterfaces: [] }) }),
@@ -254,6 +262,23 @@ describe('toNetworkProfile', () => {
     expect(profile.dns.latencyMs).toBe(12);
     expect(profile.internet.status).toBe('available');
     expect(profile.mode).toBe('full');
+  });
+
+  // The DNS layer's durationMs comes from performance.now() arithmetic (a
+  // float) — publishing it unrounded regresses the exact class of bug fixed
+  // for network-profile.ts's probeDns (commit 80c3624): verbose output would
+  // print "DNS: OK (12.7439582ms)".
+  it('rounds a fractional DNS layer duration before publishing it', () => {
+    const fractional: TriageReport = {
+      ...offlineReport,
+      verdict: 'healthy',
+      layers: [
+        { layer: 'dns', status: 'pass', detail: 'ok', durationMs: 12.7439582 },
+      ],
+    };
+    const profile = toNetworkProfile(fractional);
+    expect(Number.isInteger(profile.dns.latencyMs)).toBe(true);
+    expect(profile.dns.latencyMs).toBe(13);
   });
 });
 

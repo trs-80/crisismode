@@ -198,7 +198,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
 | `src/cli/index.ts` | Unified CLI entry point |
-| `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch, readiness, agent, playbook, bundle, registry, completions) |
+| `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch, readiness, triage, agent, playbook, bundle, registry, completions) |
 | `src/mcp/server.ts` | MCP server — 8 read-only diagnosis tools exposed via `crisismode mcp` |
 | `src/readiness/` | Scale-readiness rule registry + capacity ceilings/weak-link (readiness command + MCP tool) |
 | `src/framework/escalation.ts` | Five-level progressive escalation model |
