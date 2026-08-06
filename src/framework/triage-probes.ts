@@ -278,7 +278,7 @@ export function nodeTriageProbes(timeoutMs: number, publicResolvers: readonly st
     },
 
     async fetchUrl(url: string, method: 'GET' | 'HEAD'): Promise<HttpProbeResult> {
-      const start = Date.now();
+      const start = performance.now();
       try {
         const response = await fetch(url, {
           method,
@@ -292,14 +292,14 @@ export function nodeTriageProbes(timeoutMs: number, publicResolvers: readonly st
           status: response.status,
           body,
           redirected: response.status >= 300 && response.status < 400,
-          latencyMs: Date.now() - start,
+          latencyMs: Math.round(performance.now() - start),
         };
       } catch (err) {
         return {
           status: null,
           body: '',
           redirected: false,
-          latencyMs: Date.now() - start,
+          latencyMs: Math.round(performance.now() - start),
           error: err instanceof Error ? err.message : String(err),
         };
       }
@@ -314,6 +314,12 @@ export function nodeTriageProbes(timeoutMs: number, publicResolvers: readonly st
 /**
  * TCP reachability as a ProbeResult. Shared with network-profile.ts (Task 13)
  * so there is exactly one socket-probe implementation to keep bounded.
+ *
+ * Deliberately does NOT route through runBounded: the socket owns its own
+ * timeout and destroy lifecycle. A socket timeout is a legitimate measurement
+ * ("did not answer"), not an error. Wrapping it in runBounded would convert
+ * that measurement into an exception, then back to data — unnecessary and
+ * error-prone. The socket's native timeout + destroy is the right abstraction.
  */
 export function probeTcpBounded(
   host: string,
@@ -321,24 +327,24 @@ export function probeTcpBounded(
   label: string,
   timeoutMs: number,
 ): Promise<ProbeResult> {
-  const start = Date.now();
+  const start = performance.now();
   return new Promise((resolve) => {
     const socket = createConnection({ host, port });
     const timer = setTimeout(() => {
       socket.destroy();
-      resolve({ target: label, reachable: false, latencyMs: Date.now() - start, error: `Timeout after ${timeoutMs}ms` });
+      resolve({ target: label, reachable: false, latencyMs: Math.round(performance.now() - start), error: `Timeout after ${timeoutMs}ms` });
     }, timeoutMs);
 
     socket.on('connect', () => {
       clearTimeout(timer);
       socket.destroy();
-      resolve({ target: label, reachable: true, latencyMs: Date.now() - start });
+      resolve({ target: label, reachable: true, latencyMs: Math.round(performance.now() - start) });
     });
 
     socket.on('error', (err) => {
       clearTimeout(timer);
       socket.destroy();
-      resolve({ target: label, reachable: false, latencyMs: Date.now() - start, error: err.message });
+      resolve({ target: label, reachable: false, latencyMs: Math.round(performance.now() - start), error: err.message });
     });
   });
 }
