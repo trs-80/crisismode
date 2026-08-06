@@ -69,6 +69,11 @@ describe('llm-provider registrations', () => {
     const instance = await anthropicRegistration.createAgent(target);
     expect(instance.backend).toBeInstanceOf(LlmProviderLiveClient);
     expect((instance.backend as LlmProviderLiveClient).getProviderId()).toBe('anthropic');
+    // Regression guard: target.llm.model must reach the live client's config,
+    // not just its provider — a dropped model would silently disable
+    // checkModel()'s "configured model still exists" check.
+    const config = (instance.backend as unknown as { config: { configuredModel?: string } }).config;
+    expect(config.configuredModel).toBe('claude-sonnet-4-5');
   });
 
   it('gives the live client a timeout that fits inside scan\'s per-agent budget', async () => {
