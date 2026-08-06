@@ -6,6 +6,7 @@ import { LlmProviderDiagnosisAgent } from '../agent/llm-provider/agent.js';
 import { LlmProviderSimulator } from '../agent/llm-provider/simulator.js';
 import { assembleContext } from '../framework/context.js';
 import { validateAgent } from '../framework/agent-test-harness.js';
+import { validatePlan } from '../framework/validator.js';
 import type { AgentContext } from '../types/agent-context.js';
 import type { LlmProviderScenario } from '../agent/llm-provider/simulator.js';
 
@@ -67,5 +68,23 @@ describe('LlmProviderDiagnosisAgent.plan', () => {
     const failures = result.checks.filter((c) => !c.passed).map((c) => `${c.name}: ${c.message}`);
     expect(failures).toEqual([]);
     expect(result.passed).toBe(true);
+  });
+
+  it('passes the real validatePlan check for the no_finding scenario', async () => {
+    const { agent, context } = setup('healthy');
+    const plan = await agent.plan(context, await agent.diagnose(context));
+    const validation = validatePlan(plan, agent.manifest);
+    expect(validation.valid).toBe(true);
+    const failures = validation.checks.filter((c) => !c.passed).map((c) => `${c.name}: ${c.message}`);
+    expect(failures).toEqual([]);
+  });
+
+  it('passes the real validatePlan check for a real failure scenario', async () => {
+    const { agent, context } = setup('bad_key');
+    const plan = await agent.plan(context, await agent.diagnose(context));
+    const validation = validatePlan(plan, agent.manifest);
+    expect(validation.valid).toBe(true);
+    const failures = validation.checks.filter((c) => !c.passed).map((c) => `${c.name}: ${c.message}`);
+    expect(failures).toEqual([]);
   });
 });
