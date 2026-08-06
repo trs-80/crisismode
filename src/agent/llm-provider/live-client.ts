@@ -32,9 +32,13 @@ import type {
   KeyValidity,
   LlmProviderBackend,
   ModelCheck,
+  ProviderIncident,
   ProviderStatusReport,
   RateLimitHeadroom,
 } from './backend.js';
+
+/** Page cap for a paginated models-list fetch (Google's nextPageToken). */
+const MAX_MODEL_LIST_PAGES = 3;
 
 export interface LlmProviderLiveConfig {
   provider: LlmProviderId;
@@ -125,6 +129,94 @@ export function classifyAuthFailure(
   }
 
   return 'other';
+}
+
+function headerNumber(headers: Record<string, string>, name: string): number | null {
+  const raw = headers[name];
+  if (raw === undefined) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** remaining/limit as a 0-100 percentage, or null when either is unusable. */
+function percentage(remaining: number | null, limit: number | null): number | null {
+  if (remaining === null || limit === null || limit <= 0) return null;
+  return Math.round((remaining / limit) * 100);
+}
+
+/**
+ * Read request/token headroom from a provider's ratelimit response headers.
+ *
+ * Providers name these differently on each side of the prefix
+ * (`anthropic-ratelimit-requests-remaining` vs `x-ratelimit-remaining-requests`),
+ * so both orders are tried. A provider that omits them yields nulls — the
+ * caller reports that as unknown, never as zero headroom.
+ */
+export function parseHeadroomFromHeaders(
+  headers: Record<string, string>,
+  prefix: string,
+): { requestsRemainingPct: number | null; tokensRemainingPct: number | null } {
+  const pair = (unit: string): { remaining: number | null; limit: number | null } => ({
+    remaining: headerNumber(headers, `${prefix}${unit}-remaining`) ?? headerNumber(headers, `${prefix}remaining-${unit}`),
+    limit: headerNumber(headers, `${prefix}${unit}-limit`) ?? headerNumber(headers, `${prefix}limit-${unit}`),
+  });
+
+  const requests = pair('requests');
+  const tokens = pair('tokens');
+  const inputTokens = pair('input-tokens');
+
+  return {
+    requestsRemainingPct: percentage(requests.remaining, requests.limit),
+    tokensRemainingPct:
+      percentage(tokens.remaining, tokens.limit) ?? percentage(inputTokens.remaining, inputTokens.limit),
+  };
+}
+
+/** Pull model ids out of a models-list body, per the provider's response shape. */
+export function extractModelIds(body: unknown, shape: 'data_id' | 'models_name'): string[] {
+  if (typeof body !== 'object' || body === null) return [];
+  if (shape === 'data_id') {
+    const data = (body as { data?: unknown }).data;
+    if (!Array.isArray(data)) return [];
+    return data
+      .map((entry) => (typeof entry === 'object' && entry !== null ? (entry as { id?: unknown }).id : undefined))
+      .filter((id): id is string => typeof id === 'string');
+  }
+  const models = (body as { models?: unknown }).models;
+  if (!Array.isArray(models)) return [];
+  return models
+    .map((entry) => (typeof entry === 'object' && entry !== null ? (entry as { name?: unknown }).name : undefined))
+    .filter((name): name is string => typeof name === 'string')
+    .map((name) => name.replace(/^models\//, ''));
+}
+
+/** Statuspage v2 summary: unresolved entries in `incidents[]`. */
+function parseStatuspageIncidents(body: unknown): ProviderIncident[] | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const incidents = (body as { incidents?: unknown }).incidents;
+  if (!Array.isArray(incidents)) return null;
+  return incidents
+    .filter((raw): raw is Record<string, unknown> => typeof raw === 'object' && raw !== null)
+    .filter((raw) => raw.status !== 'resolved' && raw.status !== 'postmortem')
+    .map((raw) => ({
+      title: typeof raw.name === 'string' ? raw.name : 'unnamed incident',
+      impact: typeof raw.impact === 'string' ? raw.impact : 'unknown',
+      ...(typeof raw.shortlink === 'string' ? { url: raw.shortlink } : {}),
+    }));
+}
+
+/** Google Cloud incidents.json: entries without an `end` timestamp are ongoing. */
+function parseGoogleCloudIncidents(body: unknown): ProviderIncident[] | null {
+  if (!Array.isArray(body)) return null;
+  return body
+    .filter((raw): raw is Record<string, unknown> => typeof raw === 'object' && raw !== null)
+    .filter((raw) => raw.end === undefined || raw.end === null)
+    .filter((raw) => typeof raw.service_name === 'string' && /gemini|generative|vertex ai/i.test(raw.service_name))
+    .map((raw) => ({
+      title: typeof raw.external_desc === 'string' ? raw.external_desc : 'unnamed incident',
+      impact: typeof raw.severity === 'string' ? raw.severity : 'unknown',
+      ...(typeof raw.uri === 'string' ? { url: `https://status.cloud.google.com/${raw.uri}` } : {}),
+    }));
 }
 
 export class LlmProviderLiveClient implements LlmProviderBackend {
@@ -258,36 +350,250 @@ export class LlmProviderLiveClient implements LlmProviderBackend {
     };
   }
 
-  // ── Task 8 implements these three ──
+  /** OpenRouter reports credit, not request headroom — read it from the key-info body. */
+  private openRouterCredit(body: unknown): { limit: number | null; remaining: number | null } {
+    if (typeof body !== 'object' || body === null) return { limit: null, remaining: null };
+    const data = (body as { data?: unknown }).data;
+    if (typeof data !== 'object' || data === null) return { limit: null, remaining: null };
+    const d = data as { limit?: unknown; limit_remaining?: unknown };
+    return {
+      limit: typeof d.limit === 'number' ? d.limit : null,
+      remaining: typeof d.limit_remaining === 'number' ? d.limit_remaining : null,
+    };
+  }
 
   async checkRateLimitHeadroom(): Promise<RateLimitHeadroom> {
-    return {
+    const unknown = (detail: string): RateLimitHeadroom => ({
       provider: this.spec.id,
       known: false,
       requestsRemainingPct: null,
       tokensRemainingPct: null,
-      detail: 'Rate-limit headroom reading is not implemented yet.',
+      detail,
+    });
+
+    if (this.config.apiKey === '') {
+      return unknown(`No ${this.spec.label} API key, so no authenticated response to read rate-limit signals from.`);
+    }
+
+    const probe = await this.probeAuth();
+    if (probe.networkError !== null || probe.httpStatus === null) {
+      return unknown(`${this.spec.apiHost} could not be reached, so rate-limit headroom is unknown.`);
+    }
+
+    if (this.spec.id === 'openrouter') {
+      const { limit, remaining } = this.openRouterCredit(probe.body);
+      const pct = percentage(remaining, limit);
+      if (pct === null) {
+        return unknown(`This ${this.spec.label} key has no credit limit set, so there is no headroom percentage to report.`);
+      }
+      return {
+        provider: this.spec.id,
+        known: true,
+        requestsRemainingPct: pct,
+        tokensRemainingPct: null,
+        detail: `${this.spec.label} credit headroom: ${pct}% of the key's credit limit remains.`,
+      };
+    }
+
+    if (!this.spec.rateLimitHeaderPrefix) {
+      return unknown(`${this.spec.label} does not publish rate-limit response headers — headroom is unknown, not zero.`);
+    }
+
+    const { requestsRemainingPct, tokensRemainingPct } = parseHeadroomFromHeaders(
+      probe.headers,
+      this.spec.rateLimitHeaderPrefix,
+    );
+    if (requestsRemainingPct === null && tokensRemainingPct === null) {
+      return unknown(
+        `${this.spec.label} returned no rate-limit headers on this endpoint — headroom is unknown. CrisisMode will not send a billable request just to read them.`,
+      );
+    }
+
+    const parts: string[] = [];
+    if (requestsRemainingPct !== null) parts.push(`${requestsRemainingPct}% of requests`);
+    if (tokensRemainingPct !== null) parts.push(`${tokensRemainingPct}% of tokens`);
+    const low = (requestsRemainingPct ?? 100) < 20 || (tokensRemainingPct ?? 100) < 20;
+
+    return {
+      provider: this.spec.id,
+      known: true,
+      requestsRemainingPct,
+      tokensRemainingPct,
+      detail: low
+        ? `${this.spec.label} rate-limit headroom is low: ${parts.join(' and ')} remain — requests may start failing.`
+        : `${this.spec.label} rate-limit headroom: ${parts.join(' and ')} remain.`,
     };
   }
 
+  /**
+   * The models list, following pagination when the provider's spec declares
+   * it (`paginated: true` — Google today). Unpaginated providers keep the
+   * original behavior: reuse the auth probe's own body when the provider
+   * authenticates via the models endpoint itself (no separate `keyInfoUrl`),
+   * so `checkKeyValidity()` and `checkModel()` share one request; providers
+   * with a `keyInfoUrl` (OpenRouter) fetch the models list separately.
+   * Paginated providers always fetch their own page sequence — the
+   * `pageSize=1000` query string has nothing in common with the auth probe's
+   * URL, so there is no request to share regardless.
+   */
+  private async fetchModelList(): Promise<ModelListFetch> {
+    if (!this.spec.paginated) {
+      if (!this.spec.keyInfoUrl) {
+        const probe = await this.probeAuth();
+        return { pages: [probe], truncated: false };
+      }
+      this.modelListFetch ??= (async () => ({
+        pages: [await this.get(this.spec.modelsUrl, this.authHeaders())],
+        truncated: false,
+      }))();
+      return this.modelListFetch;
+    }
+
+    this.modelListFetch ??= (async () => {
+      const pages: HttpProbe[] = [];
+      let url = `${this.spec.modelsUrl}?pageSize=1000`;
+      let truncated = false;
+      for (let page = 0; page < MAX_MODEL_LIST_PAGES; page++) {
+        const probe = await this.get(url, this.authHeaders());
+        pages.push(probe);
+        if (probe.networkError !== null || probe.httpStatus === null || probe.httpStatus >= 300) break;
+        const nextPageToken = (probe.body as { nextPageToken?: unknown } | null)?.nextPageToken;
+        if (typeof nextPageToken !== 'string' || nextPageToken === '') break;
+        if (page === MAX_MODEL_LIST_PAGES - 1) {
+          truncated = true;
+          break;
+        }
+        url = `${this.spec.modelsUrl}?pageSize=1000&pageToken=${encodeURIComponent(nextPageToken)}`;
+      }
+      return { pages, truncated };
+    })();
+    return this.modelListFetch;
+  }
+
   async checkModel(): Promise<ModelCheck> {
-    return {
+    const configured = this.config.configuredModel
+      ? { model: this.config.configuredModel, source: 'config' as const }
+      : (() => {
+          const envVar = this.spec.modelEnvVars.find((name) => (this.env[name] ?? '') !== '');
+          return envVar ? { model: this.env[envVar]!, source: 'env' as const } : null;
+        })();
+
+    const base = {
       provider: this.spec.id,
-      configuredModel: null,
-      source: null,
-      listKnown: false,
-      presentInList: null,
-      sampleModels: [],
-      detail: 'Model verification is not implemented yet.',
+      configuredModel: configured?.model ?? null,
+      source: configured?.source ?? null,
+    };
+
+    if (this.config.apiKey === '') {
+      return { ...base, listKnown: false, presentInList: null, sampleModels: [], detail: `No ${this.spec.label} API key, so the live model list could not be read.` };
+    }
+
+    const { pages, truncated } = await this.fetchModelList();
+
+    // "Could not read the list" and "the list is empty" are different facts.
+    // Only the first is an unknown; the second definitively answers whether a
+    // configured model is present (it is not). A failed page anywhere in a
+    // paginated fetch means the list is incomplete, so it gets the same
+    // unknown treatment as a single unreadable page — the configured model
+    // might live on a page that was never successfully fetched.
+    const failedPage = pages.find((p) => p.networkError !== null || p.httpStatus === null || p.httpStatus >= 300);
+    if (failedPage) {
+      return {
+        ...base,
+        listKnown: false,
+        presentInList: null,
+        sampleModels: [],
+        detail: `${this.spec.label}'s model list could not be read (${failedPage.networkError ?? `HTTP ${failedPage.httpStatus}`}), so the configured model could not be verified.`,
+      };
+    }
+
+    const models = pages.flatMap((p) => extractModelIds(p.body, this.spec.modelsJsonShape));
+
+    // Every fetched page read fine, but the provider says there are more
+    // pages than MAX_MODEL_LIST_PAGES follows. A hit within what was already
+    // fetched is still a definitive presence regardless of truncation — only
+    // the "not present" conclusion is unsafe to draw from a partial list, and
+    // only when a model is actually configured to check against.
+    if (configured && truncated && !models.includes(configured.model)) {
+      return {
+        ...base,
+        listKnown: false,
+        presentInList: null,
+        sampleModels: models.slice(0, 5),
+        detail: `${this.spec.label}'s model list has more pages than this check follows (checked ${pages.length}), so the configured model could not be conclusively verified.`,
+      };
+    }
+
+    if (models.length === 0) {
+      return {
+        ...base,
+        listKnown: true,
+        presentInList: configured ? false : null,
+        sampleModels: [],
+        detail: configured
+          ? `${this.spec.label} returned an empty model list, so the configured model '${configured.model}' is not available to this key. This usually means the key has no model access granted.`
+          : `${this.spec.label} returned an empty model list and no model id is configured — nothing to verify.`,
+      };
+    }
+
+    if (!configured) {
+      return {
+        ...base,
+        listKnown: true,
+        presentInList: null,
+        sampleModels: models.slice(0, 5),
+        detail: `${this.spec.label} lists ${models.length} models, but no model id is configured (set ${this.spec.modelEnvVars[0]} or targets[].llm.model) — nothing to verify.`,
+      };
+    }
+
+    const present = models.includes(configured.model);
+    return {
+      ...base,
+      listKnown: true,
+      presentInList: present,
+      sampleModels: models.slice(0, 5),
+      detail: present
+        ? `The configured model '${configured.model}' is available on ${this.spec.label}.`
+        : `The configured model '${configured.model}' is not in ${this.spec.label}'s live model list — this is a config mismatch and requests naming it will fail. Currently available: ${models.slice(0, 5).join(', ')}.`,
     };
   }
 
   async checkProviderStatus(): Promise<ProviderStatusReport> {
-    return {
+    const unknown = (detail: string): ProviderStatusReport => ({
       provider: this.spec.id,
       known: false,
       ongoingIncidents: [],
-      detail: 'Provider status reading is not implemented yet.',
+      detail,
+    });
+
+    if (!this.spec.statusUrl || !this.spec.statusFormat) {
+      return unknown(`${this.spec.label} publishes no status API CrisisMode can read.`);
+    }
+
+    this.statusProbe ??= this.get(this.spec.statusUrl, {});
+    const probe = await this.statusProbe;
+
+    if (probe.networkError !== null || probe.httpStatus === null || probe.httpStatus >= 300) {
+      return unknown(`${this.spec.label}'s status page could not be read (${probe.networkError ?? `HTTP ${probe.httpStatus}`}) — provider status is unknown.`);
+    }
+
+    const incidents =
+      this.spec.statusFormat === 'statuspage_v2'
+        ? parseStatuspageIncidents(probe.body)
+        : parseGoogleCloudIncidents(probe.body);
+
+    if (incidents === null) {
+      return unknown(`${this.spec.label}'s status page returned a shape CrisisMode does not recognise — provider status is unknown.`);
+    }
+
+    return {
+      provider: this.spec.id,
+      known: true,
+      ongoingIncidents: incidents,
+      detail:
+        incidents.length === 0
+          ? `${this.spec.label} reports no ongoing incidents.`
+          : `${this.spec.label} reports ${incidents.length} ongoing incident${incidents.length === 1 ? '' : 's'}: ${incidents.map((i) => `${i.title} (${i.impact})`).join('; ')}.`,
     };
   }
 
