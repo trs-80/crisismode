@@ -106,6 +106,15 @@ describe('shared bounded-execution machinery', () => {
     expect(typeof viaProfile.latencyMs).toBe('number');
   });
 
+  // runBounded's durationMs comes from performance.now() arithmetic (a
+  // float); probeDns must round it before it lands in the profile, or
+  // verbose output prints "DNS: OK (12.743958200000001ms)" instead of whole
+  // milliseconds like every other probe in this module.
+  it('rounds DNS probe latency to whole milliseconds', async () => {
+    const profile = await probeNetwork();
+    expect(Number.isInteger(profile.dns.latencyMs)).toBe(true);
+  });
+
   // This module and triage answer different DNS questions on purpose. The
   // behavioral difference only shows up on hosts where getaddrinfo and a raw
   // query disagree (hosts-file entries, split-DNS), so a runtime assertion

@@ -148,7 +148,7 @@ export function setNetworkProfile(profile: NetworkProfile): void {
  */
 async function probeDns(): Promise<{ available: boolean; latencyMs: number }> {
   const outcome = await runBounded(() => lookup(DNS_TEST_HOST), PROBE_TIMEOUT_MS);
-  return { available: outcome.ok, latencyMs: outcome.durationMs };
+  return { available: outcome.ok, latencyMs: Math.round(outcome.durationMs) };
 }
 
 async function probeEndpoints(
