@@ -209,7 +209,8 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/agent/kubernetes/` | Kubernetes cluster recovery agent |
 | `src/agent/ceph/` | Ceph storage recovery agent |
 | `src/agent/flink/` | Flink stream processing recovery agent |
-| `src/agent/ai-provider/` | AI service failover and fallback agent |
+| `src/agent/llm-provider/` | LLM provider diagnosis agent — API key, quota/billing, rate-limit headroom, model deprecation, provider status |
+| `src/agent/ai-provider/` | AI service failover and fallback agent (explicit config and demo only) |
 | `src/agent/config-drift/` | Configuration drift detection and remediation agent |
 | `src/agent/db-migration/` | Database migration safety and rollback agent |
 | `src/agent/deploy-rollback/` | Deployment rollback orchestration agent |

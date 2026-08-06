@@ -136,7 +136,8 @@ Status legend:
 | Scenario | Agent | Status |
 |---|---|---|
 | Bad deploy rollback | Deploy Rollback | Live (execute-capable) -- Vercel, requires `VERCEL_TOKEN` |
-| AI provider degradation / failover | AI Provider | Live (execute-capable) -- not yet torture-tested |
+| LLM provider failures (key, quota, rate limit, model, outage) | LLM Provider | Live (diagnosis only) -- validated against real Anthropic and OpenAI keys; Google and OpenRouter paths implemented, best-effort validated |
+| AI provider degradation / failover | AI Provider | Simulator -- explicit config and demo only; no longer auto-detected from API keys |
 | Database migration failures | DB Migration | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
 | Queue and worker backlog | Queue Backlog | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
 | Config and environment drift | Config Drift | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
