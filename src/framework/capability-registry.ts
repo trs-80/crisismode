@@ -265,14 +265,14 @@ let CAPABILITIES: CapabilityDefinition[] = [
     id: 'llm.provider.key.verify',
     actionKind: 'read',
     description: 'Verify an LLM provider API key with a free, read-only metadata call.',
-    targetKinds: ['llm-provider'],
+    targetKinds: ['llm-provider.anthropic', 'llm-provider.openai', 'llm-provider.google', 'llm-provider.openrouter'],
     manualFallback: 'Call the provider\'s models endpoint with your key using curl and read the HTTP status.',
   },
   {
     id: 'llm.provider.status.read',
     actionKind: 'read',
     description: 'Read an LLM provider\'s rate-limit headroom, model list, and public status page.',
-    targetKinds: ['llm-provider'],
+    targetKinds: ['llm-provider.anthropic', 'llm-provider.openai', 'llm-provider.google', 'llm-provider.openrouter'],
     manualFallback: 'Open the provider\'s status page and usage dashboard in a browser.',
   },
 
