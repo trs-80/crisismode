@@ -668,17 +668,25 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
   if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt, options);
   const targetsStart = performance.now();
   const boundedTargets = targets.slice(0, MAX_STAGE4_TARGETS);
-  const omittedTargets = targets.length - boundedTargets.length;
-  const targetProbes: ProbeResult[] = await mapWithConcurrency(
+  let omittedTargets = targets.length - boundedTargets.length;
+  const targetOutcomes = await mapWithConcurrency(
     boundedTargets,
     TARGET_PROBE_CONCURRENCY,
     async (t) => {
-      const outcome = await runBounded(() => probes.connectTcp(t.host, t.port, t.label), budget());
+      const remaining = budget();
+      // Budget already gone: this target was never probed. Report it as
+      // omitted rather than as a measured "did not answer" — a zero-budget
+      // runBounded call times out immediately and would otherwise be
+      // indistinguishable from a real unreachable target.
+      if (remaining === 0) return null;
+      const outcome = await runBounded(() => probes.connectTcp(t.host, t.port, t.label), remaining);
       return outcome.ok
         ? outcome.value
         : { target: t.label, reachable: false, latencyMs: outcome.durationMs, error: outcome.error };
     },
   );
+  const targetProbes: ProbeResult[] = targetOutcomes.filter((p): p is ProbeResult => p !== null);
+  omittedTargets += targetOutcomes.length - targetProbes.length;
   layers.push(buildTargetsLayer(targetProbes, performance.now() - targetsStart, omittedTargets));
 
   return finish(layers, observer, wallClockStartedAt, startedAt, options);

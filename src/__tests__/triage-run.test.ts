@@ -126,6 +126,44 @@ describe('runTriage', () => {
     expect(maxInFlight).toBeLessThanOrEqual(5);
   });
 
+  // The whole-run deadline can expire mid-Stage-4, after the first wave of
+  // TARGET_PROBE_CONCURRENCY (5) probes has already used up the entire
+  // budget via runBounded's own timeout. The targets queued behind that wave
+  // were never opened as a socket and must be reported as omitted, not
+  // folded into "did not accept a connection" — a claim triage never
+  // actually measured.
+  it('omits targets it never got to probe when the deadline expires mid-stage, instead of claiming they were unreachable', async () => {
+    vi.useFakeTimers();
+    try {
+      const sevenTargets = Array.from({ length: 7 }, (_, i) => (
+        { host: '127.0.0.1', port: 5000 + i, label: `svc-${i}` }
+      ));
+      const pending = runTriage({
+        // Never resolves: the first wave's own runBounded timeout is what
+        // exhausts the deadline, deterministically, with no race against a
+        // mock-controlled resolution time.
+        probes: healthyProbes({ connectTcp: () => new Promise(() => {}) }),
+        observerContext: laptop,
+        timeoutMs: 1_000,
+        deadlineMs: 50,
+        targets: sevenTargets,
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const report = await pending;
+      const targetsLayer = report.layers.find((l) => l.layer === 'targets')!;
+      // Only the first wave (concurrency limit 5) was ever attempted.
+      expect(targetsLayer.probes).toHaveLength(5);
+      const probed = targetsLayer.probes!.map((p) => p.target);
+      expect(probed).not.toContain('svc-5');
+      expect(probed).not.toContain('svc-6');
+      expect(targetsLayer.detail).not.toContain('svc-5');
+      expect(targetsLayer.detail).not.toContain('svc-6');
+      expect(targetsLayer.detail).toContain('2 additional target(s)');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // The OUTER bound: a probe that ignores its own timeout (only reachable via
   // an injected pathological probe — the real ones bound themselves, see the
   // boundedResolve tests in Task 6) is still cut off, and the honest result of
