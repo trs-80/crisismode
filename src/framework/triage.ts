@@ -221,3 +221,76 @@ export function synthesizeVerdict(layers: TriageLayerResult[]): TriageVerdict {
   if (layers.some((l) => l.layer !== 'gateway' && l.status === 'unknown')) return 'mixed';
   return 'healthy';
 }
+
+// ── Verdict explanation (pure) ──
+
+export interface TriageExplanation {
+  explanation: string;
+  nextStep: string;
+}
+
+const LAYER_CAUSE_LABEL: Record<TriageLayerCode, string> = {
+  'no-active-interface': 'no active network interface on this machine',
+  'gateway-unknown': 'the default gateway could not be determined',
+  'resolver-broken': 'this machine\'s DNS resolver is not answering',
+  'dns-unreachable': 'DNS is not resolving from this machine',
+  'captive-portal': 'a captive portal (network sign-in page) is intercepting traffic',
+  'internet-unreachable': 'this machine has no internet egress',
+  'targets-unreachable': 'your services did not accept a connection',
+  'targets-partial': 'some services answered and others did not',
+};
+
+/** Plain-language cause for a layer code. */
+export function layerCauseLabel(code: TriageLayerCode): string {
+  return LAYER_CAUSE_LABEL[code];
+}
+
+/**
+ * The first failing layer's code in probe order — the cause we lead with.
+ * The gateway layer is skipped: it is context, not evidence.
+ */
+export function primaryFailureCode(layers: TriageLayerResult[]): TriageLayerCode | null {
+  for (const l of layers) {
+    if (l.layer === 'gateway') continue;
+    if (l.status === 'fail' && l.code !== undefined) return l.code;
+  }
+  return null;
+}
+
+export function explainVerdict(verdict: TriageVerdict, layers: TriageLayerResult[]): TriageExplanation {
+  const code = primaryFailureCode(layers);
+  const cause = code === null ? 'the failing layer could not be identified' : layerCauseLabel(code);
+  const layerNextStep = code === null
+    ? undefined
+    : layers.find((l) => l.code === code)?.nextStep;
+
+  switch (verdict) {
+    case 'local':
+      return {
+        explanation: `Something on this machine is broken: ${cause}. Your services may be perfectly healthy.`,
+        nextStep: layerNextStep
+          ?? 'Check this machine\'s network settings (Wi-Fi, VPN, DNS configuration) before looking at your services.',
+      };
+    case 'network':
+      return {
+        explanation: `This machine looks fine, but the network it is on does not: ${cause}. Your services may be perfectly healthy.`,
+        nextStep: layerNextStep
+          ?? 'Fix the network path (router, Wi-Fi sign-in, VPN) before looking at your services.',
+      };
+    case 'remote':
+      return {
+        explanation: 'This machine and its network are fine — the services themselves did not answer.',
+        nextStep: 'Run `crisismode scan` to diagnose the services.',
+      };
+    case 'mixed':
+      return {
+        explanation: 'Results conflict, so triage cannot say where the problem is. Read the per-layer lines below and treat failing layers as leads, not conclusions.',
+        nextStep: 'Re-run `crisismode triage` in a few seconds; if the layers still disagree, investigate the failing layers individually.',
+      };
+    case 'healthy':
+      return {
+        explanation: 'This machine, its network, and everything triage could reach look fine.',
+        nextStep: 'Nothing to fix here — if a service is failing, run `crisismode scan` to check the services themselves.',
+      };
+  }
+}
