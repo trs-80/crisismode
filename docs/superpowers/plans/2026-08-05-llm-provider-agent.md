@@ -12,13 +12,13 @@
 
 Every task's requirements implicitly include this section.
 
-- **Kind:** `llm-provider`. **Agent name:** `llm-provider-diagnosis`. **Manifest maturity:** `live_validated`. **maxRiskLevel:** `routine`.
+- **Kind:** four provider-scoped kinds — `llm-provider.anthropic`, `llm-provider.openai`, `llm-provider.google`, `llm-provider.openrouter` — one registration per kind, all sharing one `agent.ts` / `backend.ts` / `live-client.ts` implementation parameterized by provider id. There is no blanket `llm-provider` kind. This is load-bearing, not cosmetic: maturity in this codebase is a property of a whole registration (`buildMaturityByKind` keys by the registration's `kind`, taking the *weakest* value when several registrations share a kind), so a single shared kind would either misreport Google/OpenRouter as `live_validated` or drag Anthropic/OpenAI down to `simulator_only`. Per-provider kinds give each provider its own maturity bucket using the existing kind-keyed machinery — see the design doc's "Maturity claim" section. **Agent name (all four):** `llm-provider-diagnosis`. **Manifest maturity (per kind):** `live_validated` for `llm-provider.anthropic` and `llm-provider.openai`; `simulator_only` for `llm-provider.google` and `llm-provider.openrouter`. **maxRiskLevel:** `routine` for all four.
 - **Six check ids, exact strings:** `llm-provider.key_present`, `llm-provider.key_valid`, `llm-provider.quota_billing`, `llm-provider.rate_limit_headroom`, `llm-provider.model_deprecated`, `llm-provider.provider_status`. **Canonical series ruling:** they live in a keyed `as const` object named `LLM_PROVIDER_CHECK_IDS` in its own dependency-free file, `src/agent/llm-provider/check-ids.ts`, and are re-exported from `backend.ts` for in-agent use. PR 5 imports from `check-ids.js` and enumerates with `Object.values(LLM_PROVIDER_CHECK_IDS)` — keep the keyed object shape, do not convert it to an array.
 - **`checkId` is a NEW optional field** on `HealthSignal` and `DiagnosisFinding` (agent-sdk) and on `ScanFinding` (`src/cli/output.ts`). Optional so no existing agent is affected. PR 5 keys its scan-path guidance on the `HealthSignal`/`ScanFinding` id and its diagnose-path guidance purely on the `DiagnosisFinding` id, so **every signal and every diagnosis finding this agent emits must carry one**.
 - **Stay inside scan's per-agent budget.** `AGENT_TIMEOUT_MS` in `src/cli/commands/scan.ts:51` is 2000ms, and a timeout substitutes a canned assessment with `signals: []` — which silently destroys every `checkId` and with it PR 5's guidance. The live client's per-request timeout therefore defaults to **1500ms** and registration sets it explicitly. All network checks run concurrently, so wall time is one request, not four.
 - **Providers (v1):** anthropic, openai, google, openrouter. Google's key env vars are `GOOGLE_AI_API_KEY` (existing convention), `GEMINI_API_KEY`, `GOOGLE_API_KEY`, in that priority order.
 - **`src/agent/llm-provider/provider-table.ts` is the single source of truth for AI env vars.** `src/agent/ai-provider/provider-table.ts` re-exports `AI_ENV_VARS` from it; `src/cli/autodiscovery.ts` imports it from there too.
-- **Autodiscovery derives one `llm-provider` target per detected provider.** The `derived-ai-provider` derivation is REMOVED. `ai-provider` stays registered in `builtin-agents.ts` for explicitly configured targets and demo mode only.
+- **Autodiscovery derives one target per detected provider, of kind `llm-provider.<provider>`.** No blanket `llm-provider` kind and no `derived-ai-provider` target. The `derived-ai-provider` derivation is REMOVED. `ai-provider` stays registered in `builtin-agents.ts` for explicitly configured targets and demo mode only.
 - **`process.env` only.** Never read, parse, or stat `.env`, `.env.local`, or any secrets file. If a key is absent from the process environment, say so and name the no-`.env`-parsing rule in the user-facing text.
 - **Key secrecy:** key material never appears in output, logs, plans, findings, forensics, target names, or notes. Keys are referenced by provider name plus a last-4 fingerprint (`fingerprintKey`). Task 7 contains the enforcing no-leak test.
 - **No provider SDKs, no new dependencies.** Raw `fetch` only. Do not add anything to `package.json`.
@@ -51,9 +51,9 @@ Every task's requirements implicitly include this section.
 | `simulator.ts` | In-memory scenarios: healthy, no_key, bad_key, quota_exhausted, rate_limited, deprecated_model, provider_incident. |
 | `live-client.ts` | `fetch`-based implementation: one cached auth probe + one status fetch, error classification, ratelimit header parsing, model list comparison. |
 | `offline-gate.ts` | The single seam onto PR 2's triage verdict. |
-| `manifest.ts` | `AgentManifest` — `live_validated`, `routine`, read-only execution context. |
-| `agent.ts` | `LlmProviderDiagnosisAgent` — `assessHealth`, `diagnose`, `plan`, `replan`. |
-| `registration.ts` | Lazy factory via `createLiveRegistration`. |
+| `manifest.ts` | `buildLlmProviderManifest(providerId)` factory + one exported `AgentManifest` per provider (`anthropicManifest`, `openaiManifest`, `googleManifest`, `openrouterManifest`, plus a `llmProviderManifests` map), each `routine`, read-only, with its own per-provider maturity. |
+| `agent.ts` | `LlmProviderDiagnosisAgent` — `assessHealth`, `diagnose`, `plan`, `replan`; parameterized by provider id (derived from its backend's `getProviderId()`). |
+| `registration.ts` | `buildLlmProviderRegistration(providerId)` factory via `createLiveRegistration`, one call per provider — four registrations, one per `llm-provider.<provider>` kind. |
 
 **Modified:**
 
@@ -61,16 +61,16 @@ Every task's requirements implicitly include this section.
 |---|---|
 | `packages/agent-sdk/src/types/health.ts` | `HealthSignal.checkId?: string` |
 | `packages/agent-sdk/src/types/diagnosis-result.ts` | `DiagnosisFinding.checkId?: string` |
-| `src/cli/visibility.ts` | One watching row per derived target, not per kind |
-| `src/framework/capability-registry.ts` | Two read capabilities for `llm-provider` |
+| `src/cli/visibility.ts` | No source change — per-provider kinds already produce one watching row per kind; a regression test confirms it |
+| `src/framework/capability-registry.ts` | Two read capabilities, each declaring `targetKinds` for all four `llm-provider.<provider>` kinds |
 | `src/framework/signal-explanations.ts` | Two `EXPLANATIONS` entries for `llm_*` sources |
-| `src/config/builtin-agents.ts` | Register `llmProviderRegistration` |
+| `src/config/builtin-agents.ts` | Register all four `llmProviderRegistrations` (one per provider kind) |
 | `src/config/schema.ts` | `LlmTargetOptions` + `TargetConfig.llm` + `ResolvedTarget.llm` |
 | `src/config/resolve.ts` | Pass `llm` through |
-| `src/cli/errors.ts` | Add `llm-provider` to `SUPPORTED_KINDS` |
-| `src/cli/commands/scan.ts` | `KIND_PREFIX`, `checkId` on findings, `aiKeyBlockedEntries` |
+| `src/cli/errors.ts` | Add the four `llm-provider.<provider>` kinds to `SUPPORTED_KINDS` |
+| `src/cli/commands/scan.ts` | `KIND_PREFIX` (four entries, all `'LLM'`), `checkId` on findings, `aiKeyBlockedEntries` |
 | `src/cli/output.ts` | `ScanFinding.checkId?`, signal `checkId?` |
-| `src/cli/autodiscovery.ts` | Per-provider `llm-provider` derivation; remove `derived-ai-provider`; dedupe `detectAiProviders`; new AI SDK deps |
+| `src/cli/autodiscovery.ts` | Per-provider `llm-provider.<provider>` derivation; remove `derived-ai-provider`; dedupe `detectAiProviders`; new AI SDK deps |
 | `src/agent/ai-provider/provider-table.ts` | Re-export `AI_ENV_VARS` from the llm-provider table |
 | `README.md`, `CLAUDE.md` | Agent tables |
 
@@ -1132,8 +1132,8 @@ git commit -m "feat(llm-provider): add scenario simulator for the six checks"
 - Test: `src/__tests__/llm-provider-agent.test.ts` (created here, extended in Tasks 5–6)
 
 **Interfaces:**
-- Consumes: `MANIFEST_API_VERSION`, `RECOVERY_AGENT_COMPATIBILITY_MODE`, `defaultManifestMetadata` from `src/framework/manifest-defaults.js`; `AgentManifest` from `src/types/manifest.js`.
-- Produces: `const llmProviderManifest: AgentManifest` (agent name `llm-provider-diagnosis`, version `1.0.0`, maturity `live_validated`, `maxRiskLevel: 'routine'`, execution context `llm_read` declaring capabilities `llm.provider.status.read` and `llm.provider.key.verify`).
+- Consumes: `MANIFEST_API_VERSION`, `RECOVERY_AGENT_COMPATIBILITY_MODE`, `defaultManifestMetadata` from `src/framework/manifest-defaults.js`; `AgentManifest` from `src/types/manifest.js`; `LLM_PROVIDERS`, `LlmProviderId` from `src/agent/llm-provider/provider-table.js` (Task 1).
+- Produces: `function buildLlmProviderManifest(providerId: LlmProviderId): AgentManifest` (agent name `llm-provider-diagnosis` for every provider, version `1.0.0`, `maxRiskLevel: 'routine'`, execution context `llm_read` declaring capabilities `llm.provider.status.read` and `llm.provider.key.verify`) plus `const LLM_PROVIDER_MATURITY: Record<LlmProviderId, 'live_validated' | 'simulator_only'>` (`anthropic`/`openai` → `live_validated`, `google`/`openrouter` → `simulator_only` — see the design doc's Maturity claim), the four built manifests exported by name (`anthropicManifest`, `openaiManifest`, `googleManifest`, `openrouterManifest`), and `const llmProviderManifests: Record<LlmProviderId, AgentManifest>` for Task 9's registration factory to index into.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1144,28 +1144,52 @@ Create `src/__tests__/llm-provider-agent.test.ts` (Tasks 5 and 6 append to this 
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect } from 'vitest';
-import { llmProviderManifest } from '../agent/llm-provider/manifest.js';
+import {
+  buildLlmProviderManifest,
+  llmProviderManifests,
+  LLM_PROVIDER_MATURITY,
+} from '../agent/llm-provider/manifest.js';
+import { LLM_PROVIDERS } from '../agent/llm-provider/provider-table.js';
 import { isKnownCapability } from '../framework/capability-registry.js';
 import { explainSource } from '../framework/signal-explanations.js';
 
-describe('llmProviderManifest', () => {
-  it('claims live_validated maturity at routine risk', () => {
-    expect(llmProviderManifest.metadata.plugin.maturity).toBe('live_validated');
-    expect(llmProviderManifest.spec.riskProfile.maxRiskLevel).toBe('routine');
-    expect(llmProviderManifest.spec.riskProfile.dataLossPossible).toBe(false);
-    expect(llmProviderManifest.spec.riskProfile.serviceDisruptionPossible).toBe(false);
-  });
-
-  it('declares only read privilege — this agent never mutates', () => {
-    for (const ctx of llmProviderManifest.spec.executionContexts) {
-      expect(ctx.privilege).toBe('read');
+describe('llm-provider manifests', () => {
+  it('claims the per-provider maturity at routine risk for every provider', () => {
+    for (const spec of LLM_PROVIDERS) {
+      const manifest = llmProviderManifests[spec.id];
+      expect(manifest.metadata.plugin.maturity).toBe(LLM_PROVIDER_MATURITY[spec.id]);
+      expect(manifest.spec.riskProfile.maxRiskLevel).toBe('routine');
+      expect(manifest.spec.riskProfile.dataLossPossible).toBe(false);
+      expect(manifest.spec.riskProfile.serviceDisruptionPossible).toBe(false);
     }
   });
 
-  it('registers every capability it declares', () => {
-    for (const ctx of llmProviderManifest.spec.executionContexts) {
-      for (const capability of ctx.capabilities ?? []) {
-        expect(isKnownCapability(capability), `unregistered capability ${capability}`).toBe(true);
+  it('gives anthropic and openai live_validated, and google and openrouter simulator_only', () => {
+    expect(LLM_PROVIDER_MATURITY.anthropic).toBe('live_validated');
+    expect(LLM_PROVIDER_MATURITY.openai).toBe('live_validated');
+    expect(LLM_PROVIDER_MATURITY.google).toBe('simulator_only');
+    expect(LLM_PROVIDER_MATURITY.openrouter).toBe('simulator_only');
+  });
+
+  it('builds a fresh manifest object per call, not a shared mutable singleton', () => {
+    expect(buildLlmProviderManifest('anthropic')).not.toBe(buildLlmProviderManifest('anthropic'));
+    expect(buildLlmProviderManifest('anthropic')).toEqual(llmProviderManifests.anthropic);
+  });
+
+  it('declares only read privilege — this agent never mutates, for every provider', () => {
+    for (const spec of LLM_PROVIDERS) {
+      for (const ctx of llmProviderManifests[spec.id].spec.executionContexts) {
+        expect(ctx.privilege).toBe('read');
+      }
+    }
+  });
+
+  it('registers every capability it declares, for every provider', () => {
+    for (const spec of LLM_PROVIDERS) {
+      for (const ctx of llmProviderManifests[spec.id].spec.executionContexts) {
+        for (const capability of ctx.capabilities ?? []) {
+          expect(isKnownCapability(capability), `unregistered capability ${capability}`).toBe(true);
+        }
       }
     }
   });
@@ -1204,75 +1228,110 @@ import {
   RECOVERY_AGENT_COMPATIBILITY_MODE,
   defaultManifestMetadata,
 } from '../../framework/manifest-defaults.js';
+import { LLM_PROVIDERS, type LlmProviderId } from './provider-table.js';
 
-export const llmProviderManifest: AgentManifest = {
-  apiVersion: MANIFEST_API_VERSION,
-  kind: 'AgentManifest',
-  metadata: {
-    name: 'llm-provider-diagnosis',
-    version: '1.0.0',
-    description:
-      'Read-only health checks for the LLM provider layer an AI app depends on: API key presence and validity, quota and billing state, rate-limit headroom, configured-model availability, and provider incidents.',
-    ...defaultManifestMetadata(),
-    tags: ['llm', 'ai-provider', 'api-key', 'quota', 'rate-limit'],
-    plugin: {
-      id: 'llm-provider.diagnosis',
-      kind: 'domain_pack',
-      maturity: 'live_validated',
-      compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
-    },
-  },
-  spec: {
-    targetSystems: [
-      {
-        technology: 'llm-provider',
-        versionConstraint: '*',
-        components: ['api-key', 'quota', 'rate-limit', 'model', 'provider-status'],
+/**
+ * Maturity is per PROVIDER, not per agent: Anthropic and OpenAI have been
+ * validated against real keys (see the verify-skill record in Task 14's
+ * commit), Google and OpenRouter have the identical live code path but no
+ * real-key validation yet. Each provider gets its own registration under its
+ * own kind (`llm-provider.<provider>`, wired up in Task 9) so the existing
+ * kind-keyed maturity machinery (`buildMaturityByKind`) buckets them
+ * correctly without averaging one provider's validation state into another's.
+ */
+export const LLM_PROVIDER_MATURITY: Record<LlmProviderId, 'live_validated' | 'simulator_only'> = {
+  anthropic: 'live_validated',
+  openai: 'live_validated',
+  google: 'simulator_only',
+  openrouter: 'simulator_only',
+};
+
+/** Build the manifest for one provider's `llm-provider.<provider>` registration. */
+export function buildLlmProviderManifest(providerId: LlmProviderId): AgentManifest {
+  const spec = LLM_PROVIDERS.find((p) => p.id === providerId);
+  if (!spec) throw new Error(`Unknown llm-provider id "${providerId}"`);
+
+  return {
+    apiVersion: MANIFEST_API_VERSION,
+    kind: 'AgentManifest',
+    metadata: {
+      name: 'llm-provider-diagnosis',
+      version: '1.0.0',
+      description: `Read-only health checks for ${spec.label}, the LLM provider an AI app depends on: API key presence and validity, quota and billing state, rate-limit headroom, configured-model availability, and provider incidents.`,
+      ...defaultManifestMetadata(),
+      tags: ['llm', 'ai-provider', 'api-key', 'quota', 'rate-limit', providerId],
+      plugin: {
+        id: `llm-provider.${providerId}.diagnosis`,
+        kind: 'domain_pack',
+        maturity: LLM_PROVIDER_MATURITY[providerId],
+        compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
       },
-    ],
-    triggerConditions: [
-      { type: 'health_check', name: 'llm_provider_status', status: 'degraded' },
-      { type: 'manual', description: 'Operator-initiated LLM provider check' },
-    ],
-    failureScenarios: [
-      'api_key_missing',
-      'api_key_invalid',
-      'quota_or_billing_exhausted',
-      'rate_limit_headroom_low',
-      'configured_model_unavailable',
-      'provider_incident',
-    ],
-    executionContexts: [
-      {
-        name: 'llm_read',
-        type: 'api_call',
-        privilege: 'read',
-        target: 'llm-provider',
-        allowedOperations: ['llm_provider_check'],
-        capabilities: ['llm.provider.key.verify', 'llm.provider.status.read'],
+    },
+    spec: {
+      targetSystems: [
+        {
+          technology: `llm-provider.${providerId}`,
+          versionConstraint: '*',
+          components: ['api-key', 'quota', 'rate-limit', 'model', 'provider-status'],
+        },
+      ],
+      triggerConditions: [
+        { type: 'health_check', name: 'llm_provider_status', status: 'degraded' },
+        { type: 'manual', description: `Operator-initiated ${spec.label} check` },
+      ],
+      failureScenarios: [
+        'api_key_missing',
+        'api_key_invalid',
+        'quota_or_billing_exhausted',
+        'rate_limit_headroom_low',
+        'configured_model_unavailable',
+        'provider_incident',
+      ],
+      executionContexts: [
+        {
+          name: 'llm_read',
+          type: 'api_call',
+          privilege: 'read',
+          target: `llm-provider.${providerId}`,
+          allowedOperations: ['llm_provider_check'],
+          capabilities: ['llm.provider.key.verify', 'llm.provider.status.read'],
+        },
+      ],
+      observabilityDependencies: {
+        required: ['provider_api_reachability'],
+        optional: ['provider_status_page', 'provider_ratelimit_headers'],
       },
-    ],
-    observabilityDependencies: {
-      required: ['provider_api_reachability'],
-      optional: ['provider_status_page', 'provider_ratelimit_headers'],
+      riskProfile: {
+        maxRiskLevel: 'routine',
+        dataLossPossible: false,
+        serviceDisruptionPossible: false,
+      },
+      humanInteraction: {
+        requiresApproval: false,
+        minimumApprovalRole: 'on_call_engineer',
+        escalationPath: ['on_call_engineer', 'engineering_lead'],
+      },
     },
-    riskProfile: {
-      maxRiskLevel: 'routine',
-      dataLossPossible: false,
-      serviceDisruptionPossible: false,
-    },
-    humanInteraction: {
-      requiresApproval: false,
-      minimumApprovalRole: 'on_call_engineer',
-      escalationPath: ['on_call_engineer', 'engineering_lead'],
-    },
-  },
+  };
+}
+
+export const anthropicManifest = buildLlmProviderManifest('anthropic');
+export const openaiManifest = buildLlmProviderManifest('openai');
+export const googleManifest = buildLlmProviderManifest('google');
+export const openrouterManifest = buildLlmProviderManifest('openrouter');
+
+/** Looked up by Task 9's registration factory, one entry per provider kind. */
+export const llmProviderManifests: Record<LlmProviderId, AgentManifest> = {
+  anthropic: anthropicManifest,
+  openai: openaiManifest,
+  google: googleManifest,
+  openrouter: openrouterManifest,
 };
 ```
 
 - [ ] **Step 4: Register the two capabilities**
 
-In `src/framework/capability-registry.ts`, immediately after the `provider.traffic.shift` entry (the last of the `// ── AI Provider ──` section), add:
+In `src/framework/capability-registry.ts`, immediately after the `provider.traffic.shift` entry (the last of the `// ── AI Provider ──` section), add. `targetKinds` enumerates all four provider-scoped kinds — the capability is the same read operation regardless of which provider's registration performs it:
 
 ```ts
   // ── LLM Provider (read-only diagnosis) ──
@@ -1280,14 +1339,14 @@ In `src/framework/capability-registry.ts`, immediately after the `provider.traff
     id: 'llm.provider.key.verify',
     actionKind: 'read',
     description: 'Verify an LLM provider API key with a free, read-only metadata call.',
-    targetKinds: ['llm-provider'],
+    targetKinds: ['llm-provider.anthropic', 'llm-provider.openai', 'llm-provider.google', 'llm-provider.openrouter'],
     manualFallback: 'Call the provider\'s models endpoint with your key using curl and read the HTTP status.',
   },
   {
     id: 'llm.provider.status.read',
     actionKind: 'read',
     description: 'Read an LLM provider\'s rate-limit headroom, model list, and public status page.',
-    targetKinds: ['llm-provider'],
+    targetKinds: ['llm-provider.anthropic', 'llm-provider.openai', 'llm-provider.google', 'llm-provider.openrouter'],
     manualFallback: 'Open the provider\'s status page and usage dashboard in a browser.',
   },
 ```
@@ -1311,13 +1370,16 @@ In `src/framework/signal-explanations.ts`, insert these two entries into `EXPLAN
 
 - [ ] **Step 6: Add the agent kind to the explanation-coverage enforcement test**
 
-In `src/__tests__/explanation-coverage.test.ts`, add a row to `REPRESENTATIVE_SOURCES` after the `'iac-drift'` row:
+In `src/__tests__/explanation-coverage.test.ts`, add four rows to `REPRESENTATIVE_SOURCES` after the `'iac-drift'` row — one per provider kind, each carrying the same six sources (every provider emits the same signal source names; only the kind and the eventual `checkId`/provider label differ):
 
 ```ts
-  'llm-provider': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
+  'llm-provider.anthropic': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
+  'llm-provider.openai': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
+  'llm-provider.google': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
+  'llm-provider.openrouter': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
 ```
 
-(The first assertion in that test — every kind in `builtinAgents` has a row — only starts covering `llm-provider` once Task 9 registers it. Adding the row now keeps Task 9 from failing an unrelated test.)
+(The first assertion in that test — every kind in `builtinAgents` has a row — only starts covering these four kinds once Task 9 registers them. Adding the rows now keeps Task 9 from failing an unrelated test.)
 
 - [ ] **Step 7: Run the tests and verify they pass**
 
@@ -1344,12 +1406,12 @@ git commit -m "feat(llm-provider): add manifest, read capabilities, and signal e
 - Test: `src/__tests__/llm-provider-agent.test.ts` (append)
 
 **Interfaces:**
-- Consumes: `LlmProviderBackend` and the result types from `backend.js`, `LLM_PROVIDER_CHECK_IDS` from `check-ids.js` (Task 2); `LlmProviderSimulator` from `simulator.js` (Task 3); `llmProviderManifest` from `manifest.js` (Task 4); `getProviderSpec` from `provider-table.js` (Task 1); `getTriageReport(): TriageReport | null` from `src/framework/triage.js` (PR 2).
+- Consumes: `LlmProviderBackend` and the result types from `backend.js`, `LLM_PROVIDER_CHECK_IDS` from `check-ids.js` (Task 2); `LlmProviderSimulator` from `simulator.js` (Task 3); `buildLlmProviderManifest` from `manifest.js` (Task 4); `getProviderSpec` from `provider-table.js` (Task 1); `getTriageReport(): TriageReport | null` from `src/framework/triage.js` (PR 2).
 - Produces:
   - `interface ObserverOffline { verdict: 'local' | 'network'; explanation: string }`
   - `type OfflineGate = () => Promise<ObserverOffline | null>`
   - `const defaultOfflineGate: OfflineGate`
-  - `class LlmProviderDiagnosisAgent implements RecoveryAgent` — `constructor(backend?: LlmProviderBackend, offlineGate?: OfflineGate)`, with `manifest` and `backend` public fields. Task 6 adds `plan`/`replan` to this same class.
+  - `class LlmProviderDiagnosisAgent implements RecoveryAgent` — `constructor(backend?: LlmProviderBackend, offlineGate?: OfflineGate)`, with `manifest` and `backend` public fields; `manifest` is built via `buildLlmProviderManifest(backend.getProviderId())` in the constructor, so each instance's manifest — and maturity — matches the provider its backend was constructed for. Task 6 adds `plan`/`replan` to this same class.
   - Signal sources emitted: `llm_key_present`, `llm_key_valid`, `llm_quota_billing`, `llm_rate_limit_headroom`, `llm_model_deprecated`, `llm_provider_status` — each carrying the matching `checkId`.
 
 - [ ] **Step 1: Confirm PR 2's triage export names**
@@ -1702,7 +1764,7 @@ import type { ExecutionState } from '../../types/execution-state.js';
 import type { HealthAssessment, HealthSignal, HealthSignalStatus, HealthStatus } from '../../types/health.js';
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import { defaultReplan } from '../interface.js';
-import { llmProviderManifest } from './manifest.js';
+import { buildLlmProviderManifest } from './manifest.js';
 import { getProviderSpec } from './provider-table.js';
 import { LLM_PROVIDER_CHECK_IDS } from './check-ids.js';
 import type {
@@ -1713,6 +1775,7 @@ import type {
   ProviderStatusReport,
   RateLimitHeadroom,
 } from './backend.js';
+import type { AgentManifest } from '../../types/manifest.js';
 import { LlmProviderSimulator } from './simulator.js';
 import { defaultOfflineGate, type ObserverOffline, type OfflineGate } from './offline-gate.js';
 
@@ -1729,14 +1792,22 @@ interface CheckBundle {
   status: ProviderStatusReport | null;
 }
 
+/**
+ * One class, four registrations. `manifest` is built from the backend's own
+ * `getProviderId()` rather than imported as a shared constant — each
+ * provider's registration (Task 9) supplies a backend already bound to its
+ * provider, so the manifest — and with it the per-provider maturity claim —
+ * always matches the registration that constructed this instance.
+ */
 export class LlmProviderDiagnosisAgent implements RecoveryAgent {
-  manifest = llmProviderManifest;
+  manifest: AgentManifest;
   backend: LlmProviderBackend;
 
   private readonly offlineGate: OfflineGate;
 
   constructor(backend?: LlmProviderBackend, offlineGate: OfflineGate = defaultOfflineGate) {
     this.backend = backend ?? new LlmProviderSimulator();
+    this.manifest = buildLlmProviderManifest(this.backend.getProviderId());
     this.offlineGate = offlineGate;
   }
 
@@ -2275,7 +2346,10 @@ Replace the `plan` stub with:
 
     return {
       ...createPlanEnvelope({
-        planIdSuffix: 'llm-provider',
+        // Suffixed with the provider id, not the bare 'llm-provider' family
+        // name — four provider agents can each produce a plan in the same
+        // scan run, and plan ids need to stay unique across them.
+        planIdSuffix: `llm-provider-${this.backend.getProviderId()}`,
         agentName: 'llm-provider-diagnosis',
         agentVersion: '1.0.0',
         scenario,
@@ -2289,7 +2363,7 @@ Replace the `plan` stub with:
         affectedSystems: [
           {
             identifier: target,
-            technology: 'llm-provider',
+            technology: `llm-provider.${this.backend.getProviderId()}`,
             role: 'ai-inference',
             impactType: 'diagnosis_and_notification',
           },
@@ -2627,6 +2701,7 @@ import {
   type LlmProviderId,
   type LlmProviderSpec,
 } from './provider-table.js';
+import { LLM_PROVIDER_MATURITY } from './manifest.js';
 import type {
   KeyFailureKind,
   KeyPresence,
@@ -2940,15 +3015,18 @@ export class LlmProviderLiveClient implements LlmProviderBackend {
   }
 
   listCapabilityProviders(): CapabilityProviderDescriptor[] {
+    // This instance is bound to one provider (this.spec.id), so its descriptor
+    // names that provider's own kind and maturity — never the generic
+    // 'llm-provider' family, and never another provider's maturity.
     return [
       {
-        id: 'llm-provider-live-read',
+        id: `llm-provider-${this.spec.id}-live-read`,
         kind: 'capability_provider',
-        name: 'LLM Provider Live Read Provider',
-        maturity: 'live_validated',
+        name: `${this.spec.label} Live Read Provider`,
+        maturity: LLM_PROVIDER_MATURITY[this.spec.id],
         capabilities: ['llm.provider.key.verify', 'llm.provider.status.read'],
         executionContexts: ['llm_read'],
-        targetKinds: ['llm-provider'],
+        targetKinds: [`llm-provider.${this.spec.id}`],
         commandTypes: ['api_call'],
         supportsDryRun: true,
         supportsExecute: true,
@@ -3802,11 +3880,12 @@ git commit -m "feat(llm-provider): read rate-limit headroom, model list, and pro
 - Test: `src/__tests__/llm-provider-registration.test.ts`
 
 **Interfaces:**
-- Consumes: `createLiveRegistration` from `src/config/live-registration.js`; `llmProviderManifest` (Task 4); `LlmProviderDiagnosisAgent` (Task 5); `LlmProviderSimulator` (Task 3); `LlmProviderLiveClient` (Task 7); `getProviderSpec` (Task 1).
+- Consumes: `createLiveRegistration` from `src/config/live-registration.js`; `llmProviderManifests` (Task 4); `LlmProviderDiagnosisAgent` (Task 5); `LlmProviderSimulator` (Task 3); `LlmProviderLiveClient` (Task 7); `getProviderSpec` (Task 1).
 - Produces:
-  - `interface LlmTargetOptions { provider?: string; model?: string }`
-  - `const llmProviderRegistration: AgentRegistration` (kind `llm-provider`, name `llm-provider-diagnosis`)
-  - Finding-id prefix `LLM` for the `llm-provider` kind.
+  - `interface LlmTargetOptions { provider?: string; model?: string }` — `provider` is now optional: the registration's own kind already names the provider, so `provider` is only needed to catch a target that has been misfiled under the wrong kind.
+  - `function buildLlmProviderRegistration(providerId: LlmProviderId): AgentRegistration` (kind `llm-provider.<providerId>`, name `llm-provider-diagnosis`, manifest `llmProviderManifests[providerId]`)
+  - Four built registrations exported by name (`anthropicRegistration`, `openaiRegistration`, `googleRegistration`, `openrouterRegistration`) plus `const llmProviderRegistrations: AgentRegistration[]` (provider-table order) for `builtin-agents.ts` to spread.
+  - Finding-id prefix `LLM` for all four `llm-provider.<provider>` kinds.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3817,7 +3896,11 @@ Create `src/__tests__/llm-provider-registration.test.ts`:
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { llmProviderRegistration } from '../agent/llm-provider/registration.js';
+import {
+  anthropicRegistration,
+  googleRegistration,
+  llmProviderRegistrations,
+} from '../agent/llm-provider/registration.js';
 import { builtinAgents } from '../config/builtin-agents.js';
 import { LlmProviderSimulator } from '../agent/llm-provider/simulator.js';
 import { LlmProviderLiveClient, DEFAULT_LLM_REQUEST_TIMEOUT_MS } from '../agent/llm-provider/live-client.js';
@@ -3830,31 +3913,54 @@ afterEach(() => {
   else process.env['ANTHROPIC_API_KEY'] = originalKey;
 });
 
-describe('llmProviderRegistration', () => {
-  it('is registered as a built-in agent under the llm-provider kind', () => {
-    expect(builtinAgents.map((a) => a.kind)).toContain('llm-provider');
-    expect(llmProviderRegistration.name).toBe('llm-provider-diagnosis');
+describe('llm-provider registrations', () => {
+  it('registers one built-in agent per provider-scoped kind', () => {
+    expect(llmProviderRegistrations).toHaveLength(4);
+    expect(llmProviderRegistrations.map((r) => r.kind)).toEqual([
+      'llm-provider.anthropic',
+      'llm-provider.openai',
+      'llm-provider.google',
+      'llm-provider.openrouter',
+    ]);
+    for (const kind of llmProviderRegistrations.map((r) => r.kind)) {
+      expect(builtinAgents.map((a) => a.kind)).toContain(kind);
+    }
+    expect(llmProviderRegistrations.every((r) => r.name === 'llm-provider-diagnosis')).toBe(true);
+  });
+
+  it('gives each provider-scoped kind its own manifest maturity', () => {
+    const maturity = (kind: string) =>
+      builtinAgents.find((a) => a.kind === kind)!.manifest.metadata.plugin.maturity;
+    expect(maturity('llm-provider.anthropic')).toBe('live_validated');
+    expect(maturity('llm-provider.openai')).toBe('live_validated');
+    expect(maturity('llm-provider.google')).toBe('simulator_only');
+    expect(maturity('llm-provider.openrouter')).toBe('simulator_only');
   });
 
   it('keeps ai-provider registered for explicit config and demo mode', () => {
     expect(builtinAgents.map((a) => a.kind)).toContain('ai-provider');
   });
 
-  it('uses the simulator for an explicit simulator target', async () => {
-    const target = resolveTarget({ name: 'demo', kind: 'llm-provider', primary: { host: 'simulator', port: 0 } });
-    const instance = await llmProviderRegistration.createAgent(target);
+  it('uses the simulator for an explicit simulator target, bound to the registration\'s own provider', async () => {
+    const target = resolveTarget({ name: 'demo', kind: 'llm-provider.google', primary: { host: 'simulator', port: 0 } });
+    const instance = await googleRegistration.createAgent(target);
     expect(instance.backend).toBeInstanceOf(LlmProviderSimulator);
+    // Regression guard: createLiveRegistration's loadSimulator constructs with
+    // no arguments, so a naive re-export of LlmProviderSimulator would default
+    // every provider's demo target to 'anthropic'. The google registration
+    // must wrap the simulator so its demo target simulates google.
+    expect((instance.backend as LlmProviderSimulator).getProviderId()).toBe('google');
   });
 
   it('builds a live client for a real target, carrying provider and model', async () => {
     process.env['ANTHROPIC_API_KEY'] = 'sk-ant-registration-test';
     const target = resolveTarget({
       name: 'derived-llm-anthropic',
-      kind: 'llm-provider',
+      kind: 'llm-provider.anthropic',
       primary: { host: 'api.anthropic.com', port: 443 },
-      llm: { provider: 'anthropic', model: 'claude-sonnet-4-5' },
+      llm: { model: 'claude-sonnet-4-5' },
     });
-    const instance = await llmProviderRegistration.createAgent(target);
+    const instance = await anthropicRegistration.createAgent(target);
     expect(instance.backend).toBeInstanceOf(LlmProviderLiveClient);
     expect((instance.backend as LlmProviderLiveClient).getProviderId()).toBe('anthropic');
   });
@@ -3863,11 +3969,10 @@ describe('llmProviderRegistration', () => {
     process.env['ANTHROPIC_API_KEY'] = 'sk-ant-registration-test';
     const target = resolveTarget({
       name: 'derived-llm-anthropic',
-      kind: 'llm-provider',
+      kind: 'llm-provider.anthropic',
       primary: { host: 'api.anthropic.com', port: 443 },
-      llm: { provider: 'anthropic' },
     });
-    const instance = await llmProviderRegistration.createAgent(target);
+    const instance = await anthropicRegistration.createAgent(target);
     // The client keeps its config on a readonly field; assert the wiring rather
     // than re-deriving the number.
     const config = (instance.backend as unknown as { config: { timeoutMs?: number } }).config;
@@ -3875,30 +3980,35 @@ describe('llmProviderRegistration', () => {
     expect(config.timeoutMs!).toBeLessThan(AGENT_TIMEOUT_MS);
   });
 
-  it('fails loudly when the target does not name a provider', async () => {
-    const target = resolveTarget({ name: 'broken', kind: 'llm-provider', primary: { host: 'api.anthropic.com', port: 443 } });
-    await expect(llmProviderRegistration.createAgent(target)).rejects.toThrow(/llm\.provider/);
+  it('defaults to its own provider when the target names none', async () => {
+    process.env['ANTHROPIC_API_KEY'] = 'sk-ant-registration-test';
+    const target = resolveTarget({
+      name: 'derived-llm-anthropic',
+      kind: 'llm-provider.anthropic',
+      primary: { host: 'api.anthropic.com', port: 443 },
+    });
+    const instance = await anthropicRegistration.createAgent(target);
+    expect((instance.backend as LlmProviderLiveClient).getProviderId()).toBe('anthropic');
   });
 
-  it('fails loudly for an unsupported provider id', async () => {
+  it('fails loudly when the target\'s llm.provider conflicts with the registration\'s own kind', async () => {
     const target = resolveTarget({
-      name: 'broken',
-      kind: 'llm-provider',
-      primary: { host: 'example.com', port: 443 },
-      llm: { provider: 'not-a-provider' },
+      name: 'misfiled',
+      kind: 'llm-provider.anthropic',
+      primary: { host: 'api.anthropic.com', port: 443 },
+      llm: { provider: 'openai' },
     });
-    await expect(llmProviderRegistration.createAgent(target)).rejects.toThrow(/not-a-provider/);
+    await expect(anthropicRegistration.createAgent(target)).rejects.toThrow(/llm-provider\.openai/);
   });
 
   it('does not throw when the key is absent — a missing key is a finding, not a crash', async () => {
     delete process.env['ANTHROPIC_API_KEY'];
     const target = resolveTarget({
       name: 'derived-llm-anthropic',
-      kind: 'llm-provider',
+      kind: 'llm-provider.anthropic',
       primary: { host: 'api.anthropic.com', port: 443 },
-      llm: { provider: 'anthropic' },
     });
-    const instance = await llmProviderRegistration.createAgent(target);
+    const instance = await anthropicRegistration.createAgent(target);
     const presence = await (instance.backend as LlmProviderLiveClient).checkKeyPresence();
     expect(presence.present).toBe(false);
   });
@@ -3916,7 +4026,12 @@ In `src/config/schema.ts`, add the interface next to `IacTargetOptions`:
 
 ```ts
 export interface LlmTargetOptions {
-  /** Provider id: 'anthropic' | 'openai' | 'google' | 'openrouter'. Required for llm-provider targets. */
+  /**
+   * Provider id: 'anthropic' | 'openai' | 'google' | 'openrouter'. Optional —
+   * the target's kind (`llm-provider.<provider>`) already names the provider;
+   * set this only to get a loud error if a target is ever misfiled under the
+   * wrong provider's kind.
+   */
   provider?: string;
   /** Model id the app uses. Falls back to the provider's model env var when omitted. */
   model?: string;
@@ -3926,14 +4041,14 @@ export interface LlmTargetOptions {
 Add the field to `TargetConfig` (after `iac`):
 
 ```ts
-  /** LLM provider options for llm-provider targets. */
+  /** LLM provider options for llm-provider.<provider> targets. */
   llm?: LlmTargetOptions;
 ```
 
 And to `ResolvedTarget` (after `iac`):
 
 ```ts
-  /** LLM provider options for llm-provider targets. */
+  /** LLM provider options for llm-provider.<provider> targets. */
   llm?: LlmTargetOptions | undefined;
 ```
 
@@ -3943,7 +4058,7 @@ In `src/config/resolve.ts`, add to the object returned by `resolveTarget`:
     llm: target.llm,
 ```
 
-- [ ] **Step 4: Write the registration**
+- [ ] **Step 4: Write the registration factory**
 
 Create `src/agent/llm-provider/registration.ts`:
 
@@ -3952,81 +4067,110 @@ Create `src/agent/llm-provider/registration.ts`:
 // Copyright 2026 CrisisMode Contributors
 
 import { createLiveRegistration } from '../../config/live-registration.js';
-import { llmProviderManifest } from './manifest.js';
-import { getProviderSpec, hasConfiguredKey, LLM_PROVIDERS } from './provider-table.js';
+import type { AgentRegistration } from '../../config/agent-registration.js';
+import { llmProviderManifests } from './manifest.js';
+import { getProviderSpec, hasConfiguredKey, type LlmProviderId } from './provider-table.js';
+import { LlmProviderSimulator } from './simulator.js';
 
-export const llmProviderRegistration = createLiveRegistration({
-  kind: 'llm-provider',
-  name: 'llm-provider-diagnosis',
-  manifest: llmProviderManifest,
-  loadAgent: async () => {
-    const { LlmProviderDiagnosisAgent } = await import('./agent.js');
-    return LlmProviderDiagnosisAgent as never;
-  },
-  loadSimulator: async () => {
-    const { LlmProviderSimulator } = await import('./simulator.js');
-    return LlmProviderSimulator as never;
-  },
-  buildLiveBackend: async (target) => {
-    const providerId = target.llm?.provider;
-    if (!providerId) {
-      throw new Error(
-        `llm-provider target "${target.name}" must name a provider (llm.provider: ${LLM_PROVIDERS.map((p) => p.id).join(' | ')}). Use host: 'simulator' for demo mode.`,
-      );
-    }
+/**
+ * One registration per provider, each under its own `llm-provider.<provider>`
+ * kind — see the design doc's Maturity claim for why the kind must be
+ * provider-scoped rather than a single shared `llm-provider` kind.
+ */
+function buildLlmProviderRegistration(providerId: LlmProviderId): AgentRegistration {
+  const spec = getProviderSpec(providerId)!; // always defined — providerId is a valid LlmProviderId by construction
 
-    const spec = getProviderSpec(providerId);
-    if (!spec) {
-      throw new Error(
-        `Unsupported llm-provider "${providerId}" on target "${target.name}". Supported: ${LLM_PROVIDERS.map((p) => p.id).join(', ')}.`,
-      );
-    }
+  return createLiveRegistration({
+    kind: `llm-provider.${providerId}`,
+    name: 'llm-provider-diagnosis',
+    manifest: llmProviderManifests[providerId],
+    loadAgent: async () => {
+      const { LlmProviderDiagnosisAgent } = await import('./agent.js');
+      return LlmProviderDiagnosisAgent as never;
+    },
+    // createLiveRegistration's loadSimulator contract constructs with no
+    // arguments, so a demo target under this kind must get a simulator
+    // already bound to this provider — otherwise every provider's demo
+    // target would silently simulate 'anthropic' (LlmProviderSimulator's
+    // default).
+    loadSimulator: async () => {
+      class BoundSimulator extends LlmProviderSimulator {
+        constructor() {
+          super('healthy', providerId);
+        }
+      }
+      return BoundSimulator as never;
+    },
+    buildLiveBackend: async (target) => {
+      if (target.llm?.provider !== undefined && target.llm.provider !== providerId) {
+        throw new Error(
+          `Target "${target.name}" is registered under kind "llm-provider.${providerId}" but its llm.provider is "llm-provider.${target.llm.provider}". Either use kind "llm-provider.${target.llm.provider}" for this target, or drop llm.provider to default to ${providerId}.`,
+        );
+      }
 
-    // A missing key is a finding (key_present), not a construction failure —
-    // an empty apiKey makes the client report it honestly instead of throwing.
-    const envVar = spec.envVars.find((name) => hasConfiguredKey(process.env, name));
+      // A missing key is a finding (key_present), not a construction failure —
+      // an empty apiKey makes the client report it honestly instead of throwing.
+      const envVar = spec.envVars.find((name) => hasConfiguredKey(process.env, name));
 
-    const { LlmProviderLiveClient, DEFAULT_LLM_REQUEST_TIMEOUT_MS } = await import('./live-client.js');
-    return new LlmProviderLiveClient({
-      provider: spec.id,
-      apiKey: envVar ? process.env[envVar]! : '',
-      // Set explicitly, not left to the constructor default: scan gives each
-      // agent 2000ms and replaces a timed-out assessment with an empty-signal
-      // one, which would drop every checkId this agent exists to emit.
-      timeoutMs: DEFAULT_LLM_REQUEST_TIMEOUT_MS,
-      ...(target.llm?.model !== undefined ? { configuredModel: target.llm.model } : {}),
-    });
-  },
-});
+      const { LlmProviderLiveClient, DEFAULT_LLM_REQUEST_TIMEOUT_MS } = await import('./live-client.js');
+      return new LlmProviderLiveClient({
+        provider: spec.id,
+        apiKey: envVar ? process.env[envVar]! : '',
+        // Set explicitly, not left to the constructor default: scan gives each
+        // agent 2000ms and replaces a timed-out assessment with an empty-signal
+        // one, which would drop every checkId this agent exists to emit.
+        timeoutMs: DEFAULT_LLM_REQUEST_TIMEOUT_MS,
+        ...(target.llm?.model !== undefined ? { configuredModel: target.llm.model } : {}),
+      });
+    },
+  });
+}
+
+export const anthropicRegistration = buildLlmProviderRegistration('anthropic');
+export const openaiRegistration = buildLlmProviderRegistration('openai');
+export const googleRegistration = buildLlmProviderRegistration('google');
+export const openrouterRegistration = buildLlmProviderRegistration('openrouter');
+
+/** Provider-table order; builtin-agents.ts spreads this array. */
+export const llmProviderRegistrations: AgentRegistration[] = [
+  anthropicRegistration,
+  openaiRegistration,
+  googleRegistration,
+  openrouterRegistration,
+];
 ```
 
-- [ ] **Step 5: Register the agent and teach the CLI its kind**
+- [ ] **Step 5: Register the four agents and teach the CLI their kinds**
 
 In `src/config/builtin-agents.ts`, add the import next to the other AI agents:
 
 ```ts
-import { llmProviderRegistration } from '../agent/llm-provider/registration.js';
+import { llmProviderRegistrations } from '../agent/llm-provider/registration.js';
 ```
 
-and add it to the array, in the `// AI application recovery agents` group, immediately **before** `aiProviderRegistration`:
+and spread it into the array, in the `// AI application recovery agents` group, immediately **before** `aiProviderRegistration`:
 
 ```ts
-  llmProviderRegistration,
+  ...llmProviderRegistrations,
 ```
 
-In `src/cli/errors.ts`, add the kind to `SUPPORTED_KINDS`:
+In `src/cli/errors.ts`, add the four kinds to `SUPPORTED_KINDS`:
 
 ```ts
 const SUPPORTED_KINDS = [
   'postgresql', 'redis', 'etcd', 'kafka', 'kubernetes', 'ceph', 'flink',
-  'application', 'llm-provider', 'ai-provider', 'managed-database', 'message-queue', 'application-config',
+  'application', 'llm-provider.anthropic', 'llm-provider.openai', 'llm-provider.google', 'llm-provider.openrouter',
+  'ai-provider', 'managed-database', 'message-queue', 'application-config',
 ];
 ```
 
-In `src/cli/commands/scan.ts`, add the finding-id prefix next to the existing `'ai-provider': 'AI',` entry:
+In `src/cli/commands/scan.ts`, add four finding-id prefix entries next to the existing `'ai-provider': 'AI',` entry — all four share the `LLM` prefix, matching the single shared prefix `'ai-provider': 'AI'` already uses for one kind, since the finding-id prefix identifies "this is an LLM-provider finding," not which of the four providers:
 
 ```ts
-  'llm-provider': 'LLM',
+  'llm-provider.anthropic': 'LLM',
+  'llm-provider.openai': 'LLM',
+  'llm-provider.google': 'LLM',
+  'llm-provider.openrouter': 'LLM',
 ```
 
 - [ ] **Step 6: Run the tests and verify they pass**
@@ -4034,7 +4178,7 @@ In `src/cli/commands/scan.ts`, add the finding-id prefix next to the existing `'
 ```bash
 pnpm vitest run src/__tests__/llm-provider-registration.test.ts src/__tests__/explanation-coverage.test.ts
 ```
-Expected: PASS. (`explanation-coverage` now exercises the `llm-provider` row added in Task 4.)
+Expected: PASS. (`explanation-coverage` now exercises the four `llm-provider.<provider>` rows added in Task 4.)
 
 - [ ] **Step 7: Run the full suite, typecheck, lint, and commit**
 
@@ -4046,7 +4190,7 @@ git commit -m "feat(llm-provider): register the agent and add llm target options
 
 ---
 
-### Task 10: Autodiscovery switches from `ai-provider` to `llm-provider`
+### Task 10: Autodiscovery switches from `ai-provider` to per-provider `llm-provider.<provider>`
 
 **Files:**
 - Modify: `src/cli/autodiscovery.ts` (import, `AI_PROVIDER_DEPS`, `deriveGatedTargets`, `detectAiProviders`)
@@ -4057,14 +4201,14 @@ git commit -m "feat(llm-provider): register the agent and add llm target options
 
 **Interfaces:**
 - Consumes: `AI_ENV_VARS`, `detectConfiguredProviders` from `src/agent/llm-provider/provider-table.js` (Task 1); `LlmTargetOptions` via `TargetConfig` (Task 9).
-- Produces: derived targets named `derived-llm-<provider>` of kind `llm-provider`, each with `llm: { provider }`, `primary: { host: <apiHost>, port: 443 }`, and note `from <ENV_VAR>`. `derived-ai-provider` no longer exists.
+- Produces: derived targets named `derived-llm-<provider>` of kind `llm-provider.<provider>` (matching the registration's own kind from Task 9 — no blanket `llm-provider` kind), each with `llm: { provider }`, `primary: { host: <apiHost>, port: 443 }`, and note `from <ENV_VAR>`. `derived-ai-provider` no longer exists.
 
 - [ ] **Step 1: Write the failing tests**
 
 In `src/__tests__/autodiscovery-gated-targets.test.ts`, **replace** the two tests `derives ai-provider from an API key even without SDK deps` and `derives ai-provider from an SDK dep even without keys` with:
 
 ```ts
-  it('derives one llm-provider target per detected provider key', async () => {
+  it('derives one target per detected provider key, each under its own provider-scoped kind', async () => {
     const dir = await emptyDir();
     const gated = await deriveGatedTargets(
       stack([]),
@@ -4072,15 +4216,16 @@ In `src/__tests__/autodiscovery-gated-targets.test.ts`, **replace** the two test
       { ANTHROPIC_API_KEY: 'k', GEMINI_API_KEY: 'g' } as NodeJS.ProcessEnv,
     );
 
-    const llm = gated.targets.filter((t) => t.kind === 'llm-provider');
+    const llm = gated.targets.filter((t) => t.kind.startsWith('llm-provider.'));
     expect(llm.map((t) => t.name)).toEqual(['derived-llm-anthropic', 'derived-llm-google']);
+    expect(llm.map((t) => t.kind)).toEqual(['llm-provider.anthropic', 'llm-provider.google']);
     expect(llm[0]!.llm).toEqual({ provider: 'anthropic' });
     expect(llm[0]!.primary).toEqual({ host: 'api.anthropic.com', port: 443 });
     expect(gated.notes['derived-llm-anthropic']).toBe('from ANTHROPIC_API_KEY');
     expect(gated.notes['derived-llm-google']).toBe('from GEMINI_API_KEY');
   });
 
-  it('no longer derives a derived-ai-provider target', async () => {
+  it('no longer derives a derived-ai-provider target, and never a blanket llm-provider kind', async () => {
     const dir = await emptyDir();
     const gated = await deriveGatedTargets(
       stack(['@anthropic-ai/sdk']),
@@ -4089,12 +4234,13 @@ In `src/__tests__/autodiscovery-gated-targets.test.ts`, **replace** the two test
     );
     expect(gated.targets.find((t) => t.kind === 'ai-provider')).toBeUndefined();
     expect(gated.targets.find((t) => t.name === 'derived-ai-provider')).toBeUndefined();
+    expect(gated.targets.find((t) => t.kind === 'llm-provider')).toBeUndefined();
   });
 
   it('derives nothing from an SDK dependency alone — a key in .env is not a missing key', async () => {
     const dir = await emptyDir();
     const gated = await deriveGatedTargets(stack(['@anthropic-ai/sdk']), dir, {} as NodeJS.ProcessEnv);
-    expect(gated.targets.filter((t) => t.kind === 'llm-provider')).toEqual([]);
+    expect(gated.targets.filter((t) => t.kind.startsWith('llm-provider.'))).toEqual([]);
   });
 
   it('never puts key material in a derived target name or note', async () => {
@@ -4234,7 +4380,9 @@ const AI_PROVIDER_DEPS: Record<string, string> = {
 In `deriveGatedTargets`, replace the whole `// ai-provider: an API key present OR an AI SDK dependency` block (lines ~384-395) with:
 
 ```ts
-  // llm-provider: one target per provider whose API key is in this environment.
+  // llm-provider.<provider>: one target per provider whose API key is in this
+  // environment, under that provider's own kind — never a blanket
+  // 'llm-provider' kind (see the design doc's Maturity claim for why).
   // Deliberately NOT derived from an SDK dependency alone: a vibe coder's key
   // usually lives in .env, which CrisisMode does not read, so "dep but no key"
   // would produce a false "your key is missing" alarm. That case surfaces as a
@@ -4242,7 +4390,7 @@ In `deriveGatedTargets`, replace the whole `// ai-provider: an API key present O
   for (const { provider, envVar, spec } of detectConfiguredProviders(env)) {
     const target: TargetConfig = {
       name: `derived-llm-${provider}`,
-      kind: 'llm-provider',
+      kind: `llm-provider.${provider}`,
       primary: { host: spec.apiHost, port: 443 },
       llm: { provider },
     };
@@ -4345,15 +4493,15 @@ describe('dominantCheckId', () => {
 describe('checkTargetHealth check ids', () => {
   const target: TargetConfig = {
     name: 'derived-llm-anthropic',
-    kind: 'llm-provider',
+    kind: 'llm-provider.anthropic',
     primary: { host: 'simulator', port: 0 },
   };
 
   function registry(scenario: 'bad_key' | 'healthy') {
     return {
-      supportedKinds: () => ['llm-provider'],
+      supportedKinds: () => ['llm-provider.anthropic'],
       createForTarget: async () => {
-        const backend = new LlmProviderSimulator(scenario);
+        const backend = new LlmProviderSimulator(scenario, 'anthropic');
         return { agent: new LlmProviderDiagnosisAgent(backend, async () => null), backend, target: target as never };
       },
     };
@@ -4367,7 +4515,7 @@ describe('checkTargetHealth check ids', () => {
 
   it('leaves checkId undefined for a healthy-but-unadopted agent shape', async () => {
     const plainRegistry = {
-      supportedKinds: () => ['llm-provider'],
+      supportedKinds: () => ['llm-provider.anthropic'],
       createForTarget: async () => ({
         agent: {
           manifest: new LlmProviderDiagnosisAgent().manifest,
@@ -4479,28 +4627,28 @@ git commit -m "feat(cli): carry stable check ids on scan findings"
 
 ---
 
-### Task 12: One watching row per derived target, not per kind
+### Task 12: Regression test — per-provider kinds already give one watching row per provider
 
 **Files:**
-- Modify: `src/cli/visibility.ts` (the `for (const kind of ranKinds)` loop)
-- Test: `src/__tests__/visibility.test.ts` (append)
+- Test only: `src/__tests__/visibility.test.ts` (append)
+- No source change to `src/cli/visibility.ts`.
 
 **Interfaces:**
-- Consumes: `StackProfile.derivedTargets` / `derivedNotes` (Task 10 now puts several `llm-provider` targets there); `TargetConfig.llm` (Task 9).
-- Produces: no new exports — `buildVisibilityReport` emits one `VisibilityEntry` per derived target of a kind instead of one per kind.
+- Consumes: `StackProfile.derivedTargets` / `derivedNotes` (Task 10 puts one `llm-provider.<provider>` target per detected provider there, each under its own kind).
+- Produces: no new exports.
 
-`buildVisibilityReport` resolves a kind's detail with `profile.derivedTargets.find((t) => t.kind === kind)`. That was correct when every derivation produced at most one target per kind. Task 10 breaks that assumption: a machine with Anthropic and Google keys derives two `llm-provider` targets, both get checked, both produce findings — and the visibility section would show one row citing one of the two env vars, silently implying the other provider is unwatched. The findings list and the coverage claim would disagree, which is exactly the failure mode PR 1 exists to remove.
+**Why this task shrank to a regression test.** An earlier version of this plan had `buildVisibilityReport` derive several targets under one shared `llm-provider` kind, which would have broken its `profile.derivedTargets.find((t) => t.kind === kind)` lookup (`find` returns only the first match, silently hiding every other provider's coverage). Task 9's Maturity claim forced kinds to be per-provider instead — `llm-provider.anthropic`, `llm-provider.google`, etc. — for a different reason (maturity buckets), but it has the side effect of fixing this problem too: **at most one derived target can ever share a kind now**, so the existing one-row-per-kind code in `visibility.ts` is already correct. This task exists to pin that with a test, not to change `buildVisibilityReport`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the regression test**
 
 Append to `src/__tests__/visibility.test.ts`:
 
 ```ts
-  it('emits one watching row per derived target when a kind has several', () => {
+  it('gives each provider its own watching row for free, because each has its own kind', () => {
     const profile = makeProfile({
       derivedTargets: [
-        { name: 'derived-llm-anthropic', kind: 'llm-provider', primary: { host: 'api.anthropic.com', port: 443 }, llm: { provider: 'anthropic' } },
-        { name: 'derived-llm-google', kind: 'llm-provider', primary: { host: 'generativelanguage.googleapis.com', port: 443 }, llm: { provider: 'google' } },
+        { name: 'derived-llm-anthropic', kind: 'llm-provider.anthropic', primary: { host: 'api.anthropic.com', port: 443 }, llm: { provider: 'anthropic' } },
+        { name: 'derived-llm-google', kind: 'llm-provider.google', primary: { host: 'generativelanguage.googleapis.com', port: 443 }, llm: { provider: 'google' } },
       ],
       derivedNotes: {
         'derived-llm-anthropic': 'from ANTHROPIC_API_KEY',
@@ -4508,82 +4656,46 @@ Append to `src/__tests__/visibility.test.ts`:
       },
     });
 
-    const report = buildVisibilityReport(profile, ['llm-provider'], 'none');
+    const report = buildVisibilityReport(profile, ['llm-provider.anthropic', 'llm-provider.google'], 'none');
 
-    const rows = report.watching.filter((e) => e.label.startsWith('llm-provider'));
+    const rows = report.watching.filter((e) => e.label.startsWith('llm-provider.'));
     expect(rows).toHaveLength(2);
-    expect(rows.map((e) => e.label)).toEqual(['llm-provider (anthropic)', 'llm-provider (google)']);
+    expect(rows.map((e) => e.label)).toEqual(['llm-provider.anthropic', 'llm-provider.google']);
     expect(rows.map((e) => e.detail)).toEqual(['from ANTHROPIC_API_KEY', 'from GOOGLE_AI_API_KEY']);
   });
 
-  it('keeps the single-target label unchanged when a kind derives exactly one target', () => {
+  it('never collapses two providers onto one row, even if a caller mistakenly passes a shared kind twice', () => {
+    // Defence in depth: if `ranKinds` ever repeated a kind, the loop must not
+    // duplicate or drop rows. This does not exercise per-provider behaviour —
+    // it just confirms the existing one-row-per-kind loop is idempotent.
     const profile = makeProfile({
       derivedTargets: [
-        { name: 'derived-llm-anthropic', kind: 'llm-provider', primary: { host: 'api.anthropic.com', port: 443 }, llm: { provider: 'anthropic' } },
+        { name: 'derived-llm-anthropic', kind: 'llm-provider.anthropic', primary: { host: 'api.anthropic.com', port: 443 }, llm: { provider: 'anthropic' } },
       ],
       derivedNotes: { 'derived-llm-anthropic': 'from ANTHROPIC_API_KEY' },
     });
 
-    const report = buildVisibilityReport(profile, ['llm-provider'], 'none');
-    const rows = report.watching.filter((e) => e.label.startsWith('llm-provider'));
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.label).toBe('llm-provider');
-    expect(rows[0]!.detail).toBe('from ANTHROPIC_API_KEY');
+    const report = buildVisibilityReport(profile, ['llm-provider.anthropic', 'llm-provider.anthropic'], 'none');
+    const rows = report.watching.filter((e) => e.label === 'llm-provider.anthropic');
+    expect(rows).toHaveLength(2); // one per ranKinds entry — ranKinds itself is expected to be deduped upstream, this only pins today's loop behaviour
   });
 ```
 
 > If PR 1 added a `maturityByKind` argument to `buildVisibilityReport`, pass whatever the neighbouring tests in this file pass — do not change the call shape PR 1 established.
 
-- [ ] **Step 2: Run the test and verify it fails**
-
-Run: `pnpm vitest run src/__tests__/visibility.test.ts`
-Expected: FAIL — the two-provider case produces one row labelled `llm-provider`.
-
-- [ ] **Step 3: Emit one row per derived target**
-
-In `src/cli/visibility.ts`, replace the tail of the `for (const kind of ranKinds)` loop (from `const derivedTarget = ...` to the end of the loop body) with:
-
-```ts
-    const derivedForKind = profile.derivedTargets.filter((t) => t.kind === kind);
-    const fallbackDetail = CONFIG_SOURCE_DETAIL[configSource] ?? 'configured';
-
-    // Several derived targets of one kind (e.g. one llm-provider per detected
-    // API key) each get their own row. Collapsing them to one row would cite
-    // one provider's env var and silently imply the others are unwatched,
-    // while the findings list below shows a finding for every one of them.
-    if (derivedForKind.length > 1) {
-      for (const target of derivedForKind) {
-        watching.push({
-          label: `${kind} (${target.llm?.provider ?? target.name})`,
-          detail: profile.derivedNotes[target.name] ?? fallbackDetail,
-        });
-      }
-      continue;
-    }
-
-    const derivedTarget = derivedForKind[0];
-    const derivedNote = derivedTarget ? profile.derivedNotes[derivedTarget.name] : undefined;
-    watching.push({
-      label: kind,
-      detail: derivedNote ?? fallbackDetail,
-    });
-```
-
-> **PR 1 note:** if PR 1 added a `maturity` field to the entries pushed in this loop, add it to **both** push sites above with the same value PR 1 computes for the kind — the per-provider rows are the same kind and therefore the same maturity.
-
-- [ ] **Step 4: Run the tests and verify they pass**
+- [ ] **Step 2: Run the test and verify it passes without touching `visibility.ts`**
 
 ```bash
-pnpm vitest run src/__tests__/visibility.test.ts src/__tests__/cli-snapshots.test.ts
+pnpm vitest run src/__tests__/visibility.test.ts
 ```
-Expected: PASS. Single-derived-target kinds keep their existing label, so no snapshot should move.
+Expected: PASS immediately — this is a regression test for behaviour Task 9's per-provider kinds already produce, not a new feature. If it fails, something upstream (Task 9 or Task 10) is still using a shared `llm-provider` kind; fix that instead of `visibility.ts`.
 
-- [ ] **Step 5: Typecheck, lint, and commit**
+- [ ] **Step 3: Typecheck, lint, and commit**
 
 ```bash
 pnpm run typecheck && pnpm run lint
-git add src/cli/visibility.ts src/__tests__/visibility.test.ts
-git commit -m "fix(cli): show one watching row per derived target instead of per kind"
+git add src/__tests__/visibility.test.ts
+git commit -m "test(cli): pin that per-provider kinds give llm-provider its own watching row per provider"
 ```
 
 ---
@@ -4618,7 +4730,10 @@ describe('aiKeyBlockedEntries', () => {
     });
 
     expect(entries).toHaveLength(1);
-    expect(entries[0]!.label).toBe('llm-provider (anthropic)');
+    // Matches the kind-as-label format the watching rows use (Task 12) —
+    // 'llm-provider.anthropic', not a parenthesised family name — so watching
+    // and blocked rows for the same provider read as the same thing.
+    expect(entries[0]!.label).toBe('llm-provider.anthropic');
     expect(entries[0]!.detail).toContain('ANTHROPIC_API_KEY');
     expect(entries[0]!.hint).toContain('.env');
   });
@@ -4665,7 +4780,10 @@ export function aiKeyBlockedEntries(profile: Pick<StackProfile, 'aiProviders'>):
   return profile.aiProviders
     .filter((p) => !p.configured)
     .map((p) => ({
-      label: `llm-provider (${p.provider})`,
+      // Label format matches the watching rows' label (the kind itself, e.g.
+      // 'llm-provider.anthropic' — see Task 12), so the same provider reads
+      // identically whether it ends up watched or blocked.
+      label: `llm-provider.${p.provider}`,
       detail: `your project depends on the ${p.provider} SDK, but ${p.envVar} is not set in this environment`,
       hint: `CrisisMode reads process.env only — it never parses .env files. Export the key (or run CrisisMode from the same environment as your app) to enable live ${p.provider} checks.`,
     }));
@@ -4760,9 +4878,9 @@ node -e "const r=require('fs').readFileSync('/tmp/llm-scan.json','utf8').split('
 ```
 
 Confirm, and record in the commit message:
-1. Exactly **one** target of kind `llm-provider` appears (`llm-provider (derived-llm-anthropic)`), and **no** `derived-ai-provider` / `ai-provider` target appears.
+1. Exactly **one** target of kind `llm-provider.anthropic` appears (watching label `llm-provider.anthropic`), and **no** `derived-ai-provider` / `ai-provider` target and no blanket `llm-provider` kind appear.
 2. Its finding carries a `checkId` and the signals include key validity and rate-limit headroom values.
-3. It lands in the live-validated watching bucket of the visibility section (PR 1's split).
+3. It lands in the live-validated watching bucket of the visibility section (PR 1's split) — confirming `llm-provider.anthropic`'s manifest maturity resolved correctly.
 4. `node dist/cli/index.js scan` in human mode reads clearly and contains no key material: `node dist/cli/index.js scan 2>&1 | grep -c "$ANTHROPIC_API_KEY"` must print `0`.
 
 - [ ] **Step 5: Validate the invalid-key path**
@@ -4813,7 +4931,8 @@ Run after all fourteen tasks are complete.
 | rate_limit_headroom / model_deprecated / provider_status checks | 3, 5, 8 |
 | Provider table (4 providers, google's 3 env vars, endpoints, auth, headers, status APIs) | 1 |
 | Single source of truth for AI env vars, and for what "configured" means | 1, 10 |
-| Autodiscovery derives per-provider `llm-provider`; `derived-ai-provider` removed | 10 |
+| Autodiscovery derives per-provider `llm-provider.<provider>` targets, each under the matching provider-scoped kind; `derived-ai-provider` and any blanket `llm-provider` kind removed | 9, 10 |
+| Per-provider kind (`llm-provider.<provider>`) so maturity buckets correctly via the existing kind-keyed machinery | 4, 5, 7, 9, 10 |
 | ai-provider stays registered for explicit config and demo | 9 (test), 14 (docs) |
 | `checkId` on health signals, diagnosis findings, and scan findings; exported constants for PR 5 | 2, 5, 11 |
 | Per-provider coverage stays visible and honest in the visibility report | 12, 13 |
@@ -4840,7 +4959,8 @@ Run after all fourteen tasks are complete.
 - `ModelCheck.listKnown` / `presentInList` (never `known`/`present`) are used consistently in Tasks 2, 3, 5, 8.
 - `RateLimitHeadroom.requestsRemainingPct` / `tokensRemainingPct` are the names used in Tasks 2, 3, 5, 8, 11.
 - `detectConfiguredProviders` returns `{ provider, envVar, spec }` in Task 1 and is destructured with those exact names in Tasks 9 and 10.
-- `LlmTargetOptions` fields `provider`/`model` (Task 9) match `target.llm?.provider` / `target.llm?.model` in the registration (Task 9) and the derived target in autodiscovery (Task 10).
+- `LlmTargetOptions` fields `provider`/`model` (Task 9) match `target.llm?.provider` / `target.llm?.model` in the registration (Task 9) and the derived target in autodiscovery (Task 10). `provider` is optional everywhere: the registration's own kind (`llm-provider.<provider>`) is the source of truth for which provider a target uses, and `target.llm.provider`, when present, is validated against it rather than substituted for it.
+- The four kinds (`llm-provider.anthropic`, `.openai`, `.google`, `.openrouter`) are used identically as: `AgentRegistration.kind` (Task 9), `TargetConfig.kind` / derived target `kind` (Task 10), `KIND_PREFIX` and `SUPPORTED_KINDS` entries (Task 9), `capability-registry.ts` `targetKinds` (Task 4), `REPRESENTATIVE_SOURCES` keys (Task 4), and `CapabilityProviderDescriptor.targetKinds` in `listCapabilityProviders()` (Task 7/8, one kind per provider instance).
 - `OfflineGate` returns `ObserverOffline | null` in Task 5 and every test injects a matching `async () => null`.
 
 **Known integration risk:** the triage import in `offline-gate.ts` is the one name this plan cannot verify against merged code — the contract (`getTriageReport(): TriageReport | null`, `.verdict`, `.explanation`) is confirmed against PR 2's plan, not against merged source. Task 5, Step 1 checks it before anything depends on it; Task 5, Step 4 pins the deferral rules; and the blast radius is a single file.
