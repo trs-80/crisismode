@@ -18,6 +18,7 @@ import { k8sRecoveryRegistration } from '../agent/kubernetes/registration.js';
 import { cephStorageRegistration } from '../agent/ceph/registration.js';
 import { flinkRecoveryRegistration } from '../agent/flink/registration.js';
 import { deployRollbackRegistration } from '../agent/deploy-rollback/registration.js';
+import { llmProviderRegistrations } from '../agent/llm-provider/registration.js';
 import { aiProviderRegistration } from '../agent/ai-provider/registration.js';
 import { dbMigrationRegistration } from '../agent/db-migration/registration.js';
 import { queueBacklogRegistration } from '../agent/queue-backlog/registration.js';
@@ -52,6 +53,7 @@ export const builtinAgents: AgentRegistration[] = [
   iacDriftRegistration,
   // AI application recovery agents
   deployRollbackRegistration,
+  ...llmProviderRegistrations,
   aiProviderRegistration,
   dbMigrationRegistration,
   queueBacklogRegistration,

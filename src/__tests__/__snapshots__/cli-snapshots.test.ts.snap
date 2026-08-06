@@ -7,7 +7,7 @@ exports[`CLI snapshot — error formatting > CrisisModeError with suggestion 1`]
 
 exports[`CLI snapshot — error formatting > agentNotFound 1`] = `
 "Error: No agent handles "mysql"
-  Suggestion: Supported systems: postgresql, redis, etcd, kafka, kubernetes, ceph, flink, application, ai-provider, managed-database, message-queue, application-config"
+  Suggestion: Supported systems: postgresql, redis, etcd, kafka, kubernetes, ceph, flink, application, llm-provider.anthropic, llm-provider.openai, llm-provider.google, llm-provider.openrouter, ai-provider, managed-database, message-queue, application-config"
 `;
 
 exports[`CLI snapshot — error formatting > connectionRefused — postgresql 1`] = `
