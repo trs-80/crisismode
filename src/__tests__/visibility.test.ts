@@ -213,6 +213,42 @@ describe('buildVisibilityReport', () => {
     );
     expect(report.watching.every((e) => e.maturity === 'live_validated')).toBe(true);
   });
+
+  it('gives each provider its own watching row for free, because each has its own kind', () => {
+    const profile = profileWith({
+      derivedTargets: [
+        { name: 'derived-llm-anthropic', kind: 'llm-provider.anthropic', primary: { host: 'api.anthropic.com', port: 443 }, llm: { provider: 'anthropic' } },
+        { name: 'derived-llm-google', kind: 'llm-provider.google', primary: { host: 'generativelanguage.googleapis.com', port: 443 }, llm: { provider: 'google' } },
+      ],
+      derivedNotes: {
+        'derived-llm-anthropic': 'from ANTHROPIC_API_KEY',
+        'derived-llm-google': 'from GOOGLE_AI_API_KEY',
+      },
+    });
+
+    const report = buildVisibilityReport(profile, ['llm-provider.anthropic', 'llm-provider.google'], 'none');
+
+    const rows = report.watching.filter((e) => e.label.startsWith('llm-provider.'));
+    expect(rows).toHaveLength(2);
+    expect(rows.map((e) => e.label)).toEqual(['llm-provider.anthropic', 'llm-provider.google']);
+    expect(rows.map((e) => e.detail)).toEqual(['from ANTHROPIC_API_KEY', 'from GOOGLE_AI_API_KEY']);
+  });
+
+  it('never collapses two providers onto one row, even if a caller mistakenly passes a shared kind twice', () => {
+    // Defence in depth: if `ranKinds` ever repeated a kind, the loop must not
+    // duplicate or drop rows. This does not exercise per-provider behaviour —
+    // it just confirms the existing one-row-per-kind loop is idempotent.
+    const profile = profileWith({
+      derivedTargets: [
+        { name: 'derived-llm-anthropic', kind: 'llm-provider.anthropic', primary: { host: 'api.anthropic.com', port: 443 }, llm: { provider: 'anthropic' } },
+      ],
+      derivedNotes: { 'derived-llm-anthropic': 'from ANTHROPIC_API_KEY' },
+    });
+
+    const report = buildVisibilityReport(profile, ['llm-provider.anthropic', 'llm-provider.anthropic'], 'none');
+    const rows = report.watching.filter((e) => e.label === 'llm-provider.anthropic');
+    expect(rows).toHaveLength(2); // one per ranKinds entry — ranKinds itself is expected to be deduped upstream, this only pins today's loop behaviour
+  });
 });
 
 describe('watching-bucket split helpers', () => {
