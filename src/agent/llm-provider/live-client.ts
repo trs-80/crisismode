@@ -338,7 +338,7 @@ export class LlmProviderLiveClient implements LlmProviderBackend {
       invalid_key: `${this.spec.label} rejected the API key (HTTP ${probe.httpStatus}${suffix}) — every AI request is failing.`,
       billing_or_quota: `${this.spec.label} refused the request for quota or billing reasons (HTTP ${probe.httpStatus}${suffix}) — requests are failing until the account is topped up.`,
       rate_limited: `${this.spec.label} is rate limiting this key right now (HTTP ${probe.httpStatus}${suffix}) — the key itself is fine.`,
-      permission: `The ${this.spec.label} key authenticated but is not permitted to use this endpoint (HTTP ${probe.httpStatus}${suffix}) — requests are failing.`,
+      permission: `${this.spec.label} accepted the API key but it lacks permission for this endpoint (HTTP ${probe.httpStatus}${suffix}) — the key is valid and other calls may still succeed; check the key's scopes/permissions in the ${this.spec.label} console.`,
       other: `${this.spec.label} returned HTTP ${probe.httpStatus}${suffix}, which CrisisMode cannot classify — treat this as unknown, not as a diagnosis.`,
     };
 

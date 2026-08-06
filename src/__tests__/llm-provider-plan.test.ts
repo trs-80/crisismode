@@ -47,6 +47,14 @@ describe('LlmProviderDiagnosisAgent.plan', () => {
     expect(JSON.stringify(notification)).toMatch(/billing|credit/i);
   });
 
+  it('does not tell the operator to rotate a key that is merely scoped too narrowly', async () => {
+    const { agent, context } = setup('key_scope_limited');
+    const plan = await agent.plan(context, await agent.diagnose(context));
+    const notification = plan.steps.find((s) => s.type === 'human_notification')!;
+    expect(JSON.stringify(notification)).not.toMatch(/create a fresh key/i);
+    expect(JSON.stringify(notification)).toMatch(/scope|permission/i);
+  });
+
   it('does not invent an incident when the diagnosis found nothing', async () => {
     const { agent, context } = setup('healthy');
     const diagnosis = await agent.diagnose(context);

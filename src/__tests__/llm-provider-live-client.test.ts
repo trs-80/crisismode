@@ -160,6 +160,20 @@ describe('LlmProviderLiveClient key validity', () => {
     expect(validity.outcome).toBe('billing_or_quota');
   });
 
+  it('describes a permission-scoped 403 honestly — the key is valid, just under-scoped for this probe', async () => {
+    // A restricted-scope OpenAI key 403s on /v1/models while completions still
+    // work. The old wording ("requests are failing") would over-alarm — the
+    // key authenticated fine, it just can't do this particular call.
+    mockFetch({
+      'api.openai.com': { status: 403, body: { error: { type: 'permission_error', message: 'insufficient permissions for this operation' } } },
+    });
+    const validity = await new LlmProviderLiveClient({ provider: 'openai', apiKey: 'sk-openai-scoped' }).checkKeyValidity();
+    expect(validity.outcome).toBe('permission');
+    expect(validity.httpStatus).toBe(403);
+    expect(validity.detail).not.toContain('requests are failing');
+    expect(validity.detail.toLowerCase()).toContain('scope');
+  });
+
   it('reports unknown — not "down" — when the network call fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('getaddrinfo ENOTFOUND api.anthropic.com'); }));
     const validity = await new LlmProviderLiveClient({ provider: 'anthropic', apiKey: 'sk-ant' }).checkKeyValidity();

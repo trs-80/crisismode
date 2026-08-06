@@ -25,6 +25,7 @@ export type LlmProviderScenario =
   | 'bad_key'
   | 'quota_exhausted'
   | 'rate_limited'
+  | 'key_scope_limited'
   | 'deprecated_model'
   | 'provider_incident';
 
@@ -95,9 +96,16 @@ export class LlmProviderSimulator implements LlmProviderBackend {
       case 'rate_limited':
         return {
           provider: this.provider,
-          outcome: 'valid',
-          httpStatus: 200,
-          detail: `${this.spec.label} accepted the API key.`,
+          outcome: 'rate_limited',
+          httpStatus: 429,
+          detail: `${this.spec.label} is rate limiting this key right now (HTTP 429 rate_limit_error) — the key itself is fine.`,
+        };
+      case 'key_scope_limited':
+        return {
+          provider: this.provider,
+          outcome: 'permission',
+          httpStatus: 403,
+          detail: `${this.spec.label} accepted the API key but it lacks permission for this endpoint (HTTP 403 permission_error) — the key is valid and other calls may still succeed; check the key's scopes/permissions in the ${this.spec.label} console.`,
         };
       default:
         return {

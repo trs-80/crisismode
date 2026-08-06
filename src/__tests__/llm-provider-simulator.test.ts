@@ -47,6 +47,23 @@ describe('LlmProviderSimulator', () => {
     expect(headroom.requestsRemainingPct).toBeLessThan(20);
   });
 
+  it('classifies the rate_limited scenario as an observed 429, not a bare "valid"', async () => {
+    // Finding 2: the agent's degraded-on-observed-429 logic keys off
+    // outcome === 'rate_limited'. Before this fix the scenario named
+    // 'rate_limited' returned outcome 'valid', which meant no test ever
+    // exercised that branch through the simulator.
+    const validity = await new LlmProviderSimulator('rate_limited').checkKeyValidity();
+    expect(validity.outcome).toBe('rate_limited');
+    expect(validity.httpStatus).toBe(429);
+  });
+
+  it('classifies a permission-scoped key as valid-but-narrow, not invalid', async () => {
+    const validity = await new LlmProviderSimulator('key_scope_limited').checkKeyValidity();
+    expect(validity.outcome).toBe('permission');
+    expect(validity.httpStatus).toBe(403);
+    expect(validity.detail).not.toContain('requests are failing');
+  });
+
   it('reports a configured model missing from the live list', async () => {
     const model = await new LlmProviderSimulator('deprecated_model').checkModel();
     expect(model.listKnown).toBe(true);

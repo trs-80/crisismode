@@ -137,10 +137,12 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
           ),
     ];
 
-    // key_valid
+    // key_valid — only an outright rejection (401) means the app is down for
+    // AI features. A 403 permission failure still means the key is valid; it
+    // is reported as a degraded quota_billing signal below, not here.
     if (bundle.validity === null) {
       signals.push(signal('llm_key_valid', LLM_PROVIDER_CHECK_IDS.keyValid, 'unknown', skipDetail));
-    } else if (bundle.validity.outcome === 'invalid_key' || bundle.validity.outcome === 'permission') {
+    } else if (bundle.validity.outcome === 'invalid_key') {
       signals.push(signal('llm_key_valid', LLM_PROVIDER_CHECK_IDS.keyValid, 'critical', bundle.validity.detail));
     } else if (bundle.validity.outcome === 'unknown' || bundle.validity.outcome === 'other') {
       signals.push(signal('llm_key_valid', LLM_PROVIDER_CHECK_IDS.keyValid, 'unknown', bundle.validity.detail));
@@ -153,6 +155,10 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
       signals.push(signal('llm_quota_billing', LLM_PROVIDER_CHECK_IDS.quotaBilling, 'unknown', skipDetail));
     } else if (bundle.validity.outcome === 'billing_or_quota') {
       signals.push(signal('llm_quota_billing', LLM_PROVIDER_CHECK_IDS.quotaBilling, 'critical', bundle.validity.detail));
+    } else if (bundle.validity.outcome === 'permission') {
+      // The key is valid but scoped too narrowly for this call — degraded,
+      // not a failure. Other calls the app makes may still succeed.
+      signals.push(signal('llm_quota_billing', LLM_PROVIDER_CHECK_IDS.quotaBilling, 'warning', bundle.validity.detail));
     } else if (bundle.validity.outcome === 'valid' || bundle.validity.outcome === 'rate_limited') {
       signals.push(
         signal(
@@ -174,22 +180,8 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
     }
 
     // rate_limit_headroom
-    if (bundle.headroom === null) {
-      signals.push(signal('llm_rate_limit_headroom', LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom, 'unknown', skipDetail));
-    } else if (!bundle.headroom.known) {
-      signals.push(signal('llm_rate_limit_headroom', LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom, 'unknown', bundle.headroom.detail));
-    } else {
-      const low = (bundle.headroom.requestsRemainingPct ?? 100) < HEADROOM_WARN_PCT
-        || (bundle.headroom.tokensRemainingPct ?? 100) < HEADROOM_WARN_PCT;
-      signals.push(
-        signal(
-          'llm_rate_limit_headroom',
-          LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom,
-          low ? 'warning' : 'healthy',
-          bundle.headroom.detail,
-        ),
-      );
-    }
+    const headroom = this.headroomAssessment(bundle, skipDetail);
+    signals.push(signal('llm_rate_limit_headroom', LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom, headroom.status, headroom.detail));
 
     // model_deprecated
     if (bundle.model === null) {
@@ -224,6 +216,49 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
     }
 
     return signals;
+  }
+
+  /**
+   * rate_limit_headroom's status/detail, folding in Finding 2: some providers
+   * (OpenRouter under HTTP 429) replace the response body the headroom check
+   * reads, so headroom parses as `unknown` — or, if a stale/cached figure
+   * were ever used, even `healthy` — even though a live 429 was just observed
+   * on the probe itself. An observed rate limit is degraded regardless of
+   * what the headroom read says, unless the headroom read already flagged it
+   * (a known, low percentage) — in which case that reading already tells the
+   * more precise story and is left alone.
+   *
+   * Shared by buildSignals and diagnose() so the two can't drift apart on
+   * this case — see the class-level comment on runChecks about keeping the
+   * three check-consuming methods honesty-consistent.
+   */
+  private headroomAssessment(bundle: CheckBundle, fallbackDetail: string): { status: HealthSignalStatus; detail: string } {
+    let status: HealthSignalStatus;
+    let detail: string;
+
+    if (bundle.headroom === null) {
+      status = 'unknown';
+      detail = fallbackDetail;
+    } else if (!bundle.headroom.known) {
+      status = 'unknown';
+      detail = bundle.headroom.detail;
+    } else {
+      const low = (bundle.headroom.requestsRemainingPct ?? 100) < HEADROOM_WARN_PCT
+        || (bundle.headroom.tokensRemainingPct ?? 100) < HEADROOM_WARN_PCT;
+      status = low ? 'warning' : 'healthy';
+      detail = bundle.headroom.detail;
+    }
+
+    if (bundle.validity?.outcome === 'rate_limited' && status !== 'warning') {
+      status = 'warning';
+      detail = `${this.describeObservedRateLimit()} ${detail}`;
+    }
+
+    return { status, detail };
+  }
+
+  private describeObservedRateLimit(): string {
+    return `${this.label} returned HTTP 429 on the probe; headroom is low or exhausted right now.`;
   }
 
   private overallStatus(signals: HealthSignal[]): HealthStatus {
@@ -345,10 +380,8 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
       };
     }
 
-    const headroomLow =
-      bundle.headroom?.known === true &&
-      ((bundle.headroom.requestsRemainingPct ?? 100) < HEADROOM_WARN_PCT ||
-        (bundle.headroom.tokensRemainingPct ?? 100) < HEADROOM_WARN_PCT);
+    const headroom = this.headroomAssessment(bundle, 'Rate-limit headroom was not read.');
+    const headroomLow = headroom.status === 'warning';
 
     let scenario: string | null;
     let confidence: number;
@@ -356,12 +389,17 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
     if (!bundle.presence.present) {
       scenario = 'api_key_missing';
       confidence = 0.99;
-    } else if (bundle.validity?.outcome === 'invalid_key' || bundle.validity?.outcome === 'permission') {
+    } else if (bundle.validity?.outcome === 'invalid_key') {
       scenario = 'api_key_invalid';
       confidence = 0.98;
     } else if (bundle.validity?.outcome === 'billing_or_quota') {
       scenario = 'quota_or_billing_exhausted';
       confidence = 0.97;
+    } else if (bundle.validity?.outcome === 'permission') {
+      // The key authenticated fine; it just can't do this particular call.
+      // Degraded, not the "rotate your key" story api_key_invalid tells.
+      scenario = 'key_scope_limited';
+      confidence = 0.85;
     } else if (bundle.model?.presentInList === false) {
       scenario = 'configured_model_unavailable';
       confidence = 0.9;
@@ -391,33 +429,40 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
       {
         source: 'llm_key_valid',
         checkId: LLM_PROVIDER_CHECK_IDS.keyValid,
+        // Only an outright 401 rejection is a key_valid failure. A 403
+        // permission failure still means the key authenticated — that's
+        // reported as a degraded quota_billing finding below, not here.
         observation: bundle.validity?.detail ?? 'Key validity was not tested.',
-        severity:
-          bundle.validity?.outcome === 'invalid_key' || bundle.validity?.outcome === 'permission' ? 'critical' : 'info',
+        severity: bundle.validity?.outcome === 'invalid_key' ? 'critical' : 'info',
         data: { validity: bundle.validity },
       },
       {
         source: 'llm_quota_billing',
         checkId: LLM_PROVIDER_CHECK_IDS.quotaBilling,
         // Mirrors buildSignals' quota_billing branching: not-tested (no key),
-        // billing/quota error, checked-clean, or an honest could-not-determine
-        // for any other outcome — never a checked-clean claim about a probe
-        // that never ran.
+        // billing/quota error, permission-scoped (degraded, not a failure),
+        // checked-clean, or an honest could-not-determine for any other
+        // outcome — never a checked-clean claim about a probe that never ran.
         observation:
           bundle.validity === null
             ? 'Quota and billing state was not tested — no key to check.'
-            : bundle.validity.outcome === 'billing_or_quota'
+            : bundle.validity.outcome === 'billing_or_quota' || bundle.validity.outcome === 'permission'
               ? bundle.validity.detail
               : bundle.validity.outcome === 'valid' || bundle.validity.outcome === 'rate_limited'
                 ? `No billing or quota error observed for ${label}.`
                 : `Quota and billing state could not be determined: ${bundle.validity.detail}`,
-        severity: bundle.validity?.outcome === 'billing_or_quota' ? 'critical' : 'info',
+        severity:
+          bundle.validity?.outcome === 'billing_or_quota'
+            ? 'critical'
+            : bundle.validity?.outcome === 'permission'
+              ? 'warning'
+              : 'info',
         data: { validity: bundle.validity },
       },
       {
         source: 'llm_rate_limit_headroom',
         checkId: LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom,
-        observation: bundle.headroom?.detail ?? 'Rate-limit headroom was not read.',
+        observation: headroom.detail,
         severity: headroomLow ? 'warning' : 'info',
         data: { headroom: bundle.headroom },
       },
@@ -480,7 +525,12 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
         recipients: [
           {
             role: 'on_call_engineer',
-            urgency: scenario === 'no_finding' ? 'low' : scenario === 'provider_incident' ? 'medium' : 'high',
+            urgency:
+              scenario === 'no_finding'
+                ? 'low'
+                : scenario === 'provider_incident' || scenario === 'key_scope_limited'
+                  ? 'medium'
+                  : 'high',
           },
         ],
         message: {
@@ -490,7 +540,10 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
               : `${label}: ${scenario.replace(/_/g, ' ')} (${target})`,
           detail: this.fixDirection(scenario, label),
           contextReferences: ['llm_provider_baseline'],
-          actionRequired: scenario !== 'provider_incident' && scenario !== 'no_finding',
+          // provider_incident and key_scope_limited are both degraded-not-broken:
+          // the fixDirection names something to check, but nothing here is
+          // confirmed to require the operator's action.
+          actionRequired: scenario !== 'provider_incident' && scenario !== 'key_scope_limited' && scenario !== 'no_finding',
         },
         channel: 'auto',
       },
@@ -566,6 +619,8 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
         return `No ${label} API key is set in the environment CrisisMode ran in. Export the key in the shell or platform environment your app uses. CrisisMode never reads .env files, so a key that only lives in .env will keep looking missing here even when the app works.`;
       case 'api_key_invalid':
         return `${label} rejected the API key. It has most likely been rotated, revoked, or copied incompletely. Create a fresh key in the ${label} console and replace it everywhere the app reads it — local shell, CI secrets, and the deploy platform.`;
+      case 'key_scope_limited':
+        return `${label} accepted the API key, but it does not have permission for this check's probe endpoint — the key itself is fine, and the app's other calls may still be working. Check the key's scopes/permissions in the ${label} console and grant access if the probe endpoint matters to your app.`;
       case 'quota_or_billing_exhausted':
         return `${label} accepted the key but refused to serve requests because the account is out of quota or credit. Add credit or raise the spend limit in the ${label} billing settings; no code change will fix this.`;
       case 'configured_model_unavailable':
