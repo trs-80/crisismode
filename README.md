@@ -269,6 +269,7 @@ crisismode scan                       # Health scan with scored summary and next
 crisismode diagnose                   # Health check + AI-powered diagnosis (read-only)
 crisismode recover                    # Full recovery flow with plain-English AI summaries
 crisismode status                     # Quick health probe
+crisismode triage                     # Is it me, my network, or them? Offline localization — exits 1 when the cause is this machine or its network
 crisismode ask "<question>"           # Natural language AI diagnosis
 crisismode ask                        # Interactive diagnostic REPL
 crisismode demo                       # Simulator demo mode
@@ -309,6 +310,7 @@ The `--json` flag emits **JSON lines** (one JSON object per line), not a single 
 | `health` | Health assessment with `status` and `signals` array |
 | `diagnosis` | AI-powered diagnosis with `scenario`, `confidence`, and root cause |
 | `plan` | Recovery plan with `steps` array |
+| `triage` | Localization verdict (`local`/`network`/`remote`/`mixed`/`healthy`) with per-layer results. Exit code 0 for `healthy`/`remote`, 1 for `local`/`network`/`mixed` |
 
 Example usage:
 

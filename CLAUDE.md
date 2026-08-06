@@ -73,6 +73,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `diagnose` | Health check + AI-powered diagnosis (read-only) |
 | `recover` | Full recovery flow with execution planning |
 | `status` | Quick health probe |
+| `triage` | Offline localization: is the problem this machine, its network, or the remote services? (exit 1 on local/network/mixed) |
 | `ask` | Natural language AI diagnosis |
 | `demo` | Simulator demo mode |
 | `init` | Generate `crisismode.yaml` configuration |
@@ -191,6 +192,9 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/framework/ai-diagnosis-universal.ts` | Universal AI-powered diagnosis for any agent |
 | `src/framework/incident-report.ts` | Structured incident report generation |
 | `src/framework/network-profile.ts` | Network diagnostics and profiling |
+| `src/framework/triage.ts` | Offline triage — layered localization and verdict synthesis |
+| `src/framework/triage-probes.ts` | Node implementations of the triage probes (built-ins only) |
+| `src/cli/commands/triage.ts` | `crisismode triage` command and exit-code contract |
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
 | `src/cli/index.ts` | Unified CLI entry point |
