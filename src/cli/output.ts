@@ -459,6 +459,8 @@ export interface ScanFinding {
    * in the headline and score — but it is a lead, not a conclusion.
    */
   bestEffort?: true;
+  /** Triage attributed this unreachable finding to the observer's own machine/network. */
+  possiblyObserverCaused?: boolean;
 }
 
 export interface RecentChange {
