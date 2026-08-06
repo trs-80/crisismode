@@ -254,9 +254,9 @@ export class LlmProviderLiveClient implements LlmProviderBackend {
    * SECURITY: the caught error message is provider/network text; the key is
    * never interpolated into a URL, so it cannot appear here.
    */
-  private async get(url: string, headers: Record<string, string>): Promise<HttpProbe> {
+  private async get(url: string, headers: Record<string, string>, timeoutMs: number = this.timeoutMs): Promise<HttpProbe> {
     try {
-      const response = await fetch(url, { headers, signal: AbortSignal.timeout(this.timeoutMs) });
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
       const raw = await response.text();
       let body: unknown = null;
       try {
@@ -453,8 +453,17 @@ export class LlmProviderLiveClient implements LlmProviderBackend {
       const pages: HttpProbe[] = [];
       let url = `${this.spec.modelsUrl}?pageSize=1000`;
       let truncated = false;
+      // One deadline for the whole page sequence, not one timeout per page —
+      // otherwise a paginated fetch's worst case is
+      // MAX_MODEL_LIST_PAGES * timeoutMs, blowing scan's per-agent budget.
+      const deadline = Date.now() + this.timeoutMs;
       for (let page = 0; page < MAX_MODEL_LIST_PAGES; page++) {
-        const probe = await this.get(url, this.authHeaders());
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) {
+          truncated = true;
+          break;
+        }
+        const probe = await this.get(url, this.authHeaders(), remaining);
         pages.push(probe);
         if (probe.networkError !== null || probe.httpStatus === null || probe.httpStatus >= 300) break;
         const nextPageToken = (probe.body as { nextPageToken?: unknown } | null)?.nextPageToken;
