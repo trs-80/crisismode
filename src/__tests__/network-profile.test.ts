@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   probeNetwork,
@@ -7,6 +9,7 @@ import {
   isHubReachable,
   resetNetworkProfile,
 } from '../framework/network-profile.js';
+import { probeTcpBounded } from '../framework/triage-probes.js';
 
 afterEach(() => {
   resetNetworkProfile();
@@ -87,5 +90,34 @@ describe('network-profile', () => {
       resetNetworkProfile();
       expect(getNetworkProfile()).toBeNull();
     });
+  });
+});
+
+describe('shared bounded-execution machinery', () => {
+  it('probeTcpBounded produces the ProbeResult shape probeNetwork returns', async () => {
+    const shared = await probeTcpBounded('127.0.0.1', 1, 'closed-port', 500);
+    const profile = await probeNetwork({ targets: [{ host: '127.0.0.1', port: 1, label: 'closed-port' }] });
+    const viaProfile = profile.targets.probes[0]!;
+
+    expect(Object.keys(shared).sort()).toEqual(Object.keys(viaProfile).sort());
+    expect(shared.target).toBe(viaProfile.target);
+    expect(shared.reachable).toBe(false);
+    expect(viaProfile.reachable).toBe(false);
+    expect(typeof viaProfile.latencyMs).toBe('number');
+  });
+
+  // This module and triage answer different DNS questions on purpose. The
+  // behavioral difference only shows up on hosts where getaddrinfo and a raw
+  // query disagree (hosts-file entries, split-DNS), so a runtime assertion
+  // would pass on most machines even after a wrong swap. Assert the API.
+  it('probeDns still asks the getaddrinfo question, not a raw resolver query', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('../framework/network-profile.ts', import.meta.url)),
+      'utf-8',
+    );
+    expect(source).toContain('lookup');
+    expect(source).not.toContain('boundedResolve');
+    // ...while still delegating the timeout plumbing to the shared helper.
+    expect(source).toContain('runBounded');
   });
 });
