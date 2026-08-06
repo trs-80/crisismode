@@ -294,3 +294,78 @@ export function explainVerdict(verdict: TriageVerdict, layers: TriageLayerResult
       };
   }
 }
+
+// ── Layer builders (pure) ──
+
+/** A layer we deliberately did not run. Never contributes to the verdict. */
+export function skippedLayer(layer: TriageLayerName, detail: string, durationMs: number): TriageLayerResult {
+  return { layer, status: 'skipped', detail, durationMs };
+}
+
+export function buildInterfaceLayer(result: InterfaceProbeResult, durationMs: number): TriageLayerResult {
+  if (result.activeInterfaces.length === 0) {
+    return {
+      layer: 'interfaces',
+      status: 'fail',
+      code: 'no-active-interface',
+      detail: 'No non-loopback interface has an address — this machine is not on any network.',
+      nextStep: 'Turn on Wi-Fi or plug in the network cable, then re-run `crisismode triage`.',
+      durationMs,
+    };
+  }
+  return {
+    layer: 'interfaces',
+    status: 'pass',
+    detail: `Active interfaces: ${result.activeInterfaces.join(', ')}`,
+    durationMs,
+  };
+}
+
+export function buildGatewayLayer(result: GatewayProbeResult, durationMs: number): TriageLayerResult {
+  if (result.address === null) {
+    return {
+      layer: 'gateway',
+      status: 'unknown',
+      code: 'gateway-unknown',
+      detail: 'Could not read the default gateway from the route table (context only — this does not change the verdict).',
+      durationMs,
+    };
+  }
+  return {
+    layer: 'gateway',
+    status: 'pass',
+    detail: `Default gateway: ${result.address} (context only — not probed)`,
+    durationMs,
+  };
+}
+
+export function buildDnsLayer(result: DnsProbeResult, durationMs: number): TriageLayerResult {
+  const resolvers = PUBLIC_RESOLVERS.join(', ');
+  if (result.systemResolved) {
+    return {
+      layer: 'dns',
+      status: 'pass',
+      detail: `The system resolver answered for ${DNS_TEST_HOST}.`,
+      durationMs,
+    };
+  }
+  if (result.publicResolved) {
+    const why = result.systemError === undefined ? '' : ` Resolver error: ${result.systemError}`;
+    return {
+      layer: 'dns',
+      status: 'fail',
+      code: 'resolver-broken',
+      detail: `The system resolver failed for ${DNS_TEST_HOST}, but public resolvers (${resolvers}) answered — this machine's DNS configuration is broken.${why}`,
+      nextStep: "Fix this machine's DNS settings (VPN split-DNS, /etc/resolv.conf, or a corporate resolver) — the network itself is reachable.",
+      durationMs,
+    };
+  }
+  return {
+    layer: 'dns',
+    status: 'fail',
+    code: 'dns-unreachable',
+    detail: `Neither the system resolver nor public resolvers (${resolvers}) answered for ${DNS_TEST_HOST}.`,
+    nextStep: 'Check the network you are on (Wi-Fi sign-in, VPN, router) — DNS traffic is not getting out.',
+    durationMs,
+  };
+}
