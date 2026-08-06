@@ -87,7 +87,7 @@ Every task's requirements implicitly include this section.
 **Interfaces:**
 - Consumes: nothing (new leaf module, no imports outside the file).
 - Produces:
-  - `interface LlmProviderSpec` with fields `id`, `label`, `envVars: string[]`, `modelEnvVars: string[]`, `apiHost`, `modelsUrl`, `keyInfoUrl?`, `modelsJsonShape: 'data_id' | 'models_name'`, `authHeader`, `authPrefix`, `extraHeaders`, `rateLimitHeaderPrefix?`, `statusUrl?`, `statusFormat?: 'statuspage_v2' | 'google_cloud_incidents'`, `docsUrl`
+  - `interface LlmProviderSpec` with fields `id`, `label`, `envVars: string[]`, `modelEnvVars: string[]`, `apiHost`, `modelsUrl`, `keyInfoUrl?`, `modelsJsonShape: 'data_id' | 'models_name'`, `paginated?: boolean`, `authHeader`, `authPrefix`, `extraHeaders`, `rateLimitHeaderPrefix?`, `statusUrl?`, `statusFormat?: 'statuspage_v2' | 'google_cloud_incidents'`, `docsUrl`
   - `const LLM_PROVIDERS: LlmProviderSpec[]`
   - `type LlmProviderId = 'anthropic' | 'openai' | 'google' | 'openrouter'`
   - `function getProviderSpec(id: string): LlmProviderSpec | undefined`
@@ -238,6 +238,15 @@ export interface LlmProviderSpec {
   keyInfoUrl?: string;
   /** Shape of the models-list response body. */
   modelsJsonShape: 'data_id' | 'models_name';
+  /**
+   * True when the provider's models-list endpoint pages results (a
+   * `nextPageToken` field means more remain). Only Google does today —
+   * OpenAI, Anthropic, and OpenRouter's `/models` all return a flat list in
+   * one call, so `checkModel()` fetches exactly one page for them regardless
+   * of this flag. See the design doc's "Model-list extraction, normalization,
+   * and pagination" section.
+   */
+  paginated?: boolean;
   /** Header carrying the API key. */
   authHeader: string;
   /** Prefix for the auth header value ('' means the raw key). */
@@ -295,6 +304,8 @@ export const LLM_PROVIDERS: LlmProviderSpec[] = [
     apiHost: 'generativelanguage.googleapis.com',
     modelsUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
     modelsJsonShape: 'models_name',
+    // Google's models.list paginates (nextPageToken); see fetchModelList().
+    paginated: true,
     authHeader: 'x-goog-api-key',
     authPrefix: '',
     extraHeaders: {},
@@ -310,13 +321,14 @@ export const LLM_PROVIDERS: LlmProviderSpec[] = [
     envVars: ['OPENROUTER_API_KEY'],
     modelEnvVars: ['OPENROUTER_MODEL'],
     apiHost: 'openrouter.ai',
-    // The models list is public; key validity comes from the key-info endpoint.
-    // Two candidate paths are documented: /api/v1/auth/key (named in the design
-    // spec) and /api/v1/key (named in OpenRouter's current API reference).
-    // Defaulting to the spec's path; Step 5's curl decides and this is the one
-    // line to change if the other wins.
+    // The models list is public; key validity comes from the key-info
+    // endpoint. OpenRouter's current API reference documents GET /api/v1/key
+    // (response: { data: { limit, limit_remaining, limit_reset, usage } });
+    // /api/v1/auth/key is not a documented endpoint. Step 5's curl re-confirms
+    // this against the live provider before implementation — flip this one
+    // line if OpenRouter's docs have changed again by then.
     modelsUrl: 'https://openrouter.ai/api/v1/models',
-    keyInfoUrl: 'https://openrouter.ai/api/v1/auth/key',
+    keyInfoUrl: 'https://openrouter.ai/api/v1/key',
     modelsJsonShape: 'data_id',
     authHeader: 'Authorization',
     authPrefix: 'Bearer',
@@ -421,14 +433,16 @@ curl -sS -D - -o /tmp/openai-models.json \
 curl -sS -D - -H "x-goog-api-key: $GEMINI_API_KEY" \
   https://generativelanguage.googleapis.com/v1beta/models | head -30
 
-# OpenRouter key endpoint ("verify" #2) — the table defaults to /auth/key; the
-# current API reference documents /key. Run BOTH and keep whichever returns 200
-# with a "data" object carrying limit / limit_remaining. If both work, keep
-# /auth/key (the spec's choice). If only one works, put that one in the table.
-curl -sS -o /dev/null -w '/auth/key -> %{http_code}\n' \
-  -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/auth/key
+# OpenRouter key endpoint ("verify" #2) — the table defaults to /api/v1/key
+# per OpenRouter's current API reference (/api/v1/auth/key is not a
+# documented endpoint). Run both anyway: confirm /key returns 200 with a
+# "data" object carrying limit / limit_remaining, and confirm /auth/key does
+# NOT resolve (404 or similar) as expected. If reality disagrees with either
+# expectation, fix the table (keyInfoUrl) rather than the checks.
 curl -sS -w '\n/key -> %{http_code}\n' \
   -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/key
+curl -sS -o /dev/null -w '/auth/key -> %{http_code}\n' \
+  -H "Authorization: Bearer $OPENROUTER_API_KEY" https://openrouter.ai/api/v1/auth/key
 
 # Status endpoints — expect 200 and a Statuspage v2 summary with .incidents[].
 curl -sS -o /dev/null -w '%{http_code}\n' https://status.anthropic.com/api/v2/summary.json
@@ -2490,7 +2504,7 @@ describe('LlmProviderLiveClient key validity', () => {
 
   it('authenticates OpenRouter against its key-info endpoint', async () => {
     const { calls } = mockFetch({
-      'openrouter.ai/api/v1/auth/key': { status: 200, body: { data: { label: 'k', limit: 100, limit_remaining: 60, usage: 40, is_free_tier: false } } },
+      'openrouter.ai/api/v1/key': { status: 200, body: { data: { label: 'k', limit: 100, limit_remaining: 60, usage: 40, is_free_tier: false } } },
     });
     const validity = await new LlmProviderLiveClient({ provider: 'openrouter', apiKey: 'or-test' }).checkKeyValidity();
     expect(validity.outcome).toBe('valid');
@@ -2646,6 +2660,16 @@ export interface LlmProviderLiveConfig {
 /** Default per-request timeout: fits inside scan's 2000ms per-agent budget. */
 export const DEFAULT_LLM_REQUEST_TIMEOUT_MS = 1500;
 
+/**
+ * Page cap for a paginated models list (Google today). Each page is its own
+ * request against DEFAULT_LLM_REQUEST_TIMEOUT_MS, so this bounds total
+ * fetches per checkModel() call rather than any single request's deadline.
+ * Requesting pageSize=1000 keeps the common case at one round-trip; the cap
+ * exists so a pathological response can't turn one check into an unbounded
+ * fetch loop.
+ */
+const MAX_MODEL_LIST_PAGES = 3;
+
 interface HttpProbe {
   httpStatus: number | null;
   /** Lowercased response header names. Empty when no response arrived. */
@@ -2653,6 +2677,14 @@ interface HttpProbe {
   body: unknown;
   /** Set when no HTTP response arrived at all. */
   networkError: string | null;
+}
+
+/** Aggregate result of fetching a (possibly paginated) models list. */
+interface ModelListFetch {
+  /** Every page fetched, in order — one entry for an unpaginated provider. */
+  pages: HttpProbe[];
+  /** True when a `nextPageToken` was still present after MAX_MODEL_LIST_PAGES pages — the list may be incomplete. */
+  truncated: boolean;
 }
 
 /** Read `{ error: { type | code | status, message } }` across all four providers. */
@@ -2713,7 +2745,7 @@ export class LlmProviderLiveClient implements LlmProviderBackend {
 
   /** One authenticated request per instance, shared by every check. */
   private authProbe: Promise<HttpProbe> | null = null;
-  private modelListProbe: Promise<HttpProbe> | null = null;
+  private modelListFetch: Promise<ModelListFetch> | null = null;
   private statusProbe: Promise<HttpProbe> | null = null;
 
   constructor(private readonly config: LlmProviderLiveConfig) {
@@ -3043,7 +3075,7 @@ git commit -m "feat(llm-provider): add live client with error classification and
 
 **Interfaces:**
 - Consumes: `HttpProbe`, `probeAuth`, `get`, `spec` from Task 7's class.
-- Produces: real `checkRateLimitHeadroom()`, `checkModel()`, `checkProviderStatus()`; exported `function parseHeadroomFromHeaders(headers: Record<string, string>, prefix: string): { requestsRemainingPct: number | null; tokensRemainingPct: number | null }`; exported `function extractModelIds(body: unknown, shape: 'data_id' | 'models_name'): string[]`.
+- Produces: real `checkRateLimitHeadroom()`, `checkModel()`, `checkProviderStatus()`; exported `function parseHeadroomFromHeaders(headers: Record<string, string>, prefix: string): { requestsRemainingPct: number | null; tokensRemainingPct: number | null }`; exported `function extractModelIds(body: unknown, shape: 'data_id' | 'models_name'): string[]`; a private `fetchModelList()` that follows `nextPageToken` for providers whose spec sets `paginated: true` (Google), capped at `MAX_MODEL_LIST_PAGES` (3).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3158,7 +3190,7 @@ describe('LlmProviderLiveClient.checkRateLimitHeadroom', () => {
 
   it('derives OpenRouter headroom from remaining credit', async () => {
     routeFetch({
-      'openrouter.ai/api/v1/auth/key': {
+      'openrouter.ai/api/v1/key': {
         status: 200,
         body: { data: { label: 'k', limit: 200, limit_remaining: 10, usage: 190, is_free_tier: false } },
       },
@@ -3171,7 +3203,7 @@ describe('LlmProviderLiveClient.checkRateLimitHeadroom', () => {
 
   it('reports unknown for an OpenRouter key with no credit cap', async () => {
     routeFetch({
-      'openrouter.ai/api/v1/auth/key': {
+      'openrouter.ai/api/v1/key': {
         status: 200,
         body: { data: { label: 'k', limit: null, limit_remaining: null, usage: 12, is_free_tier: false } },
       },
@@ -3254,7 +3286,7 @@ describe('LlmProviderLiveClient.checkModel', () => {
 
   it('fetches the public models list separately for OpenRouter', async () => {
     const fn = routeFetch({
-      'openrouter.ai/api/v1/auth/key': { status: 200, body: { data: { limit: null, limit_remaining: null } } },
+      'openrouter.ai/api/v1/key': { status: 200, body: { data: { limit: null, limit_remaining: null } } },
       'openrouter.ai/api/v1/models': { status: 200, body: { data: [{ id: 'anthropic/claude-sonnet-4.5' }] } },
     });
     const model = await new LlmProviderLiveClient({
@@ -3264,6 +3296,56 @@ describe('LlmProviderLiveClient.checkModel', () => {
     }).checkModel();
     expect(model.presentInList).toBe(true);
     expect(fn.mock.calls.some((c) => String(c[0]).includes('/api/v1/models'))).toBe(true);
+  });
+
+  it('follows Google nextPageToken to find a model beyond the first page', async () => {
+    routeFetch({
+      // Listed first: routeFetch's route matching is url.includes(key), and
+      // Object.keys iterates in insertion order — this specific key must be
+      // checked before the bare-host fallback below, or every call would
+      // match the fallback instead.
+      'pageToken=next-page-token': {
+        status: 200,
+        body: { models: [{ name: 'models/gemini-1.5-pro' }] },
+      },
+      'generativelanguage.googleapis.com': {
+        status: 200,
+        body: { models: [{ name: 'models/gemini-1.0-pro' }], nextPageToken: 'next-page-token' },
+      },
+    });
+    const model = await new LlmProviderLiveClient({
+      provider: 'google',
+      apiKey: 'goog-key',
+      configuredModel: 'gemini-1.5-pro',
+    }).checkModel();
+    expect(model.listKnown).toBe(true);
+    expect(model.presentInList).toBe(true);
+    expect(model.sampleModels).toContain('gemini-1.5-pro');
+  });
+
+  it('reports unknown, not deprecated, when the Google model list has more pages than the cap follows', async () => {
+    // Every page returns a nextPageToken, so the loop exhausts
+    // MAX_MODEL_LIST_PAGES (3) without ever reading a page containing the
+    // configured model — this must never resolve to presentInList: false,
+    // since the model might be on the page the check gave up before reaching.
+    let page = 0;
+    const fn = vi.fn(async () => {
+      page += 1;
+      return new Response(
+        JSON.stringify({ models: [{ name: `models/filler-${page}` }], nextPageToken: `token-${page}` }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal('fetch', fn);
+    const model = await new LlmProviderLiveClient({
+      provider: 'google',
+      apiKey: 'goog-key',
+      configuredModel: 'gemini-1.5-pro',
+    }).checkModel();
+    expect(model.listKnown).toBe(false);
+    expect(model.presentInList).toBeNull();
+    expect(model.detail).toContain('more pages');
+    expect(fn.mock.calls.length).toBe(3);
   });
 });
 
@@ -3483,11 +3565,49 @@ In `src/agent/llm-provider/live-client.ts`, replace the "Task 8 implements these
     };
   }
 
-  /** The models list: the auth probe's own body, unless the provider authenticates elsewhere. */
-  private probeModelList(): Promise<HttpProbe> {
-    if (!this.spec.keyInfoUrl) return this.probeAuth();
-    this.modelListProbe ??= this.get(this.spec.modelsUrl, this.authHeaders());
-    return this.modelListProbe;
+  /**
+   * The models list, following pagination when the provider's spec declares
+   * it (`paginated: true` — Google today). Unpaginated providers keep the
+   * original behavior: reuse the auth probe's own body when the provider
+   * authenticates via the models endpoint itself (no separate `keyInfoUrl`),
+   * so `checkKeyValidity()` and `checkModel()` share one request; providers
+   * with a `keyInfoUrl` (OpenRouter) fetch the models list separately.
+   * Paginated providers always fetch their own page sequence — the
+   * `pageSize=1000` query string has nothing in common with the auth probe's
+   * URL, so there is no request to share regardless.
+   */
+  private async fetchModelList(): Promise<ModelListFetch> {
+    if (!this.spec.paginated) {
+      if (!this.spec.keyInfoUrl) {
+        const probe = await this.probeAuth();
+        return { pages: [probe], truncated: false };
+      }
+      this.modelListFetch ??= (async () => ({
+        pages: [await this.get(this.spec.modelsUrl, this.authHeaders())],
+        truncated: false,
+      }))();
+      return this.modelListFetch;
+    }
+
+    this.modelListFetch ??= (async () => {
+      const pages: HttpProbe[] = [];
+      let url = `${this.spec.modelsUrl}?pageSize=1000`;
+      let truncated = false;
+      for (let page = 0; page < MAX_MODEL_LIST_PAGES; page++) {
+        const probe = await this.get(url, this.authHeaders());
+        pages.push(probe);
+        if (probe.networkError !== null || probe.httpStatus === null || probe.httpStatus >= 300) break;
+        const nextPageToken = (probe.body as { nextPageToken?: unknown } | null)?.nextPageToken;
+        if (typeof nextPageToken !== 'string' || nextPageToken === '') break;
+        if (page === MAX_MODEL_LIST_PAGES - 1) {
+          truncated = true;
+          break;
+        }
+        url = `${this.spec.modelsUrl}?pageSize=1000&pageToken=${encodeURIComponent(nextPageToken)}`;
+      }
+      return { pages, truncated };
+    })();
+    return this.modelListFetch;
   }
 
   async checkModel(): Promise<ModelCheck> {
@@ -3508,23 +3628,41 @@ In `src/agent/llm-provider/live-client.ts`, replace the "Task 8 implements these
       return { ...base, listKnown: false, presentInList: null, sampleModels: [], detail: `No ${this.spec.label} API key, so the live model list could not be read.` };
     }
 
-    const probe = await this.probeModelList();
+    const { pages, truncated } = await this.fetchModelList();
 
     // "Could not read the list" and "the list is empty" are different facts.
     // Only the first is an unknown; the second definitively answers whether a
-    // configured model is present (it is not).
-    const readable = probe.networkError === null && probe.httpStatus !== null && probe.httpStatus < 300;
-    if (!readable) {
+    // configured model is present (it is not). A failed page anywhere in a
+    // paginated fetch means the list is incomplete, so it gets the same
+    // unknown treatment as a single unreadable page — the configured model
+    // might live on a page that was never successfully fetched.
+    const failedPage = pages.find((p) => p.networkError !== null || p.httpStatus === null || p.httpStatus >= 300);
+    if (failedPage) {
       return {
         ...base,
         listKnown: false,
         presentInList: null,
         sampleModels: [],
-        detail: `${this.spec.label}'s model list could not be read (${probe.networkError ?? `HTTP ${probe.httpStatus}`}), so the configured model could not be verified.`,
+        detail: `${this.spec.label}'s model list could not be read (${failedPage.networkError ?? `HTTP ${failedPage.httpStatus}`}), so the configured model could not be verified.`,
       };
     }
 
-    const models = extractModelIds(probe.body, this.spec.modelsJsonShape);
+    const models = pages.flatMap((p) => extractModelIds(p.body, this.spec.modelsJsonShape));
+
+    // Every fetched page read fine, but the provider says there are more
+    // pages than MAX_MODEL_LIST_PAGES follows. A hit within what was already
+    // fetched is still a definitive presence regardless of truncation — only
+    // the "not present" conclusion is unsafe to draw from a partial list, and
+    // only when a model is actually configured to check against.
+    if (configured && truncated && !models.includes(configured.model)) {
+      return {
+        ...base,
+        listKnown: false,
+        presentInList: null,
+        sampleModels: models.slice(0, 5),
+        detail: `${this.spec.label}'s model list has more pages than this check follows (checked ${pages.length}), so the configured model could not be conclusively verified.`,
+      };
+    }
 
     if (models.length === 0) {
       return {

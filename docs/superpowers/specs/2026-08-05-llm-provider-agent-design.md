@@ -56,12 +56,24 @@ One entry per provider, everything else generic:
 | field | anthropic | openai | google | openrouter |
 |---|---|---|---|---|
 | env keys | `ANTHROPIC_API_KEY` | `OPENAI_API_KEY` | `GOOGLE_AI_API_KEY` (existing convention), `GEMINI_API_KEY`, `GOOGLE_API_KEY` | `OPENROUTER_API_KEY` |
-| models endpoint | `GET api.anthropic.com/v1/models` | `GET api.openai.com/v1/models` | `GET generativelanguage.googleapis.com/v1beta/models` | `GET openrouter.ai/api/v1/models` (+ `/api/v1/auth/key` for auth) |
+| models endpoint | `GET api.anthropic.com/v1/models` | `GET api.openai.com/v1/models` | `GET generativelanguage.googleapis.com/v1beta/models` | `GET openrouter.ai/api/v1/models` (+ `/api/v1/key` for auth) |
 | auth | `x-api-key` + `anthropic-version` | `Authorization: Bearer` | `x-goog-api-key` header | `Authorization: Bearer` |
-| ratelimit headers | `anthropic-ratelimit-*` | `x-ratelimit-*` | not exposed → report honest `unknown` | not exposed via headers; parsed from `GET /api/v1/auth/key` response body (`data.rate_limit.requests` / `data.rate_limit.interval`, `data.usage` vs `data.limit`) → else honest `unknown` |
+| ratelimit headers | `anthropic-ratelimit-*` | `x-ratelimit-*` | not exposed → report honest `unknown` | not exposed via headers; parsed from `GET /api/v1/key` response body (`data.limit_remaining` vs `data.limit`, `data.usage`; `data.limit: null` means no cap → honest `unknown`) → else honest `unknown` |
 | status API | `GET status.anthropic.com/api/v2/summary.json` (Statuspage; no auth) | `GET status.openai.com/api/v2/summary.json` (Statuspage; no auth) | `GET status.cloud.google.com/incidents.json` (no auth; JSON array of incident objects, each with `service_name`, `severity`, `begin`, `end` — `end: null` means ongoing; an incident is active when `end` is null and `service_name` matches a Gemini/Generative Language service) | `GET status.openrouter.ai/api/v2/summary.json` (Statuspage-shaped; no auth; same `{ status: { indicator, description }, incidents: [...] }` contract as Anthropic/OpenAI) |
 
 Endpoint/header details above are concrete, testable contracts — the table is the single place they live. Anthropic's models endpoint and error taxonomy were verified at design time (models list exists; 401 `authentication_error`; error `.type` distinguishes `billing_error` from `permission_error`; 429 carries `retry-after` and ratelimit headers). Google's `incidents.json` shape and OpenRouter's Statuspage-style `summary.json` URL are design-time best-effort placeholders — confirmed against current provider docs during implementation and updated here if the real shape differs; a live-client test asserts against whatever shape is pinned in this table, not an ad hoc guess at the call site. If a provider's real response doesn't match, the check degrades to `unknown` (per Honest degradation) rather than the agent crashing or misreporting an incident.
+
+### Model-list extraction, normalization, and pagination (for `model_deprecated`)
+
+`model_deprecated` needs the response field holding the model id, and — for providers whose list can span multiple pages — a bounded pagination loop, so a valid model isn't misreported as deprecated merely because it wasn't on the first page:
+
+| field | anthropic | openai | google | openrouter |
+|---|---|---|---|---|
+| list field | `data[]`, each `{ id }` | `data[]`, each `{ id }` | `models[]`, each `{ name }` — `name` is a resource path (`models/gemini-1.5-pro`), not a bare id | `data[]`, each `{ id }` |
+| id normalization | none — `id` is already the configurable form (e.g. `claude-sonnet-4-5`) | none — `id` is already the configurable form (e.g. `gpt-4o`) | strip the `models/` prefix before comparing to the configured id, so `GOOGLE_MODEL=gemini-1.5-pro` matches a live entry of `models/gemini-1.5-pro` | none |
+| pagination | none observed at design time (flat list) | none observed at design time (flat list) | `pageToken`/`nextPageToken`; default `pageSize` 50, max 1000 per page (per Google's documented contract) | opt-in only: `offset`/`limit` query params control paging, but **omitting both returns the complete list in one call** — the agent never sends `offset`/`limit`, so no pagination loop is needed for v1 |
+
+For Google, request `pageSize=1000` on the first call (comfortably above today's catalog size) so the common case resolves in one round-trip within the per-request timeout budget; if a `nextPageToken` is still present, follow it for up to **3 pages total** (each page its own 1200ms-bounded request, per Timeouts and cancellation below) before giving up. If the configured model isn't found after the page cap is reached, `model_deprecated` reports `unknown` with a "model list has more pages than this check follows" reason — never a silent "not deprecated" pass and never a false "deprecated" fail, per Honest degradation. Live-client tests need paginated Google fixtures: one two-page case where the configured model is on page 2 (proving the loop follows `nextPageToken`), and one page-cap-exceeded case (proving the `unknown` fallback, not an incorrect deprecated verdict).
 
 ### Timeouts and cancellation
 
@@ -92,7 +104,7 @@ Every possible check result maps deterministically to a finding severity and an 
   - 403 with a permissions-type error body → `permission_error` → degraded, severity medium (the key is valid but scoped too narrowly for this call; other calls may still succeed).
   - 429 with quota-exhaustion markers (e.g. `insufficient_quota`) → `quota_exhausted` → unhealthy, severity high.
   - 429 without quota-exhaustion markers (plain rate limiting, no billing signal) → degraded, severity medium, reported via `rate_limit_headroom` rather than `quota_billing`.
-- **rate_limit_headroom**: < 20% remaining → degraded, severity medium; provider incident → degraded; header not exposed by the provider → honest `unknown`, severity low (not a guess, not a failure).
+- **rate_limit_headroom**: < 20% remaining → degraded, severity medium; header not exposed by the provider → honest `unknown`, severity low (not a guess, not a failure). Provider incidents are owned exclusively by `provider_status` below — `rate_limit_headroom` never emits an incident-flavored finding, so the two checks cannot both report the same degradation under different `checkId`s.
 - **model_deprecated**: configured model id absent from the live models list → degraded, severity medium (the app may break on its next call); present → healthy; models-list fetch fails → `unknown`, severity low.
 - **provider_status**: an active incident affecting the provider → degraded, severity medium (high if the incident is a full outage); status endpoint unreachable, unparsable, or an unsupported response shape → `unknown`, severity low.
 - **`unknown` is reserved for unverified failures only** — transport errors, parse errors, unsupported/unexpected response shapes, timeouts (per Timeouts and cancellation above), or offline/unreachable conditions. It is never used in place of a classified authenticated failure: 401/403/429 responses are always categorized per the `quota_billing` rules above, not folded into `unknown`. `unknown` findings are severity low and reported honestly as "cannot verify," distinct from both healthy and failing states.
@@ -115,7 +127,7 @@ Autodiscovery (see boundary section) derives one target per detected provider us
 ## Testing
 
 - Simulator scenarios for all six checks × healthy/failing.
-- Live-client unit tests with mocked `fetch` (per-provider request shape, error classification table, header parsing, no-key-leak test).
+- Live-client unit tests with mocked `fetch` (per-provider request shape, error classification table, header parsing, no-key-leak test, and the Google paginated-models fixtures from Model-list extraction above).
 - Autodiscovery tests: env detection derives per-provider `llm-provider` targets; `derived-ai-provider` is no longer produced; explicit ai-provider config still works.
 - Agent-test-harness coverage.
 - Live validation at the real surface: `crisismode scan` and `crisismode diagnose` against real Anthropic + OpenAI keys, including a deliberately invalid key.
