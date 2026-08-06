@@ -25,6 +25,8 @@
 
 import type { ProbeResult } from '@crisismode/agent-sdk';
 import type { EscalationLevel } from './escalation.js';
+import { detectObserverContext, nodeTriageProbes, runBounded } from './triage-probes.js';
+import type { BoundedOutcome } from './triage-probes.js';
 
 // ── Verdict and layer model ──
 
@@ -506,4 +508,235 @@ export function buildTargetsLayer(probes: ProbeResult[], durationMs: number, omi
     probes,
     durationMs,
   };
+}
+
+// ── Orchestration ──
+
+export interface TriageOptions {
+  /** Injectable probe set. Defaults to the real Node probes. */
+  probes?: TriageProbes | undefined;
+  /** Hard per-probe timeout. Defaults to DEFAULT_PROBE_TIMEOUT_MS. */
+  timeoutMs?: number | undefined;
+  /** Whole-run budget. Defaults to TRIAGE_DEADLINE_MS. */
+  deadlineMs?: number | undefined;
+  /** Targets for layer 6. Absent or empty skips the layer. */
+  targets?: TriageTarget[] | undefined;
+  /** Override observer detection (tests). */
+  observerContext?: ObserverContextResult | undefined;
+}
+
+/** Report order, which is the spec's layer numbering — not execution order. */
+const LAYER_ORDER: readonly TriageLayerName[] = [
+  'interfaces', 'gateway', 'dns', 'captive-portal', 'internet', 'targets',
+];
+
+/**
+ * Hard cap on Stage 4 targets. `resolveTriageTargets` (Task 9) applies the
+ * same cap before targets ever reach `runTriage`, but the bound is enforced
+ * here too so a caller that builds `options.targets` directly cannot make
+ * Stage 4 open one socket and one timer per target for an unbounded list.
+ */
+const MAX_STAGE4_TARGETS = 20;
+
+/**
+ * Sockets probed at once in Stage 4. A large target list must not open
+ * hundreds of connections simultaneously and exhaust file descriptors before
+ * the whole-run deadline even has a chance to bite.
+ */
+const TARGET_PROBE_CONCURRENCY = 5;
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight at once, preserving
+ * input order in the result. This is the one place in the triage path that
+ * needs a concurrency limiter, so it is a few lines here rather than a
+ * dependency.
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]!);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/**
+ * Run every layer and synthesize a verdict.
+ *
+ * Layer 1 runs first and short-circuits the rest: with no network interface,
+ * every later probe would fail for the same reason and only add latency.
+ * Everything after it runs in three concurrent stages, and the whole run is
+ * capped by a monotonic deadline so a pathological network cannot stretch the
+ * report past the ≤5s the spec promises.
+ */
+export async function runTriage(options: TriageOptions = {}): Promise<TriageReport> {
+  // performance.now() (monotonic) drives every elapsed-time and budget
+  // calculation below. Date.now() (wall clock) is kept only for the
+  // `checkedAt` timestamp, which is meant to be a real calendar time — an
+  // NTP correction or a manual clock change mid-run must never be able to
+  // stretch the budget, cut it short, or produce a negative duration.
+  const wallClockStartedAt = Date.now();
+  const startedAt = performance.now();
+  const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+  const deadline = startedAt + (options.deadlineMs ?? TRIAGE_DEADLINE_MS);
+  const probes = options.probes ?? nodeTriageProbes(timeoutMs, PUBLIC_RESOLVERS);
+  const observer = options.observerContext ?? detectObserverContext();
+  const targets = options.targets ?? [];
+  const layers: TriageLayerResult[] = [];
+
+  /** Budget for the next probe: whichever of the two bounds bites first. */
+  const budget = (): number => Math.min(timeoutMs, Math.max(0, deadline - performance.now()));
+
+  // Layer 1 — interfaces
+  const interfaceOutcome = await runBounded(() => probes.listInterfaces(), budget());
+  const interfaceLayer = interfaceOutcome.ok
+    ? buildInterfaceLayer(interfaceOutcome.value, interfaceOutcome.durationMs)
+    : unknownLayer('interfaces', interfaceOutcome.error, interfaceOutcome.durationMs);
+  layers.push(interfaceLayer);
+
+  if (interfaceLayer.status === 'fail') {
+    const remaining: TriageLayerName[] = ['gateway', 'dns', 'captive-portal', 'internet', 'targets'];
+    for (const name of remaining) {
+      layers.push(skippedLayer(name, 'Skipped — this machine has no active network interface.', 0));
+    }
+    return buildReport(layers, observer, wallClockStartedAt, startedAt);
+  }
+
+  // Stage 2 — gateway (context) and DNS, concurrently
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
+  const stage2Budget = budget();
+  const [gatewayOutcome, dnsOutcome] = await Promise.all([
+    runBounded(() => probes.findDefaultGateway(), stage2Budget),
+    runBounded(() => probes.resolveDns(DNS_TEST_HOST), stage2Budget),
+  ]);
+  layers.push(gatewayOutcome.ok
+    ? buildGatewayLayer(gatewayOutcome.value, gatewayOutcome.durationMs)
+    : unknownLayer('gateway', gatewayOutcome.error, gatewayOutcome.durationMs));
+  layers.push(dnsOutcome.ok
+    ? buildDnsLayer(dnsOutcome.value, dnsOutcome.durationMs)
+    : unknownLayer('dns', dnsOutcome.error, dnsOutcome.durationMs));
+
+  // Stage 3 — captive portal and internet. Independent HTTP probes, so they
+  // run concurrently; serializing them is what pushed the worst case past 5s.
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
+  const stage3Budget = budget();
+  const stage3Start = performance.now();
+  const captiveWork: Promise<TriageLayerResult> = observer.context === 'server'
+    ? Promise.resolve(skippedLayer('captive-portal', 'Not applicable (server environment).', 0))
+    : Promise.all(
+        CAPTIVE_ENDPOINTS.map(async (endpoint) => ({
+          endpoint,
+          probe: asHttpProbe(await runBounded(() => probes.fetchUrl(endpoint.url, 'GET'), stage3Budget)),
+        })),
+      ).then((captiveProbes: CaptiveProbe[]) => buildCaptiveLayer(captiveProbes, performance.now() - stage3Start));
+
+  const internetWork: Promise<TriageLayerResult> = Promise.all(
+    INTERNET_PROBE_URLS.map(async (url) => ({
+      url,
+      probe: asHttpProbe(await runBounded(() => probes.fetchUrl(url, 'HEAD'), stage3Budget)),
+    })),
+  ).then((internetProbes: InternetProbe[]) => buildInternetLayer(internetProbes, performance.now() - stage3Start));
+
+  const [captiveLayer, internetLayer] = await Promise.all([captiveWork, internetWork]);
+  layers.push(captiveLayer);
+  layers.push(internetLayer);
+
+  // Stage 4 — per-target reachability. Capped and concurrency-limited: a
+  // large config or autodiscovery result must not open one socket and one
+  // timer per target all at once — that can exhaust file descriptors or
+  // memory well before the whole-run deadline. Each probe races against the
+  // *live* remaining budget (`budget()`, re-read per probe) rather than a
+  // value captured once — a concurrency-limited executor runs targets in
+  // sequential batches, and a fixed per-batch timeout would let enough
+  // batches add up past the deadline the same way unbounded per-probe
+  // timeouts did before this whole-run bound existed.
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
+  const targetsStart = performance.now();
+  const boundedTargets = targets.slice(0, MAX_STAGE4_TARGETS);
+  const omittedTargets = targets.length - boundedTargets.length;
+  const targetProbes: ProbeResult[] = await mapWithConcurrency(
+    boundedTargets,
+    TARGET_PROBE_CONCURRENCY,
+    async (t) => {
+      const outcome = await runBounded(() => probes.connectTcp(t.host, t.port, t.label), budget());
+      return outcome.ok
+        ? outcome.value
+        : { target: t.label, reachable: false, latencyMs: outcome.durationMs, error: outcome.error };
+    },
+  );
+  layers.push(buildTargetsLayer(targetProbes, performance.now() - targetsStart, omittedTargets));
+
+  return buildReport(layers, observer, wallClockStartedAt, startedAt);
+}
+
+/**
+ * Finish a run that hit its deadline. Layers we never got to are `unknown`,
+ * not `skipped`: we did intend to check them, so the honest report is "could
+ * not assess" (which synthesis turns into `mixed`) rather than a silence that
+ * would let the verdict come out `healthy`.
+ */
+function finishExpired(
+  layers: TriageLayerResult[],
+  observer: ObserverContextResult,
+  wallClockStartedAt: number,
+  startedAt: number,
+): TriageReport {
+  for (const name of LAYER_ORDER) {
+    if (layers.some((l) => l.layer === name)) continue;
+    layers.push({
+      layer: name,
+      status: 'unknown',
+      detail: 'Not checked — triage ran out of its whole-run budget.',
+      durationMs: 0,
+    });
+  }
+  return buildReport(layers, observer, wallClockStartedAt, startedAt);
+}
+
+function buildReport(
+  layers: TriageLayerResult[],
+  observer: ObserverContextResult,
+  wallClockStartedAt: number,
+  startedAt: number,
+): TriageReport {
+  const verdict = synthesizeVerdict(layers);
+  const { explanation, nextStep } = explainVerdict(verdict, layers);
+  return {
+    verdict,
+    explanation,
+    nextStep,
+    layers,
+    observerContext: observer.context,
+    observerContextEvidence: observer.evidence,
+    escalationLevel: TRIAGE_ESCALATION_LEVEL,
+    checkedAt: new Date(wallClockStartedAt).toISOString(),
+    durationMs: performance.now() - startedAt,
+  };
+}
+
+function unknownLayer(layer: TriageLayerName, error: string, durationMs: number): TriageLayerResult {
+  return { layer, status: 'unknown', detail: `Probe did not complete: ${error}`, durationMs };
+}
+
+/**
+ * A timed-out HTTP or TCP probe becomes "no response" — evidence, because
+ * that is exactly what unreachable looks like from here, and it is how
+ * network-profile.ts has always treated a socket timeout. A timed-out DNS
+ * probe becomes `unknown` instead (see unknownLayer): it cannot distinguish
+ * "the resolver is broken" from "we did not wait long enough", and guessing
+ * between those is the difference between a `local` and a `network` verdict.
+ * The asymmetry is deliberate — do not "fix" it into consistency.
+ */
+function asHttpProbe(outcome: BoundedOutcome<HttpProbeResult>): HttpProbeResult {
+  return outcome.ok
+    ? outcome.value
+    : { status: null, body: '', redirected: false, latencyMs: outcome.durationMs, error: outcome.error };
 }
