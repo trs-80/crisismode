@@ -183,6 +183,46 @@ describe('LlmProviderDiagnosisAgent.assessHealth', () => {
     const deprecatedMapped = healthToSignals(await deprecated.agent.assessHealth(deprecated.context));
     expect(deprecatedMapped.find((s) => s.source === 'llm_model_deprecated')!.type).toBe('config_mismatch');
   });
+
+  it('names the check that came back unknown instead of claiming it is fine when overall status is still healthy', async () => {
+    // Google publishes no rate-limit response headers, so checkRateLimitHeadroom
+    // returns known: false even in the 'healthy' scenario — every other check
+    // passes, so overallStatus is still 'healthy', but the summary must not
+    // claim rate-limit headroom is fine when it was never actually read.
+    const simulator = new LlmProviderSimulator('healthy', 'google');
+    const agent = new LlmProviderDiagnosisAgent(simulator, async () => null);
+    const context = assembleContext(
+      {
+        type: 'health_check',
+        source: 'cli-scan',
+        payload: { alertname: 'llm-providerScanCheck', instance: 'derived-llm-google', severity: 'info' },
+        receivedAt: new Date().toISOString(),
+      },
+      agent.manifest,
+    );
+    const health = await agent.assessHealth(context);
+
+    expect(health.status).toBe('healthy');
+    const headroom = health.signals.find((s) => s.checkId === LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom)!;
+    expect(headroom.status).toBe('unknown');
+    expect(health.summary).toContain('rate-limit headroom could not be determined');
+    expect(health.summary).not.toContain('rate-limit headroom is fine');
+  });
+
+  it('never lets the raw fixture key reach assessHealth or diagnose output', async () => {
+    // Mirrors simulator.ts's private FIXTURE_KEY, duplicated here because the
+    // simulator does not export it. A leak of this literal into either
+    // method's output means a fingerprinted field regressed to carrying the
+    // raw key instead of presence.fingerprint.
+    const FIXTURE_KEY = 'sk-ant-simulator-fixture-notarealkey';
+    const { agent, context } = setup('healthy');
+    const health = await agent.assessHealth(context);
+    const diagnosis = await agent.diagnose(context);
+    const serialized = JSON.stringify({ health, diagnosis });
+
+    expect(serialized).not.toContain(FIXTURE_KEY);
+    expect(serialized).toContain('…lkey');
+  });
 });
 
 describe('LlmProviderDiagnosisAgent.diagnose', () => {
@@ -209,6 +249,14 @@ describe('LlmProviderDiagnosisAgent.diagnose', () => {
     const diagnosis = await agent.diagnose(context);
     expect(diagnosis.status).toBe('inconclusive');
     expect(diagnosis.scenario).toBeNull();
+  });
+
+  it('reports quota_billing as not tested, not checked-clean, when there is no key to probe with', async () => {
+    const { agent, context } = setup('no_key');
+    const diagnosis = await agent.diagnose(context);
+    const quota = diagnosis.findings.find((f) => f.checkId === LLM_PROVIDER_CHECK_IDS.quotaBilling)!;
+    expect(quota.observation).toContain('not tested');
+    expect(quota.observation).not.toContain('No billing or quota error observed');
   });
 
   it('tags every finding with its checkId — PR 5 keys diagnose-path guidance on nothing else', async () => {
