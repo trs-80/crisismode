@@ -50,17 +50,46 @@ describe('deriveGatedTargets', () => {
     expect(ungated.targets.find((t) => t.kind === 'message-queue')).toBeUndefined();
   });
 
-  it('derives ai-provider from an API key even without SDK deps', async () => {
+  it('derives one target per detected provider key, each under its own provider-scoped kind', async () => {
     const dir = await emptyDir();
-    const gated = await deriveGatedTargets(stack([]), dir, { ANTHROPIC_API_KEY: 'k' } as NodeJS.ProcessEnv);
-    const ai = gated.targets.find((t) => t.kind === 'ai-provider');
-    expect(ai?.primary?.host).toBe('auto');
+    const gated = await deriveGatedTargets(
+      stack([]),
+      dir,
+      { ANTHROPIC_API_KEY: 'k', GEMINI_API_KEY: 'g' } as NodeJS.ProcessEnv,
+    );
+
+    const llm = gated.targets.filter((t) => t.kind.startsWith('llm-provider.'));
+    expect(llm.map((t) => t.name)).toEqual(['derived-llm-anthropic', 'derived-llm-google']);
+    expect(llm.map((t) => t.kind)).toEqual(['llm-provider.anthropic', 'llm-provider.google']);
+    expect(llm[0]!.llm).toEqual({ provider: 'anthropic' });
+    expect(llm[0]!.primary).toEqual({ host: 'api.anthropic.com', port: 443 });
+    expect(gated.notes['derived-llm-anthropic']).toBe('from ANTHROPIC_API_KEY');
+    expect(gated.notes['derived-llm-google']).toBe('from GEMINI_API_KEY');
   });
 
-  it('derives ai-provider from an SDK dep even without keys', async () => {
+  it('no longer derives a derived-ai-provider target, and never a blanket llm-provider kind', async () => {
+    const dir = await emptyDir();
+    const gated = await deriveGatedTargets(
+      stack(['@anthropic-ai/sdk']),
+      dir,
+      { ANTHROPIC_API_KEY: 'k' } as NodeJS.ProcessEnv,
+    );
+    expect(gated.targets.find((t) => t.kind === 'ai-provider')).toBeUndefined();
+    expect(gated.targets.find((t) => t.name === 'derived-ai-provider')).toBeUndefined();
+    expect(gated.targets.find((t) => t.kind === 'llm-provider')).toBeUndefined();
+  });
+
+  it('derives nothing from an SDK dependency alone — a key in .env is not a missing key', async () => {
     const dir = await emptyDir();
     const gated = await deriveGatedTargets(stack(['@anthropic-ai/sdk']), dir, {} as NodeJS.ProcessEnv);
-    expect(gated.targets.find((t) => t.kind === 'ai-provider')).toBeDefined();
+    expect(gated.targets.filter((t) => t.kind.startsWith('llm-provider.'))).toEqual([]);
+  });
+
+  it('never puts key material in a derived target name or note', async () => {
+    const dir = await emptyDir();
+    const gated = await deriveGatedTargets(stack([]), dir, { OPENAI_API_KEY: 'sk-supersecret' } as NodeJS.ProcessEnv);
+    const serialized = JSON.stringify({ targets: gated.targets, notes: gated.notes });
+    expect(serialized).not.toContain('sk-supersecret');
   });
 
   it('derives application-config only when an env template exists', async () => {

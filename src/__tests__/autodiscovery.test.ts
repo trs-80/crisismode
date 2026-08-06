@@ -291,6 +291,47 @@ describe('discoverStack', () => {
     expect(openai!.configured).toBe(true);
   });
 
+  it('reports one entry per provider even when several of its key env vars are set', async () => {
+    process.env.GEMINI_API_KEY = 'g-key';
+    process.env.GOOGLE_API_KEY = 'g-key-2';
+    // Pin the package.json read explicitly rather than inheriting whatever the
+    // previous test left on the shared mock.
+    mockedReadFile.mockImplementation(async (path: unknown) => {
+      if (String(path).includes('package.json')) {
+        return makePkgJson({});
+      }
+      throw new Error('ENOENT');
+    });
+
+    const profile = await discoverStack();
+
+    const google = profile.aiProviders.filter((p) => p.provider === 'google');
+    expect(google).toHaveLength(1);
+    expect(google[0]!.configured).toBe(true);
+    expect(google[0]!.envVar).toBe('GEMINI_API_KEY');
+
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+  });
+
+  it('treats a set-but-empty key as unconfigured, consistently with target derivation', async () => {
+    process.env.OPENAI_API_KEY = '';
+    mockedReadFile.mockImplementation(async (path: unknown) => {
+      if (String(path).includes('package.json')) {
+        return makePkgJson({ openai: '^4.0.0' });
+      }
+      throw new Error('ENOENT');
+    });
+
+    const profile = await discoverStack();
+
+    const openai = profile.aiProviders.find((p) => p.provider === 'openai');
+    expect(openai).toBeDefined();
+    expect(openai!.configured).toBe(false);
+
+    delete process.env.OPENAI_API_KEY;
+  });
+
   // ── Platform detection via env vars ──
 
   it('detects Vercel platform from VERCEL env var', async () => {
