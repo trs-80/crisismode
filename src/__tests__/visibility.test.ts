@@ -226,12 +226,19 @@ describe('buildVisibilityReport', () => {
       },
     });
 
-    const report = buildVisibilityReport(profile, ['llm-provider.anthropic', 'llm-provider.google'], 'none');
+    const report = buildVisibilityReport(
+      profile,
+      ['llm-provider.anthropic', 'llm-provider.google'],
+      'none',
+      undefined,
+      new Map([['llm-provider.anthropic', 'live_validated'], ['llm-provider.google', 'simulator_only']]),
+    );
 
     const rows = report.watching.filter((e) => e.label.startsWith('llm-provider.'));
     expect(rows).toHaveLength(2);
     expect(rows.map((e) => e.label)).toEqual(['llm-provider.anthropic', 'llm-provider.google']);
     expect(rows.map((e) => e.detail)).toEqual(['from ANTHROPIC_API_KEY', 'from GOOGLE_AI_API_KEY']);
+    expect(rows.map((e) => e.maturity)).toEqual(['live_validated', 'simulator_only']);
   });
 
   it('never collapses two providers onto one row, even if a caller mistakenly passes a shared kind twice', () => {
