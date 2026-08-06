@@ -95,4 +95,19 @@ describe('LlmProviderDiagnosisAgent.plan', () => {
     const failures = validation.checks.filter((c) => !c.passed).map((c) => `${c.name}: ${c.message}`);
     expect(failures).toEqual([]);
   });
+
+  it('passes the real validatePlan check for the key_scope_limited scenario', async () => {
+    // Regression guard: validatePlan's checkScenario rejects any plan whose
+    // metadata.scenario isn't listed in the manifest's failureScenarios.
+    // key_scope_limited was added to diagnose()'s scenario picker without
+    // being added to the manifest, so every plan for a permission-scoped key
+    // failed real validation despite passing every unit assertion above.
+    const { agent, context } = setup('key_scope_limited');
+    const plan = await agent.plan(context, await agent.diagnose(context));
+    expect(plan.metadata.scenario).toBe('key_scope_limited');
+    const validation = validatePlan(plan, agent.manifest);
+    const failures = validation.checks.filter((c) => !c.passed).map((c) => `${c.name}: ${c.message}`);
+    expect(failures).toEqual([]);
+    expect(validation.valid).toBe(true);
+  });
 });
