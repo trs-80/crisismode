@@ -77,3 +77,68 @@ describe('synthesizeVerdict', () => {
     expect(synthesizeVerdict(withLayer(allPass, layer('targets', 'skipped')))).toBe('healthy');
   });
 });
+
+import { explainVerdict, layerCauseLabel, primaryFailureCode } from '../framework/triage.js';
+
+describe('primaryFailureCode', () => {
+  it('returns the first failing layer code in probe order', () => {
+    const layers = [
+      layer('interfaces', 'pass'),
+      layer('dns', 'fail', 'dns-unreachable'),
+      layer('internet', 'fail', 'internet-unreachable'),
+    ];
+    expect(primaryFailureCode(layers)).toBe('dns-unreachable');
+  });
+
+  it('ignores the gateway layer, which is context only', () => {
+    const layers = [layer('gateway', 'fail', 'gateway-unknown'), layer('dns', 'fail', 'dns-unreachable')];
+    expect(primaryFailureCode(layers)).toBe('dns-unreachable');
+  });
+
+  it('returns null when nothing failed', () => {
+    expect(primaryFailureCode([layer('interfaces', 'pass')])).toBeNull();
+  });
+});
+
+describe('explainVerdict', () => {
+  it('names the local cause and offers a machine-level next step', () => {
+    const layers = [layer('interfaces', 'pass'), { ...layer('dns', 'fail', 'resolver-broken'), nextStep: 'Fix this machine DNS settings.' }];
+    const { explanation, nextStep } = explainVerdict('local', layers);
+    expect(explanation).toContain('this machine');
+    expect(explanation).toContain(layerCauseLabel('resolver-broken'));
+    expect(nextStep).toBe('Fix this machine DNS settings.');
+  });
+
+  it('names the network cause', () => {
+    const layers = [layer('captive-portal', 'fail', 'captive-portal')];
+    const { explanation } = explainVerdict('network', layers);
+    expect(explanation).toContain(layerCauseLabel('captive-portal'));
+  });
+
+  it('points remote verdicts at scan', () => {
+    const { explanation, nextStep } = explainVerdict('remote', [layer('targets', 'fail', 'targets-unreachable')]);
+    expect(explanation).toContain('did not answer');
+    expect(nextStep).toContain('crisismode scan');
+  });
+
+  it('refuses to localize a mixed verdict', () => {
+    const { explanation } = explainVerdict('mixed', [layer('captive-portal', 'unknown')]);
+    expect(explanation).toContain('cannot');
+  });
+
+  it('says nothing is wrong for healthy', () => {
+    const { explanation, nextStep } = explainVerdict('healthy', [layer('interfaces', 'pass')]);
+    expect(explanation).toContain('look fine');
+    expect(nextStep).toContain('crisismode scan');
+  });
+
+  it('has a label for every layer code', () => {
+    const codes = [
+      'no-active-interface', 'gateway-unknown', 'resolver-broken', 'dns-unreachable',
+      'captive-portal', 'internet-unreachable', 'targets-unreachable', 'targets-partial',
+    ] as const;
+    for (const code of codes) {
+      expect(layerCauseLabel(code).length).toBeGreaterThan(0);
+    }
+  });
+});
