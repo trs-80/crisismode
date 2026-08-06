@@ -369,3 +369,141 @@ export function buildDnsLayer(result: DnsProbeResult, durationMs: number): Triag
     durationMs,
   };
 }
+
+export interface CaptiveProbe {
+  endpoint: CaptiveEndpoint;
+  probe: HttpProbeResult;
+}
+
+export interface InternetProbe {
+  url: string;
+  probe: HttpProbeResult;
+}
+
+/**
+ * Does this response match what this specific endpoint promises when the
+ * network is clean? Redirects never match: a redirect is the signature of a
+ * portal intercepting the request.
+ */
+export function matchesCaptiveExpectation(endpoint: CaptiveEndpoint, result: HttpProbeResult): boolean {
+  if (result.error !== undefined || result.status === null) return false;
+  if (result.redirected) return false;
+  if (result.status !== endpoint.expectedStatus) return false;
+  return endpoint.expectedBody === ''
+    ? result.body.trim() === ''
+    : result.body.includes(endpoint.expectedBody);
+}
+
+export function buildCaptiveLayer(results: CaptiveProbe[], durationMs: number): TriageLayerResult {
+  const responded = results.filter((r) => r.probe.status !== null && r.probe.error === undefined);
+  if (responded.length === 0) {
+    return {
+      layer: 'captive-portal',
+      status: 'unknown',
+      detail: 'No connectivity-check endpoint responded — a captive portal cannot be distinguished from a blocked path here.',
+      durationMs,
+    };
+  }
+
+  // Every endpoint that answered must match its own expectation. A gstatic
+  // 204 does not clear the layer by itself: a portal can intercept one
+  // connectivity-check host and let another through, and any redirect or
+  // mismatching body among the responses is the signature we are looking for.
+  const mismatch = responded.find((r) => !matchesCaptiveExpectation(r.endpoint, r.probe));
+  if (mismatch !== undefined) {
+    const shape = mismatch.probe.redirected ? ' (a redirect)' : '';
+    return {
+      layer: 'captive-portal',
+      status: 'fail',
+      code: 'captive-portal',
+      detail: `${mismatch.endpoint.url} returned HTTP ${mismatch.probe.status}${shape} instead of the expected ${mismatch.endpoint.expectedStatus} — something is intercepting traffic.`,
+      nextStep: 'Open a browser and complete the network sign-in page, then re-run `crisismode triage`.',
+      durationMs,
+    };
+  }
+
+  return {
+    layer: 'captive-portal',
+    status: 'pass',
+    detail: `${responded.map((r) => r.endpoint.url).join(' and ')} returned their expected response — no portal is intercepting traffic.`,
+    durationMs,
+  };
+}
+
+export function buildInternetLayer(results: InternetProbe[], durationMs: number): TriageLayerResult {
+  const probes: ProbeResult[] = results.map(({ url, probe }) => ({
+    target: url,
+    reachable: probe.error === undefined && probe.status !== null,
+    latencyMs: probe.latencyMs,
+    ...(probe.error !== undefined ? { error: probe.error } : {}),
+  }));
+
+  const reachable = probes.filter((p) => p.reachable);
+  if (reachable.length === 0) {
+    return {
+      layer: 'internet',
+      status: 'fail',
+      code: 'internet-unreachable',
+      detail: `No response from ${probes.map((p) => p.target).join(' or ')}.`,
+      nextStep: 'This machine cannot reach the internet — check Wi-Fi, VPN, or the network you are on.',
+      probes,
+      durationMs,
+    };
+  }
+  return {
+    layer: 'internet',
+    status: 'pass',
+    detail: `${reachable.length} of ${probes.length} internet endpoint(s) answered.`,
+    probes,
+    durationMs,
+  };
+}
+
+/**
+ * `omitted` counts targets that were dropped by Stage 4's probe cap before
+ * they were ever probed — reported here so the operator can see that the
+ * layer's verdict is over a truncated list, not the whole configuration.
+ */
+export function buildTargetsLayer(probes: ProbeResult[], durationMs: number, omitted = 0): TriageLayerResult {
+  const omittedNote = omitted > 0
+    ? ` (${omitted} additional target(s) were not probed — over the per-run cap.)`
+    : '';
+
+  if (probes.length === 0) {
+    return skippedLayer('targets', `No targets to probe.${omittedNote}`, durationMs);
+  }
+
+  const unreachable = probes.filter((p) => !p.reachable);
+  if (unreachable.length === 0) {
+    return {
+      layer: 'targets',
+      status: 'pass',
+      detail: `All ${probes.length} target(s) accepted a TCP connection.${omittedNote}`,
+      probes,
+      durationMs,
+    };
+  }
+
+  const names = unreachable.map((p) => p.target).join(', ');
+  if (unreachable.length === probes.length) {
+    return {
+      layer: 'targets',
+      status: 'fail',
+      code: 'targets-unreachable',
+      detail: `None of ${probes.length} target(s) accepted a TCP connection: ${names}.${omittedNote}`,
+      nextStep: 'This machine and its network look fine — run `crisismode scan` to diagnose the services themselves.',
+      probes,
+      durationMs,
+    };
+  }
+
+  return {
+    layer: 'targets',
+    status: 'fail',
+    code: 'targets-partial',
+    detail: `${probes.length - unreachable.length} of ${probes.length} target(s) answered; these did not: ${names}.${omittedNote}`,
+    nextStep: 'Some services answered and others did not — run `crisismode scan` and treat the silent ones as the leads.',
+    probes,
+    durationMs,
+  };
+}
