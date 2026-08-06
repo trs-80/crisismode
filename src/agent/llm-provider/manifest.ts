@@ -66,6 +66,7 @@ export function buildLlmProviderManifest(provider: LlmProviderId): AgentManifest
         'no_finding',
         'api_key_missing',
         'api_key_invalid',
+        'key_scope_limited',
         'quota_or_billing_exhausted',
         'rate_limit_headroom_low',
         'configured_model_unavailable',
