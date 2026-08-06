@@ -36,6 +36,14 @@ interface CheckBundle {
   status: ProviderStatusReport | null;
 }
 
+/** Oxford-comma join for an honest, human-readable list of check outcomes. */
+function joinWithAnd(items: string[]): string {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0]!;
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+}
+
 /**
  * One class, four registrations. `manifest` is built from the backend's own
  * `getProviderId()` rather than imported as a shared constant — each
@@ -67,6 +75,12 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
    * The five network checks are skipped when triage has localised the failure
    * to this machine, and the key-dependent ones are skipped when there is no
    * key to test. Provider status needs no key, so it still runs in that case.
+   *
+   * `runChecks`, `buildSignals`, and `diagnose()` each re-derive their own
+   * null/offline/outcome branching over the same `CheckBundle` fields. Keep
+   * the three honesty-consistent — a new outcome value or null case handled
+   * in one but not the others silently drifts into a claimed-clean (or
+   * claimed-broken) signal or finding for a check that was never actually run.
    */
   private async runChecks(): Promise<CheckBundle> {
     const presence = await this.backend.checkKeyPresence();
@@ -219,6 +233,46 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
     return 'healthy';
   }
 
+  /**
+   * `overallStatus` returning 'healthy' only rules out critical/warning
+   * signals — a check can still have come back an honest `unknown` (e.g. a
+   * provider that publishes no rate-limit headers) while the rest are clean.
+   * Enumerate each check's real outcome instead of asserting all five are
+   * fine, so an unknown never gets reported as "fine" by omission.
+   */
+  private buildHealthySummary(signals: HealthSignal[], label: string): string {
+    const clauses: Array<{ checkId: string; healthyText: string; shortName: string }> = [
+      { checkId: LLM_PROVIDER_CHECK_IDS.keyValid, healthyText: 'the API key works', shortName: 'key validity' },
+      { checkId: LLM_PROVIDER_CHECK_IDS.quotaBilling, healthyText: 'quota is clear', shortName: 'quota and billing state' },
+      {
+        checkId: LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom,
+        healthyText: 'rate-limit headroom is fine',
+        shortName: 'rate-limit headroom',
+      },
+      {
+        checkId: LLM_PROVIDER_CHECK_IDS.modelDeprecated,
+        healthyText: 'the configured model exists',
+        shortName: 'model availability',
+      },
+      {
+        checkId: LLM_PROVIDER_CHECK_IDS.providerStatus,
+        healthyText: 'the provider reports no incidents',
+        shortName: 'provider status',
+      },
+    ];
+
+    const parts = clauses.map(({ checkId, healthyText, shortName }) => {
+      const sig = signals.find((s) => s.checkId === checkId);
+      // overallStatus only reaches 'healthy' when no signal is critical or
+      // warning, so the only non-healthy status a clause can see here is
+      // 'unknown'.
+      if (!sig || sig.status === 'healthy') return healthyText;
+      return `${shortName} could not be determined (${sig.detail.replace(/\.$/, '')})`;
+    });
+
+    return `${label} is healthy: ${joinWithAnd(parts)}.`;
+  }
+
   async assessHealth(_context: AgentContext): Promise<HealthAssessment> {
     const observedAt = new Date().toISOString();
     const bundle = await this.runChecks();
@@ -247,7 +301,7 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
           ? `${label} is reachable but degraded: ${signals.find((s) => s.status === 'warning')!.detail}`
           : status === 'unknown'
             ? `${label} state could not be determined — every live check returned an honest unknown.`
-            : `${label} is healthy: the API key works, quota and rate-limit headroom are fine, the configured model exists, and the provider reports no incidents.`;
+            : this.buildHealthySummary(signals, label);
 
     const recommendedActions =
       status === 'unhealthy'
@@ -343,10 +397,18 @@ export class LlmProviderDiagnosisAgent implements RecoveryAgent {
       {
         source: 'llm_quota_billing',
         checkId: LLM_PROVIDER_CHECK_IDS.quotaBilling,
+        // Mirrors buildSignals' quota_billing branching: not-tested (no key),
+        // billing/quota error, checked-clean, or an honest could-not-determine
+        // for any other outcome — never a checked-clean claim about a probe
+        // that never ran.
         observation:
-          bundle.validity?.outcome === 'billing_or_quota'
-            ? bundle.validity.detail
-            : `No billing or quota error observed for ${label}.`,
+          bundle.validity === null
+            ? 'Quota and billing state was not tested — no key to check.'
+            : bundle.validity.outcome === 'billing_or_quota'
+              ? bundle.validity.detail
+              : bundle.validity.outcome === 'valid' || bundle.validity.outcome === 'rate_limited'
+                ? `No billing or quota error observed for ${label}.`
+                : `Quota and billing state could not be determined: ${bundle.validity.detail}`,
         severity: bundle.validity?.outcome === 'billing_or_quota' ? 'critical' : 'info',
         data: { validity: bundle.validity },
       },
