@@ -791,7 +791,7 @@ git commit -m "feat(triage): add interface, gateway, and two-step DNS layer buil
 
 **Interfaces:**
 - Consumes: `CaptiveEndpoint`, `CAPTIVE_ENDPOINTS`, `HttpProbeResult`, `TriageLayerResult`, `ProbeResult` (Task 1).
-- Produces: `matchesCaptiveExpectation(endpoint: CaptiveEndpoint, result: HttpProbeResult): boolean`, `buildCaptiveLayer(results: CaptiveProbe[], durationMs: number): TriageLayerResult` where `CaptiveProbe = { endpoint: CaptiveEndpoint; probe: HttpProbeResult }`, `buildInternetLayer(results: InternetProbe[], durationMs: number): TriageLayerResult` where `InternetProbe = { url: string; probe: HttpProbeResult }`, `buildTargetsLayer(probes: ProbeResult[], durationMs: number): TriageLayerResult`. Task 7 calls all three; Task 8 reads `layer.probes` from the internet and targets layers.
+- Produces: `matchesCaptiveExpectation(endpoint: CaptiveEndpoint, result: HttpProbeResult): boolean`, `buildCaptiveLayer(results: CaptiveProbe[], durationMs: number): TriageLayerResult` where `CaptiveProbe = { endpoint: CaptiveEndpoint; probe: HttpProbeResult }`, `buildInternetLayer(results: InternetProbe[], durationMs: number): TriageLayerResult` where `InternetProbe = { url: string; probe: HttpProbeResult }`, `buildTargetsLayer(probes: ProbeResult[], durationMs: number, omitted?: number): TriageLayerResult`. Task 7 calls all three, passing the count of targets dropped by its per-run cap as `omitted`; Task 8 reads `layer.probes` from the internet and targets layers.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -838,7 +838,7 @@ describe('matchesCaptiveExpectation', () => {
 });
 
 describe('buildCaptiveLayer', () => {
-  it('passes when an endpoint returns its expected response', () => {
+  it('passes when every endpoint that responds matches its expected response', () => {
     const layer = buildCaptiveLayer([{ endpoint: gstatic, probe: http() }], 20);
     expect(layer.status).toBe('pass');
   });
@@ -848,6 +848,17 @@ describe('buildCaptiveLayer', () => {
     expect(layer.status).toBe('fail');
     expect(layer.code).toBe('captive-portal');
     expect(layer.nextStep).toContain('sign-in');
+  });
+
+  it('reports a captive portal when one endpoint matches but another does not', () => {
+    // A gstatic 204 must not hide an Apple redirect (or vice versa) running
+    // alongside it — any mismatching or redirected endpoint means a portal.
+    const layer = buildCaptiveLayer([
+      { endpoint: gstatic, probe: http() },
+      { endpoint: apple, probe: http({ status: 302, redirected: true }) },
+    ], 20);
+    expect(layer.status).toBe('fail');
+    expect(layer.code).toBe('captive-portal');
   });
 
   it('records unknown when no connectivity-check endpoint responded at all', () => {
@@ -941,18 +952,8 @@ export function matchesCaptiveExpectation(endpoint: CaptiveEndpoint, result: Htt
 }
 
 export function buildCaptiveLayer(results: CaptiveProbe[], durationMs: number): TriageLayerResult {
-  const matched = results.find((r) => matchesCaptiveExpectation(r.endpoint, r.probe));
-  if (matched !== undefined) {
-    return {
-      layer: 'captive-portal',
-      status: 'pass',
-      detail: `${matched.endpoint.url} returned its expected response — no portal is intercepting traffic.`,
-      durationMs,
-    };
-  }
-
-  const responded = results.find((r) => r.probe.status !== null && r.probe.error === undefined);
-  if (responded === undefined) {
+  const responded = results.filter((r) => r.probe.status !== null && r.probe.error === undefined);
+  if (responded.length === 0) {
     return {
       layer: 'captive-portal',
       status: 'unknown',
@@ -961,13 +962,27 @@ export function buildCaptiveLayer(results: CaptiveProbe[], durationMs: number): 
     };
   }
 
-  const shape = responded.probe.redirected ? ' (a redirect)' : '';
+  // Every endpoint that answered must match its own expectation. A gstatic
+  // 204 does not clear the layer by itself: a portal can intercept one
+  // connectivity-check host and let another through, and any redirect or
+  // mismatching body among the responses is the signature we are looking for.
+  const mismatch = responded.find((r) => !matchesCaptiveExpectation(r.endpoint, r.probe));
+  if (mismatch !== undefined) {
+    const shape = mismatch.probe.redirected ? ' (a redirect)' : '';
+    return {
+      layer: 'captive-portal',
+      status: 'fail',
+      code: 'captive-portal',
+      detail: `${mismatch.endpoint.url} returned HTTP ${mismatch.probe.status}${shape} instead of the expected ${mismatch.endpoint.expectedStatus} — something is intercepting traffic.`,
+      nextStep: 'Open a browser and complete the network sign-in page, then re-run `crisismode triage`.',
+      durationMs,
+    };
+  }
+
   return {
     layer: 'captive-portal',
-    status: 'fail',
-    code: 'captive-portal',
-    detail: `${responded.endpoint.url} returned HTTP ${responded.probe.status}${shape} instead of the expected ${responded.endpoint.expectedStatus} — something is intercepting traffic.`,
-    nextStep: 'Open a browser and complete the network sign-in page, then re-run `crisismode triage`.',
+    status: 'pass',
+    detail: `${responded.map((r) => r.endpoint.url).join(' and ')} returned their expected response — no portal is intercepting traffic.`,
     durationMs,
   };
 }
@@ -1001,9 +1016,18 @@ export function buildInternetLayer(results: InternetProbe[], durationMs: number)
   };
 }
 
-export function buildTargetsLayer(probes: ProbeResult[], durationMs: number): TriageLayerResult {
+/**
+ * `omitted` counts targets that were dropped by Stage 4's probe cap before
+ * they were ever probed — reported here so the operator can see that the
+ * layer's verdict is over a truncated list, not the whole configuration.
+ */
+export function buildTargetsLayer(probes: ProbeResult[], durationMs: number, omitted = 0): TriageLayerResult {
+  const omittedNote = omitted > 0
+    ? ` (${omitted} additional target(s) were not probed — over the per-run cap.)`
+    : '';
+
   if (probes.length === 0) {
-    return skippedLayer('targets', 'No targets to probe.', durationMs);
+    return skippedLayer('targets', `No targets to probe.${omittedNote}`, durationMs);
   }
 
   const unreachable = probes.filter((p) => !p.reachable);
@@ -1011,7 +1035,7 @@ export function buildTargetsLayer(probes: ProbeResult[], durationMs: number): Tr
     return {
       layer: 'targets',
       status: 'pass',
-      detail: `All ${probes.length} target(s) accepted a TCP connection.`,
+      detail: `All ${probes.length} target(s) accepted a TCP connection.${omittedNote}`,
       probes,
       durationMs,
     };
@@ -1023,7 +1047,7 @@ export function buildTargetsLayer(probes: ProbeResult[], durationMs: number): Tr
       layer: 'targets',
       status: 'fail',
       code: 'targets-unreachable',
-      detail: `None of ${probes.length} target(s) accepted a TCP connection: ${names}.`,
+      detail: `None of ${probes.length} target(s) accepted a TCP connection: ${names}.${omittedNote}`,
       nextStep: 'This machine and its network look fine — run `crisismode scan` to diagnose the services themselves.',
       probes,
       durationMs,
@@ -1034,7 +1058,7 @@ export function buildTargetsLayer(probes: ProbeResult[], durationMs: number): Tr
     layer: 'targets',
     status: 'fail',
     code: 'targets-partial',
-    detail: `${probes.length - unreachable.length} of ${probes.length} target(s) answered; these did not: ${names}.`,
+    detail: `${probes.length - unreachable.length} of ${probes.length} target(s) answered; these did not: ${names}.${omittedNote}`,
     nextStep: 'Some services answered and others did not — run `crisismode scan` and treat the silent ones as the leads.',
     probes,
     durationMs,
@@ -1417,6 +1441,35 @@ const execFileAsync = promisify(execFile);
 /** Max characters of a connectivity-check body we keep. */
 const MAX_BODY_CHARS = 256;
 
+/**
+ * Read at most `maxChars` characters from a response body, then cancel the
+ * stream instead of letting it run to completion.
+ *
+ * `response.text()` buffers the *entire* body before anything can truncate
+ * it — a captive portal or an on-path attacker can return an arbitrarily
+ * large body and pressure triage's memory well before the slice ever
+ * happens. Reading the stream directly means the cap actually bounds what
+ * gets buffered, not just what gets kept.
+ */
+async function readCappedBody(response: Response, maxChars: number): Promise<string> {
+  if (response.body === null) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  try {
+    while (text.length < maxChars) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    // Stop pulling bytes we will never keep — leaving the reader open would
+    // let the underlying connection keep streaming the rest of the body.
+    await reader.cancel().catch(() => {});
+  }
+  return text.slice(0, maxChars);
+}
+
 /** Parses `ip route show default` (Linux). */
 export function parseIpRouteDefault(stdout: string): string | null {
   const match = /^default\s+via\s+(\S+)/m.exec(stdout);
@@ -1453,7 +1506,10 @@ export async function runBounded<T>(
   timeoutMs: number,
   onTimeout?: () => void,
 ): Promise<BoundedOutcome<T>> {
-  const start = Date.now();
+  // performance.now() (monotonic), not Date.now() (wall clock): an NTP
+  // correction or a manual clock change during the run must not stretch a
+  // timeout, produce a negative duration, or cut a probe short.
+  const start = performance.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const value = await new Promise<T>((resolve, reject) => {
@@ -1463,9 +1519,9 @@ export async function runBounded<T>(
       }, timeoutMs);
       op().then(resolve, reject);
     });
-    return { ok: true, value, durationMs: Date.now() - start };
+    return { ok: true, value, durationMs: performance.now() - start };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err), durationMs: Date.now() - start };
+    return { ok: false, error: err instanceof Error ? err.message : String(err), durationMs: performance.now() - start };
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -1573,7 +1629,7 @@ export function nodeTriageProbes(timeoutMs: number, publicResolvers: readonly st
           signal: AbortSignal.timeout(timeoutMs),
           headers: { 'user-agent': 'crisismode-triage' },
         });
-        const body = method === 'GET' ? (await response.text()).slice(0, MAX_BODY_CHARS) : '';
+        const body = method === 'GET' ? await readCappedBody(response, MAX_BODY_CHARS) : '';
         return {
           status: response.status,
           body,
@@ -1667,9 +1723,9 @@ git commit -m "feat(triage): implement bounded, cancellable node probes for ever
 1. `interfaces` — no I/O, short-circuits everything on failure
 2. `gateway` + `dns` — concurrent
 3. `captive-portal` (both endpoints concurrent) + `internet` (both hosts concurrent) — concurrent with each other; independent HTTP probes, and serializing them is what pushed the worst case past 5s
-4. `targets` — all concurrent
+4. `targets` — capped at `MAX_STAGE4_TARGETS` (20) and probed at most `TARGET_PROBE_CONCURRENCY` (5) at a time, not all at once — an unbounded target list would otherwise open one socket and one timer per target simultaneously. Each batch still races the live remaining budget (not a value fixed at Stage 4's start), so batching cannot itself push the run past the whole-run deadline.
 
-Worst case: 4 × 1000ms = 4s, inside the 5s deadline with a second of headroom. Report order in `layers` still follows the spec's 1-6 numbering regardless of execution order.
+Worst case: 4 × 1000ms = 4s, inside the 5s deadline with a second of headroom — the target cap and concurrency limit change how Stage 4 spends its share of that budget, not the bound itself. Report order in `layers` still follows the spec's 1-6 numbering regardless of execution order.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1757,6 +1813,34 @@ describe('runTriage', () => {
     });
     expect(report.verdict).toBe('remote');
     expect(report.layers.find((l) => l.layer === 'targets')!.probes).toHaveLength(1);
+  });
+
+  // Stage 4's cap: a large config or autodiscovery result must not open one
+  // socket per target unbounded. 25 targets is over MAX_STAGE4_TARGETS (20).
+  it('caps the number of targets it probes and reports how many were omitted', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const manyTargets = Array.from({ length: 25 }, (_, i) => (
+      { host: '127.0.0.1', port: 5000 + i, label: `svc-${i}` }
+    ));
+    const report = await runTriage({
+      probes: healthyProbes({
+        connectTcp: async (_host: string, _port: number, label: string) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await Promise.resolve();
+          inFlight -= 1;
+          return { target: label, reachable: true, latencyMs: 1 };
+        },
+      }),
+      observerContext: laptop,
+      targets: manyTargets,
+    });
+    const targetsLayer = report.layers.find((l) => l.layer === 'targets')!;
+    expect(targetsLayer.probes).toHaveLength(20);
+    expect(targetsLayer.detail).toContain('5 additional target(s)');
+    // Never more than the concurrency limit's worth of sockets in flight.
+    expect(maxInFlight).toBeLessThanOrEqual(5);
   });
 
   // The OUTER bound: a probe that ignores its own timeout (only reachable via
@@ -1878,6 +1962,44 @@ const LAYER_ORDER: readonly TriageLayerName[] = [
 ];
 
 /**
+ * Hard cap on Stage 4 targets. `resolveTriageTargets` (Task 9) applies the
+ * same cap before targets ever reach `runTriage`, but the bound is enforced
+ * here too so a caller that builds `options.targets` directly cannot make
+ * Stage 4 open one socket and one timer per target for an unbounded list.
+ */
+const MAX_STAGE4_TARGETS = 20;
+
+/**
+ * Sockets probed at once in Stage 4. A large target list must not open
+ * hundreds of connections simultaneously and exhaust file descriptors before
+ * the whole-run deadline even has a chance to bite.
+ */
+const TARGET_PROBE_CONCURRENCY = 5;
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight at once, preserving
+ * input order in the result. This is the one place in the triage path that
+ * needs a concurrency limiter, so it is a few lines here rather than a
+ * dependency.
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]!);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/**
  * Run every layer and synthesize a verdict.
  *
  * Layer 1 runs first and short-circuits the rest: with no network interface,
@@ -1887,7 +2009,13 @@ const LAYER_ORDER: readonly TriageLayerName[] = [
  * report past the ≤5s the spec promises.
  */
 export async function runTriage(options: TriageOptions = {}): Promise<TriageReport> {
-  const startedAt = Date.now();
+  // performance.now() (monotonic) drives every elapsed-time and budget
+  // calculation below. Date.now() (wall clock) is kept only for the
+  // `checkedAt` timestamp, which is meant to be a real calendar time — an
+  // NTP correction or a manual clock change mid-run must never be able to
+  // stretch the budget, cut it short, or produce a negative duration.
+  const wallClockStartedAt = Date.now();
+  const startedAt = performance.now();
   const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   const deadline = startedAt + (options.deadlineMs ?? TRIAGE_DEADLINE_MS);
   const probes = options.probes ?? nodeTriageProbes(timeoutMs, PUBLIC_RESOLVERS);
@@ -1896,7 +2024,7 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
   const layers: TriageLayerResult[] = [];
 
   /** Budget for the next probe: whichever of the two bounds bites first. */
-  const budget = (): number => Math.min(timeoutMs, Math.max(0, deadline - Date.now()));
+  const budget = (): number => Math.min(timeoutMs, Math.max(0, deadline - performance.now()));
 
   // Layer 1 — interfaces
   const interfaceOutcome = await runBounded(() => probes.listInterfaces(), budget());
@@ -1910,11 +2038,11 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
     for (const name of remaining) {
       layers.push(skippedLayer(name, 'Skipped — this machine has no active network interface.', 0));
     }
-    return buildReport(layers, observer, startedAt);
+    return buildReport(layers, observer, wallClockStartedAt, startedAt);
   }
 
   // Stage 2 — gateway (context) and DNS, concurrently
-  if (budget() === 0) return finishExpired(layers, observer, startedAt);
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
   const stage2Budget = budget();
   const [gatewayOutcome, dnsOutcome] = await Promise.all([
     runBounded(() => probes.findDefaultGateway(), stage2Budget),
@@ -1929,9 +2057,9 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
 
   // Stage 3 — captive portal and internet. Independent HTTP probes, so they
   // run concurrently; serializing them is what pushed the worst case past 5s.
-  if (budget() === 0) return finishExpired(layers, observer, startedAt);
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
   const stage3Budget = budget();
-  const stage3Start = Date.now();
+  const stage3Start = performance.now();
   const captiveWork: Promise<TriageLayerResult> = observer.context === 'server'
     ? Promise.resolve(skippedLayer('captive-portal', 'Not applicable (server environment).', 0))
     : Promise.all(
@@ -1939,34 +2067,45 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
           endpoint,
           probe: asHttpProbe(await runBounded(() => probes.fetchUrl(endpoint.url, 'GET'), stage3Budget)),
         })),
-      ).then((captiveProbes: CaptiveProbe[]) => buildCaptiveLayer(captiveProbes, Date.now() - stage3Start));
+      ).then((captiveProbes: CaptiveProbe[]) => buildCaptiveLayer(captiveProbes, performance.now() - stage3Start));
 
   const internetWork: Promise<TriageLayerResult> = Promise.all(
     INTERNET_PROBE_URLS.map(async (url) => ({
       url,
       probe: asHttpProbe(await runBounded(() => probes.fetchUrl(url, 'HEAD'), stage3Budget)),
     })),
-  ).then((internetProbes: InternetProbe[]) => buildInternetLayer(internetProbes, Date.now() - stage3Start));
+  ).then((internetProbes: InternetProbe[]) => buildInternetLayer(internetProbes, performance.now() - stage3Start));
 
   const [captiveLayer, internetLayer] = await Promise.all([captiveWork, internetWork]);
   layers.push(captiveLayer);
   layers.push(internetLayer);
 
-  // Stage 4 — per-target reachability
-  if (budget() === 0) return finishExpired(layers, observer, startedAt);
-  const targetsBudget = budget();
-  const targetsStart = Date.now();
-  const targetProbes: ProbeResult[] = await Promise.all(
-    targets.map(async (t) => {
-      const outcome = await runBounded(() => probes.connectTcp(t.host, t.port, t.label), targetsBudget);
+  // Stage 4 — per-target reachability. Capped and concurrency-limited: a
+  // large config or autodiscovery result must not open one socket and one
+  // timer per target all at once — that can exhaust file descriptors or
+  // memory well before the whole-run deadline. Each probe races against the
+  // *live* remaining budget (`budget()`, re-read per probe) rather than a
+  // value captured once — a concurrency-limited executor runs targets in
+  // sequential batches, and a fixed per-batch timeout would let enough
+  // batches add up past the deadline the same way unbounded per-probe
+  // timeouts did before this whole-run bound existed.
+  if (budget() === 0) return finishExpired(layers, observer, wallClockStartedAt, startedAt);
+  const targetsStart = performance.now();
+  const boundedTargets = targets.slice(0, MAX_STAGE4_TARGETS);
+  const omittedTargets = targets.length - boundedTargets.length;
+  const targetProbes: ProbeResult[] = await mapWithConcurrency(
+    boundedTargets,
+    TARGET_PROBE_CONCURRENCY,
+    async (t) => {
+      const outcome = await runBounded(() => probes.connectTcp(t.host, t.port, t.label), budget());
       return outcome.ok
         ? outcome.value
         : { target: t.label, reachable: false, latencyMs: outcome.durationMs, error: outcome.error };
-    }),
+    },
   );
-  layers.push(buildTargetsLayer(targetProbes, Date.now() - targetsStart));
+  layers.push(buildTargetsLayer(targetProbes, performance.now() - targetsStart, omittedTargets));
 
-  return buildReport(layers, observer, startedAt);
+  return buildReport(layers, observer, wallClockStartedAt, startedAt);
 }
 
 /**
@@ -1978,6 +2117,7 @@ export async function runTriage(options: TriageOptions = {}): Promise<TriageRepo
 function finishExpired(
   layers: TriageLayerResult[],
   observer: ObserverContextResult,
+  wallClockStartedAt: number,
   startedAt: number,
 ): TriageReport {
   for (const name of LAYER_ORDER) {
@@ -1989,12 +2129,13 @@ function finishExpired(
       durationMs: 0,
     });
   }
-  return buildReport(layers, observer, startedAt);
+  return buildReport(layers, observer, wallClockStartedAt, startedAt);
 }
 
 function buildReport(
   layers: TriageLayerResult[],
   observer: ObserverContextResult,
+  wallClockStartedAt: number,
   startedAt: number,
 ): TriageReport {
   const verdict = synthesizeVerdict(layers);
@@ -2007,8 +2148,8 @@ function buildReport(
     observerContext: observer.context,
     observerContextEvidence: observer.evidence,
     escalationLevel: TRIAGE_ESCALATION_LEVEL,
-    checkedAt: new Date(startedAt).toISOString(),
-    durationMs: Date.now() - startedAt,
+    checkedAt: new Date(wallClockStartedAt).toISOString(),
+    durationMs: performance.now() - startedAt,
   };
 }
 
@@ -2065,7 +2206,7 @@ git commit -m "feat(triage): orchestrate layered probes with hard per-probe time
 
 Why the NetworkProfile write: `src/cli/ai-summary.ts:50` and `src/framework/environment-guard.ts:137` read the cached profile, but today only `diagnose` populates it. Triage becomes the single prober so scan's offline gate and the environment guard see consistent state.
 
-**Only measured layers may be published.** `NetworkProfile.dns` is `{ available: boolean; latencyMs: number }` — it has no way to say "unknown". So a triage run whose DNS layer is `unknown` (probe timed out, never completed) must **not** write the profile at all: mapping unknown to `available: false` would make `assessEnvironment` (`environment-guard.ts:38-40`) tell the operator "This machine cannot resolve DNS names (resolver probe failed at startup)" on the strength of a probe that never ran. Leaving the cache `null` is the honest state — every consumer already handles null as "no profile yet". The triage report cache is still written in that case, because `TriageLayerResult` *can* express `unknown` per layer.
+**Only measured layers may be published.** `NetworkProfile.dns` is `{ available: boolean; latencyMs: number }` — it has no way to say "unknown". So a triage run whose DNS layer did not resolve to a measured `pass` or `fail` — `unknown` (probe timed out, never completed) **or** `skipped` (the deadline or the interfaces short-circuit meant DNS never ran) — must **not** write the profile at all: mapping either into `available: false` would make `assessEnvironment` (`environment-guard.ts:38-40`) tell the operator "This machine cannot resolve DNS names (resolver probe failed at startup)" on the strength of a probe that never ran. Leaving the cache `null` is the honest state — every consumer already handles null as "no profile yet". If a **previous** run had already published a profile, an unmeasured DNS layer this time must actively clear it (`resetNetworkProfile()`), not leave the stale one in place — a caller reading `getNetworkProfile()` has no way to tell "fresh" from "three runs ago." The triage report cache is still written in the unmeasured case, because `TriageLayerResult` *can* express `unknown`/`skipped` per layer.
 
 Why the report cache: **this is a deliberate addition beyond the spec, and a pinned cross-PR contract** (see "Deliberate Additions Beyond the Spec" above). PR 3's llm-provider agent and PR 5 read the verdict from inside `assessHealth()` to skip network checks when the problem is the observer, and they must not re-run probes to do it. `getTriageReport()` returns `null` when triage has not run in this process (e.g. `crisismode diagnose`, which never calls it) — callers must treat `null` as "no information" and run their checks normally, never as "offline". This mirrors the existing `getNetworkProfile()` / `resetNetworkProfile()` pattern in `network-profile.ts:56-64,125-127`, including the `null` (not `undefined`) convention.
 
@@ -2179,6 +2320,31 @@ describe('runTriage caching', () => {
       vi.useRealTimers();
     }
   });
+
+  it('does not publish a DNS claim from a skipped layer either', async () => {
+    // No active interface short-circuits everything after layer 1, so DNS
+    // is `skipped`, not `unknown` — both are "never measured" and neither
+    // may be published as a false `available: false`.
+    const report = await runTriage({
+      probes: healthyProbes({ listInterfaces: async () => ({ activeInterfaces: [] }) }),
+      observerContext: laptop,
+    });
+    expect(report.layers.find((l) => l.layer === 'dns')!.status).toBe('skipped');
+    expect(getNetworkProfile()).toBeNull();
+  });
+
+  it('clears a stale network profile when a later run cannot measure DNS', async () => {
+    await runTriage({ probes: healthyProbes(), observerContext: laptop });
+    expect(getNetworkProfile()).not.toBeNull();
+
+    await runTriage({
+      probes: healthyProbes({ listInterfaces: async () => ({ activeInterfaces: [] }) }),
+      observerContext: laptop,
+    });
+    // The earlier healthy run's profile must not survive a run whose DNS
+    // layer was never measured — a stale profile is a false claim too.
+    expect(getNetworkProfile()).toBeNull();
+  });
 });
 ```
 
@@ -2220,7 +2386,7 @@ export function inferNetworkMode(
 Append to `src/framework/triage.ts` — add the value import at the top:
 
 ```ts
-import { inferNetworkMode, setNetworkProfile } from './network-profile.js';
+import { inferNetworkMode, resetNetworkProfile, setNetworkProfile } from './network-profile.js';
 import type { ConnectivityStatus, NetworkLayer, NetworkProfile } from '@crisismode/agent-sdk';
 ```
 
@@ -2311,28 +2477,41 @@ Extend `TriageOptions` with:
   cacheResults?: boolean | undefined;
 ```
 
-and route **every** exit path through one helper. There are three in Task 7's code:
+and route **every** exit path through one helper. There are three in Task 7's code (note `buildReport` and `finishExpired` now take both `wallClockStartedAt` and `startedAt` — see Task 7's monotonic-clock fix):
 
-1. the interfaces short-circuit `return buildReport(layers, observer, startedAt);`
-2. the final `return buildReport(layers, observer, startedAt);`
-3. `finishExpired`, which ends in `return buildReport(layers, observer, startedAt);`
+1. the interfaces short-circuit `return buildReport(layers, observer, wallClockStartedAt, startedAt);`
+2. the final `return buildReport(layers, observer, wallClockStartedAt, startedAt);`
+3. `finishExpired`, which ends in `return buildReport(layers, observer, wallClockStartedAt, startedAt);`
 
-Change 1 and 2 to `return finish(layers, observer, startedAt, options);`. For 3, give `finishExpired` a fourth parameter `options: TriageOptions`, end it with `return finish(layers, observer, startedAt, options);`, and pass `options` at its three call sites. Miss `finishExpired` and a deadline-truncated run silently skips both caches. Then add:
+Change 1 and 2 to `return finish(layers, observer, wallClockStartedAt, startedAt, options);`. For 3, give `finishExpired` a fifth parameter `options: TriageOptions`, end it with `return finish(layers, observer, wallClockStartedAt, startedAt, options);`, and pass `options` at its three call sites. Miss `finishExpired` and a deadline-truncated run silently skips both caches. Then add:
 
 ```ts
 function finish(
   layers: TriageLayerResult[],
   observer: ObserverContextResult,
+  wallClockStartedAt: number,
   startedAt: number,
   options: TriageOptions,
 ): TriageReport {
-  const report = buildReport(layers, observer, startedAt);
+  const report = buildReport(layers, observer, wallClockStartedAt, startedAt);
   if (options.cacheResults !== false) {
     cachedReport = report;
-    // Only publish a NetworkProfile built from a DNS layer we actually
-    // measured — see the "only measured layers" note above.
-    if (report.layers.find((l) => l.layer === 'dns')?.status !== 'unknown') {
+    // Publish a NetworkProfile only from a DNS layer we actually measured —
+    // see the "only measured layers" note above. `unknown` is not the only
+    // unmeasured state: the deadline can truncate a run before DNS ever
+    // runs (`skipped`, via the interfaces short-circuit or finishExpired's
+    // fill-in), and that is just as unmeasured as `unknown`. Require the
+    // status to have actually resolved to pass or fail before publishing.
+    const dnsStatus = report.layers.find((l) => l.layer === 'dns')?.status;
+    const dnsMeasured = dnsStatus === 'pass' || dnsStatus === 'fail';
+    if (dnsMeasured) {
       setNetworkProfile(toNetworkProfile(report));
+    } else {
+      // A profile published by an earlier, fully-measured run must not
+      // silently outlive a run that could not measure DNS this time —
+      // otherwise a caller reads a stale connectivity picture instead of
+      // the honest "no profile yet" that a first run would have given them.
+      resetNetworkProfile();
     }
   }
   return report;
@@ -2366,8 +2545,8 @@ git commit -m "feat(triage): cache the triage report and publish its results to 
 - Test: `src/__tests__/triage-cli.test.ts`
 
 **Interfaces:**
-- Consumes: `runTriage`, `TriageReport`, `TriageVerdict`, `TriageLayerStatus`, `TriageTarget` (Tasks 1-8); `getEscalationInfo` from `src/framework/escalation.ts`; `printBanner`, `printInfo`, `jsonOut`, `getOutputMode` from `src/cli/output.ts`; `discoverStack` from `src/cli/autodiscovery.ts`; `loadConfigWithDetection` and `ConfigNotFoundError` from `src/config/loader.ts`.
-- Produces: `triageVerdictColor(verdict: TriageVerdict): ChalkInstance` in `status-presentation.ts`; `triageExitCode(verdict: TriageVerdict): 0 | 1`, `renderTriageReport(report: TriageReport): string[]`, `renderTriagePipe(report: TriageReport): string[]`, `resolveTriageTargets(configPath?: string): Promise<TriageTarget[]>`, `runTriageCommand(opts?: TriageCommandOptions): Promise<number>` in `commands/triage.ts`. Task 10 wires `runTriageCommand` into `src/cli/index.ts`.
+- Consumes: `runTriage`, `TriageReport`, `TriageVerdict`, `TriageLayerStatus`, `TriageTarget` (Tasks 1-8); `getEscalationInfo` from `src/framework/escalation.ts`; `printBanner`, `printInfo`, `printWarning`, `jsonOut`, `getOutputMode` from `src/cli/output.ts`; `discoverStack` from `src/cli/autodiscovery.ts`; `loadConfigWithDetection` and `ConfigNotFoundError` from `src/config/loader.ts`.
+- Produces: `triageVerdictColor(verdict: TriageVerdict): ChalkInstance` in `status-presentation.ts`; `triageExitCode(verdict: TriageVerdict): 0 | 1`, `renderTriageReport(report: TriageReport): string[]`, `renderTriagePipe(report: TriageReport): string[]`, `resolveTriageTargets(configPath?: string): Promise<TriageTarget[]>` (capped at `MAX_TRIAGE_TARGETS`, warning via `printWarning` when it truncates), `runTriageCommand(opts?: TriageCommandOptions): Promise<number>` in `commands/triage.ts`. Task 10 wires `runTriageCommand` into `src/cli/index.ts`.
 
 Verdict → color lives in `status-presentation.ts` because CLAUDE.md names it the single source for status → presentation mappings; the exhaustive `Record` there is what makes a new verdict fail compilation instead of rendering colorless.
 
@@ -2499,7 +2678,7 @@ Then create `src/cli/commands/triage.ts`:
 import chalk from 'chalk';
 import { runTriage } from '../../framework/triage.js';
 import { getEscalationInfo } from '../../framework/escalation.js';
-import { getOutputMode, jsonOut, printBanner, printInfo } from '../output.js';
+import { getOutputMode, jsonOut, printBanner, printInfo, printWarning } from '../output.js';
 import { triageVerdictColor } from '../status-presentation.js';
 import { discoverStack } from '../autodiscovery.js';
 import { ConfigNotFoundError, loadConfigWithDetection } from '../../config/loader.js';
@@ -2558,9 +2737,18 @@ export function renderTriagePipe(report: TriageReport): string[] {
 }
 
 /**
+ * Hard cap on resolved targets, mirroring Stage 4's own `MAX_STAGE4_TARGETS`
+ * in `runTriage`. A large config or a noisy autodiscovery result could
+ * otherwise hand Stage 4 an unbounded list; capping here means the operator
+ * finds out *why* targets were dropped (below) instead of just seeing a
+ * truncated report.
+ */
+const MAX_TRIAGE_TARGETS = 20;
+
+/**
  * Targets for layer 6: configured targets first (their names are what the
  * operator recognizes), then autodiscovered services that aren't already
- * covered, deduped by host:port.
+ * covered, deduped by host:port, capped at `MAX_TRIAGE_TARGETS`.
  */
 export async function resolveTriageTargets(configPath?: string): Promise<TriageTarget[]> {
   const byEndpoint = new Map<string, TriageTarget>();
@@ -2588,7 +2776,17 @@ export async function resolveTriageTargets(configPath?: string): Promise<TriageT
     }
   }
 
-  return [...byEndpoint.values()];
+  const all = [...byEndpoint.values()];
+  if (all.length > MAX_TRIAGE_TARGETS) {
+    const omitted = all.length - MAX_TRIAGE_TARGETS;
+    // Configured targets were inserted first, so the truncation below keeps
+    // them over autodiscovered ones.
+    printWarning(
+      `${omitted} target(s) omitted from triage — probing only the first ${MAX_TRIAGE_TARGETS} (configured targets take priority).`,
+    );
+    return all.slice(0, MAX_TRIAGE_TARGETS);
+  }
+  return all;
 }
 
 export async function runTriageCommand(opts: TriageCommandOptions = {}): Promise<number> {

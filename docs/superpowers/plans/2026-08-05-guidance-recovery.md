@@ -115,7 +115,7 @@ These apply to every task. Do not restate them per task; do not violate them.
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `RemediationGuide` (exported from `@crisismode/agent-sdk` and from `../types/remediation-guide.js`) with members `id: string`, `platform: string`, `title: string`, `applicableFindingTypes: string[]`, `url?: string | undefined`, `consoleSteps: string[]`, `cliEquivalent?: string | undefined`, `expectedAfter: string`, `caution?: string | undefined`, `verifiedOn: string`. Also: `DiagnosisFinding.checkId?: string`, `DiagnosisFinding.guides?: RemediationGuide[] | undefined`, `HumanNotificationStep.message.guideIds?: string[] | undefined`, `HumanNotificationStep.message.guideVars?: Record<string, string> | undefined`. (`HealthSignal.checkId?: string` is PR 3's — this task only verifies it.)
+- Produces: `RemediationGuide` (exported from `@crisismode/agent-sdk` and from `../types/remediation-guide.js`) with members `id: string`, `platform: string`, `title: string`, `applicableFindingTypes: string[]`, `url?: string | undefined`, `consoleSteps: string[]`, `cliEquivalent?: string | undefined`, `expectedAfter: string`, `caution?: string | undefined`, `verifiedOn: string`. Also: `DiagnosisFinding.checkId?: string`, `DiagnosisFinding.guides?: RemediationGuide[] | undefined`, `DiagnosisFinding.guideVars?: Record<string, string> | undefined`, `HealthSignal.guideVars?: Record<string, string> | undefined`, `HumanNotificationStep.message.guideIds?: string[] | undefined`, `HumanNotificationStep.message.guideVars?: Record<string, string> | undefined`. (`HealthSignal.checkId?: string` is PR 3's — this task only verifies it.) `guideVars` is new carrier for both types: the per-target substitutions (e.g. `{ instance: 'prod-db-01' }`) a checkId's matched guide needs resolved *before* it is rendered in scan or diagnose output — without it, attachment can only offer the raw guide with its `<instance>`-style placeholders still literal.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -245,6 +245,13 @@ If either hit is missing — meaning PR 3 landed differently than planned — ad
   checkId?: string;
 ```
 
+Then, regardless of what PR 3 landed, append `guideVars` to `HealthSignal` — this one is new to this PR, so it always needs adding:
+
+```ts
+  /** Per-target substitutions (e.g. { instance: 'prod-db-01' }) for this signal's checkId's matched guide, applied before the guide is attached. Undefined when the checkId's guide has no placeholders to fill. */
+  guideVars?: Record<string, string> | undefined;
+```
+
 In `packages/agent-sdk/src/types/diagnosis-result.ts`, add the import and append the `guides` member to `DiagnosisFinding` after `learnMoreUrl` (plus the `checkId` line only in the unlikely case the grep above did not find it):
 
 ```ts
@@ -256,6 +263,8 @@ import type { RemediationGuide } from './remediation-guide.js';
   checkId?: string;
   /** Remediation guides matched to this finding's checkId (attached at render time). */
   guides?: RemediationGuide[] | undefined;
+  /** Per-target substitutions for this finding's checkId's matched guide, applied before attachment — mirrors HealthSignal.guideVars. */
+  guideVars?: Record<string, string> | undefined;
 ```
 
 In `packages/agent-sdk/src/types/step-types.ts`, extend `HumanNotificationStep.message` (append after `actionRequired`):
@@ -1513,11 +1522,13 @@ Create `src/framework/guidance/attach.ts`:
 
 import type { DiagnosisResult } from '../../types/diagnosis-result.js';
 import type { RemediationGuide } from '../../types/remediation-guide.js';
-import { guidesForFindingTypes, type GuidanceScope } from './registry.js';
+import { applyGuideVariables, guidesForFindingTypes, type GuidanceScope } from './registry.js';
 
 export interface ScanFindingLike {
   checkId?: string | undefined;
-  signals?: ReadonlyArray<{ checkId?: string | undefined }> | undefined;
+  /** Substitutions for this finding's own checkId's matched guide(s) — see HealthSignal.guideVars. */
+  guideVars?: Record<string, string> | undefined;
+  signals?: ReadonlyArray<{ checkId?: string | undefined; guideVars?: Record<string, string> | undefined }> | undefined;
   /** Platforms this finding's target may show guides for — see platformsForTarget(). */
   guidancePlatforms?: readonly string[] | undefined;
   guides?: RemediationGuide[] | undefined;
@@ -1532,18 +1543,45 @@ export interface RuleFindingLike {
 type WithGuides<T> = T & { guides?: RemediationGuide[] | undefined };
 
 /**
+ * Resolve guides for one checkId and apply that source's own guideVars, so a
+ * guide's `<token>` placeholders never reach the caller unresolved. Each
+ * (checkId, vars) pair is resolved independently — the finding's own checkId
+ * carries the finding's guideVars, and each signal's checkId carries that
+ * signal's own guideVars, since two signals on one finding can name the same
+ * checkId for different targets with different substitutions.
+ */
+function resolveGuides(
+  checkId: string,
+  vars: Record<string, string> | undefined,
+  scope: GuidanceScope | undefined,
+): RemediationGuide[] {
+  const guides = guidesForFindingTypes([checkId], scope);
+  return vars === undefined ? guides : guides.map((g) => applyGuideVariables(g, vars));
+}
+
+/**
  * A scan finding covers a whole target, so its guidance anchors can come from
  * the finding's own checkId or from any of its signals' checkIds. The
  * platform scope rides on the finding itself (populated in scan.ts, where the
- * target is in hand) so this stays callable from the output layer.
+ * target is in hand) so this stays callable from the output layer. Variables
+ * are resolved per-source (finding-level vs. each signal's own guideVars)
+ * before the results are merged, deduping by guide id so a checkId shared by
+ * the finding and one of its signals doesn't attach twice.
  */
 export function attachGuidesToScanFinding<T extends ScanFindingLike>(finding: T): WithGuides<T> {
-  const types: string[] = [];
-  if (finding.checkId !== undefined) types.push(finding.checkId);
-  for (const signal of finding.signals ?? []) {
-    if (signal.checkId !== undefined) types.push(signal.checkId);
-  }
-  const guides = guidesForFindingTypes(types, { platforms: finding.guidancePlatforms });
+  const scope: GuidanceScope = { platforms: finding.guidancePlatforms };
+  const seen = new Set<string>();
+  const guides: RemediationGuide[] = [];
+  const collect = (checkId: string | undefined, vars: Record<string, string> | undefined): void => {
+    if (checkId === undefined) return;
+    for (const guide of resolveGuides(checkId, vars, scope)) {
+      if (seen.has(guide.id)) continue;
+      seen.add(guide.id);
+      guides.push(guide);
+    }
+  };
+  collect(finding.checkId, finding.guideVars);
+  for (const signal of finding.signals ?? []) collect(signal.checkId, signal.guideVars);
   return guides.length > 0 ? { ...finding, guides } : finding;
 }
 
@@ -1563,7 +1601,7 @@ export function attachGuidesToDiagnosis(
     ...diagnosis,
     findings: diagnosis.findings.map((finding) => {
       if (finding.checkId === undefined) return finding;
-      const guides = guidesForFindingTypes([finding.checkId], scope);
+      const guides = resolveGuides(finding.checkId, finding.guideVars, scope);
       return guides.length > 0 ? { ...finding, guides } : finding;
     }),
   };
@@ -1599,8 +1637,9 @@ git commit -m "feat(guidance): add the shared guide renderer and finding attachm
 
 **Interfaces:**
 - Consumes: `renderGuidesLines`, `guideReference` (Task 6); `attachGuidesToScanFinding`, `attachGuidesToDiagnosis` (Task 6); `platformsForTarget` (Task 2).
-- Produces: `printRemediationGuides(guides: readonly RemediationGuide[] | undefined, indent?: string): void` exported from `src/cli/output.ts`; `ScanFinding` gains `guides?: RemediationGuide[] | undefined` and `guidancePlatforms?: readonly string[] | undefined`; `printDiagnosis` gains an optional third parameter `scope?: GuidanceScope`.
+- Produces: `printRemediationGuides(guides: readonly RemediationGuide[] | undefined, indent?: string): void` exported from `src/cli/output.ts`; `ScanFinding` gains `guides?: RemediationGuide[] | undefined`, `guidancePlatforms?: readonly string[] | undefined`, `guideVars?: Record<string, string> | undefined`, and `signals[].guideVars?: Record<string, string> | undefined`; `printDiagnosis` gains an optional third parameter `scope?: GuidanceScope`.
 - **Already present from PR 3 — verify, do not re-add:** `ScanFinding.checkId?: string`, `ScanFinding.signals[].checkId?: string`, and the `checkId` spread in `checkTargetHealth`'s `health.signals.map(...)`. Run `grep -n "checkId" src/cli/output.ts src/cli/commands/scan.ts` before editing either file.
+- **`guideVars` is not optional plumbing — without it, `attachGuidesToScanFinding`/`attachGuidesToDiagnosis` (Task 6) can only offer the raw guide with its `<instance>`-style placeholders still literal.** `HealthSignal.guideVars` and `DiagnosisFinding.guideVars` (Task 1) are the source; this step's job is carrying them the one extra hop from `health.signals[]` into `ScanFinding.signals[]`, the same way the existing `checkId` spread does.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1700,6 +1739,38 @@ describe('scan output — guidance', () => {
     expect(guide.verifiedOn).toBe('2026-08-05');
   });
 
+  it('resolves aws-rds guide placeholders to concrete target values, not literal tokens', () => {
+    configure({ mode: 'human', noColor: true });
+    const result: ScanResult = {
+      score: 55,
+      findings: [{
+        id: 'RDS-001',
+        service: 'aws-rds (prod-db-01)',
+        status: 'unhealthy',
+        summary: 'RDS storage is full on instance prod-db-01',
+        confidence: 0.95,
+        escalationLevel: 2,
+        guidancePlatforms: ['aws-rds'],
+        signals: [{
+          status: 'critical',
+          detail: 'allocated storage exhausted',
+          source: 'rds_storage',
+          checkId: 'aws-rds.storage_full',
+          guideVars: { instance: 'prod-db-01', 'target-storage-gb': '40' },
+        }],
+      }],
+      recentChanges: [],
+      scannedAt: '2026-08-05T12:00:00.000Z',
+      durationMs: 90,
+    };
+    printScanSummary(result);
+    const text = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(text).toContain('prod-db-01');
+    expect(text).toContain('40 GiB');
+    expect(text).not.toContain('<instance>');
+    expect(text).not.toContain('<target-storage-gb>');
+  });
+
   it('a finding with no matching checkId renders no guidance', () => {
     configure({ mode: 'human', noColor: true });
     const result = scanResultWithKeyFinding();
@@ -1756,6 +1827,29 @@ describe('diagnose output — guidance', () => {
     const platforms = parsed.diagnosis.findings[0].guides.map((g: { platform: string }) => g.platform);
     expect(new Set(platforms)).toEqual(new Set(['anthropic-console', 'openai-platform']));
   });
+
+  it('resolves aws-rds guide placeholders to concrete target values, not literal tokens', () => {
+    configure({ mode: 'human', noColor: true });
+    const rdsDiagnosis: DiagnosisResult = {
+      status: 'identified',
+      scenario: 'storage_full',
+      confidence: 0.9,
+      findings: [{
+        source: 'rds_storage',
+        observation: 'RDS storage is full on instance prod-db-01',
+        severity: 'critical',
+        checkId: 'aws-rds.storage_full',
+        guideVars: { instance: 'prod-db-01', 'target-storage-gb': '40' },
+      }],
+      diagnosticPlanNeeded: false,
+    };
+    printDiagnosis(rdsDiagnosis, undefined, { platforms: ['aws-rds'] });
+    const text = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(text).toContain('prod-db-01');
+    expect(text).toContain('40 GiB');
+    expect(text).not.toContain('<instance>');
+    expect(text).not.toContain('<target-storage-gb>');
+  });
 });
 ```
 
@@ -1775,16 +1869,24 @@ import { renderGuidesLines, guideReference } from '../framework/guidance/render.
 import type { RemediationGuide } from '../types/remediation-guide.js';
 ```
 
-**Do not retype the whole `ScanFinding` interface.** By this point it carries `bestEffort?: boolean` (PR 1), `possiblyObserverCaused?: boolean` (PR 2), and `checkId?: string` plus `signals[].checkId?: string` (PR 3) — a wholesale rewrite silently drops them. Append exactly two members:
+**Do not retype the whole `ScanFinding` interface.** By this point it carries `bestEffort?: boolean` (PR 1), `possiblyObserverCaused?: boolean` (PR 2), and `checkId?: string` plus `signals[].checkId?: string` (PR 3) — a wholesale rewrite silently drops them. Append exactly four members (the last one goes inside the `signals` array element type, next to that array's `checkId?: string`):
 
 ```ts
   /** Platforms this finding's target may show guides for (see platformsForTarget). Undefined = platform unknown, show every match. */
   guidancePlatforms?: readonly string[] | undefined;
   /** Remediation guides matched to this finding (attached at render time). */
   guides?: RemediationGuide[] | undefined;
+  /** Substitutions for this finding's own checkId's matched guide(s) — see HealthSignal.guideVars. */
+  guideVars?: Record<string, string> | undefined;
 ```
 
-Then confirm PR 3's members are already there — `grep -n "checkId" src/cli/output.ts` must show both `ScanFinding.checkId?: string` and the `checkId?: string` inside the `signals` array type. Add them only if that grep comes back empty.
+```ts
+  // Inside ScanFinding['signals'][number], alongside that element's existing checkId?: string:
+  /** Substitutions for this signal's checkId's matched guide(s), applied before attachment. */
+  guideVars?: Record<string, string> | undefined;
+```
+
+Then confirm PR 3's members are already there — `grep -n "checkId" src/cli/output.ts` must show both `ScanFinding.checkId?: string` and the `checkId?: string` inside the `signals` array type. Add them only if that grep comes back empty. `guideVars` is new to this PR on both `ScanFinding` and its `signals[]` element — always add it, at both levels, or `attachGuidesToScanFinding` (Task 6) has nothing to substitute with and every placeholder in an attached guide renders literally (e.g. `<instance>`).
 
 - [ ] **Step 4: Add the shared CLI guidance printer**
 
@@ -1896,6 +1998,14 @@ First verify PR 3's signal mapping is in place:
 Run: `grep -n "s.checkId" src/cli/commands/scan.ts`
 
 Expected: the `...(s.checkId !== undefined ? { checkId: s.checkId } : {})` spread inside `checkTargetHealth`'s `health.signals.map(...)`. **That line is PR 3's — leave it alone.** (If the grep is empty, add it; it is what carries check ids from health signals into scan findings.)
+
+Next to that spread, add the matching one for `guideVars` — this one is new to this PR, so it will not already be there:
+
+```ts
+          ...(s.guideVars !== undefined ? { guideVars: s.guideVars } : {}),
+```
+
+Without this, a signal's `HealthSignal.guideVars` (Task 1, populated by aws-rds in Task 9) never reaches the `ScanFinding` that `attachGuidesToScanFinding` (Task 6) reads — the guide would attach by checkId but keep its placeholders literal.
 
 Then add the platform scope, which is this PR's part. `checkTargetHealth` is where the `TargetConfig` is in hand, so this is the one place that can resolve it. Add the import to the top import block:
 
@@ -2145,7 +2255,7 @@ git commit -m "feat(guidance): attach console guides to readiness findings"
 
 **Interfaces:**
 - Consumes: `AWS_RDS_CHECK_IDS`, `checkIdForRdsSource` (Task 5); `getGuideById`, `applyGuideVariables` (Task 2); `formatGuideForPlan` (Task 6).
-- Produces: `awsRdsGuides: RemediationGuide[]` with ids `aws-rds-increase-storage`, `aws-rds-connection-saturation`, `aws-rds-open-security-group`, `aws-rds-instance-not-available`; `message.guideIds` **and** `message.guideVars` populated on every control-plane suggestion (Task 10's `printPlan` re-renders from those two, never from `detail`).
+- Produces: `awsRdsGuides: RemediationGuide[]` with ids `aws-rds-increase-storage`, `aws-rds-connection-saturation`, `aws-rds-open-security-group`, `aws-rds-instance-not-available`; `message.guideIds` **and** `message.guideVars` populated on every control-plane suggestion (Task 10's `printPlan` re-renders from those two, never from `detail`); a shared `controlPlaneGuideVars(source, instance, data)` helper whose output also populates `HealthSignal.guideVars` and `DiagnosisFinding.guideVars` on `controlPlaneSignals`/`controlPlaneFindings`, so scan and diagnose resolve the same `<instance>`/`<target-storage-gb>`/`<security-group-id>`/`<db-port>` placeholders the recover path already did.
 
 **The strings being migrated** (verbatim from `src/agent/aws-rds/agent.ts`, so you can check nothing is lost):
 
@@ -2331,7 +2441,7 @@ export const REMEDIATION_GUIDES: readonly RemediationGuide[] = [
 ];
 ```
 
-- [ ] **Step 4: Tag aws-rds signals and findings with their checkId**
+- [ ] **Step 4: Tag aws-rds signals and findings with their checkId and guideVars**
 
 **Careful — `rds_instance_status` is emitted twice.** `assessHealth` builds a base instance-status signal inline at `agent.ts:317` (from `config.status`, the backup-config path), and `gatherControlPlaneItems` produces a second one that arrives via `controlPlaneSignals`. Only the control-plane copy carries the guidance anchor, and only the two mappings named below get edited. Do not "helpfully" tag the base signal at line 317 — that would attach RDS console guidance to a healthy backup-config reading.
 
@@ -2341,11 +2451,50 @@ In `src/agent/aws-rds/agent.ts`, add the import:
 import { checkIdForRdsSource } from './check-ids.js';
 ```
 
+**Both `controlPlaneSignals` (feeds scan) and `controlPlaneFindings` (feeds diagnose) need the exact same per-target variables `buildControlPlaneSuggestionPlan` computes for the recover path in Step 5** — otherwise scan and diagnose can only attach the raw guide with its `<instance>`-style placeholders unresolved, while recover shows the real values. Rather than compute `vars` three times (and risk the three computations drifting), add one pure helper above `controlPlaneSignals`/`controlPlaneFindings` that all three call sites share:
+
+```ts
+/**
+ * The guide placeholder substitutions for one control-plane item, derived
+ * from the same `source` and `data` used to build its signal/finding. Shared
+ * by assessHealth's controlPlaneSignals, diagnose's controlPlaneFindings, and
+ * plan's pushSuggestion call sites (Step 5) so scan, diagnose, and recover
+ * render the exact same resolved values from one computation, not three.
+ * Returns undefined for sources with no guide (checkIdForRdsSource already
+ * returned undefined for those; this mirrors that).
+ */
+function controlPlaneGuideVars(
+  source: string,
+  instance: string,
+  data: Record<string, unknown> | undefined,
+): Record<string, string> | undefined {
+  switch (source) {
+    case 'rds_storage': {
+      const currentGb = typeof data?.allocatedStorageGb === 'number' ? (data.allocatedStorageGb as number) : 20;
+      return { instance, 'target-storage-gb': String(currentGb + 20) };
+    }
+    case 'rds_connection_saturation':
+      return { instance };
+    case 'rds_security_group': {
+      const sgIds = data?.vpcSecurityGroupIds;
+      const sgId = Array.isArray(sgIds) && sgIds.length > 0 ? String(sgIds[0]) : 'sg-unknown';
+      const port = typeof data?.port === 'number' ? (data.port as number) : 5432;
+      return { instance, 'security-group-id': sgId, 'db-port': String(port) };
+    }
+    case 'rds_instance_status':
+      return { instance };
+    default:
+      return undefined;
+  }
+}
+```
+
 Change the `controlPlaneSignals` mapping (currently lines 287-293):
 
 ```ts
     const controlPlaneSignals: HealthSignal[] = controlPlaneItems.map((item) => {
       const checkId = checkIdForRdsSource(item.source);
+      const guideVars = controlPlaneGuideVars(item.source, config.instanceId, item.data);
       return {
         source: item.source,
         status: item.isPermissionMissing ? 'unknown' : signalStatus(item.critical, item.warning),
@@ -2353,6 +2502,7 @@ Change the `controlPlaneSignals` mapping (currently lines 287-293):
         observedAt,
         entityId: config.instanceId,
         ...(checkId !== undefined ? { checkId } : {}),
+        ...(guideVars !== undefined ? { guideVars } : {}),
       };
     });
 ```
@@ -2362,12 +2512,14 @@ Change the `controlPlaneFindings` mapping (currently lines 421-426):
 ```ts
     const controlPlaneFindings: DiagnosisFinding[] = controlPlaneItems.map((item) => {
       const checkId = checkIdForRdsSource(item.source);
+      const guideVars = controlPlaneGuideVars(item.source, config.instanceId, item.data);
       return {
         source: item.source,
         observation: item.message,
         severity: item.isPermissionMissing ? 'info' : item.critical ? 'critical' : item.warning ? 'warning' : 'info',
         ...(item.data ? { data: item.data } : {}),
         ...(checkId !== undefined ? { checkId } : {}),
+        ...(guideVars !== undefined ? { guideVars } : {}),
       };
     });
 ```
@@ -2421,21 +2573,16 @@ Replace the `pushSuggestion` helper in `buildControlPlaneSuggestionPlan` (curren
     };
 ```
 
-Then rewrite the four call sites (currently lines 840-900), keeping the surrounding conditions and data extraction exactly as they are:
+Then rewrite the four call sites (currently lines 840-900), keeping the surrounding conditions and data extraction exactly as they are, but computing `vars` via `controlPlaneGuideVars` (Step 4) instead of a fresh inline literal — the non-null assertion is safe because each branch's own `if` already gated on the finding whose `source` maps to a defined `controlPlaneGuideVars` case:
 
 ```ts
     const storageFinding = diagnosis.findings.find((f) => f.source === 'rds_storage');
     if (storageFinding && storageFinding.severity === 'critical') {
-      const currentGb =
-        typeof storageFinding.data?.allocatedStorageGb === 'number'
-          ? (storageFinding.data.allocatedStorageGb as number)
-          : 20;
-      const targetGb = currentGb + 20;
       pushSuggestion(
         `Increase allocated storage on RDS instance ${instance}`,
         `RDS storage is full on instance ${instance}.`,
         'aws-rds-increase-storage',
-        { instance, 'target-storage-gb': String(targetGb) },
+        controlPlaneGuideVars('rds_storage', instance, storageFinding.data)!,
       );
     }
 
@@ -2445,20 +2592,17 @@ Then rewrite the four call sites (currently lines 840-900), keeping the surround
         `Reduce connection saturation on RDS instance ${instance}`,
         `Database connections on instance ${instance} are approaching the limit.`,
         'aws-rds-connection-saturation',
-        { instance },
+        controlPlaneGuideVars('rds_connection_saturation', instance, saturationFinding.data)!,
       );
     }
 
     const sgFinding = diagnosis.findings.find((f) => f.source === 'rds_security_group');
     if (sgFinding && sgFinding.severity === 'critical') {
-      const sgIds = sgFinding.data?.vpcSecurityGroupIds;
-      const sgId = Array.isArray(sgIds) && sgIds.length > 0 ? String(sgIds[0]) : 'sg-unknown';
-      const port = typeof sgFinding.data?.port === 'number' ? (sgFinding.data.port as number) : 5432;
       pushSuggestion(
         `Open RDS security group ingress on instance ${instance}`,
         `The security group blocks all inbound connections to instance ${instance}.`,
         'aws-rds-open-security-group',
-        { instance, 'security-group-id': sgId, 'db-port': String(port) },
+        controlPlaneGuideVars('rds_security_group', instance, sgFinding.data)!,
       );
     }
 
@@ -2477,7 +2621,7 @@ Then rewrite the four call sites (currently lines 840-900), keeping the surround
         `RDS instance ${instance} is not available (status: ${status})`,
         `RDS instance status is '${status}' on instance ${instance}.`,
         'aws-rds-instance-not-available',
-        { instance },
+        controlPlaneGuideVars('rds_instance_status', instance, instanceStatusFinding.data)!,
       );
     }
 ```
@@ -2486,8 +2630,8 @@ The per-status `guidance` ternary is deleted: its three branches are now steps 3
 
 - [ ] **Step 6: Run the aws-rds and guidance tests**
 
-Run: `pnpm vitest run src/__tests__/aws-rds-agent-control-plane.test.ts src/__tests__/guidance-render.test.ts src/__tests__/guidance-registry.test.ts`
-Expected: PASS.
+Run: `pnpm vitest run src/__tests__/aws-rds-agent-control-plane.test.ts src/__tests__/guidance-render.test.ts src/__tests__/guidance-registry.test.ts src/__tests__/guidance-output.test.ts`
+Expected: PASS — including the two aws-rds placeholder-substitution tests added to `guidance-output.test.ts` in Task 7, which only turn green once `controlPlaneSignals`/`controlPlaneFindings` above carry `guideVars`.
 
 - [ ] **Step 7: Run every aws-rds and plan-shape test**
 
