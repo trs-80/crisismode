@@ -17,7 +17,7 @@ _crisismode_completions() {
   cur="\${COMP_WORDS[COMP_CWORD]}"
   prev="\${COMP_WORDS[COMP_CWORD-1]}"
 
-  local commands="scan diagnose recover status init demo webhook ask watch mcp completions registry"
+  local commands="scan diagnose recover status triage init demo webhook ask watch mcp completions registry"
   local global_flags="--config --target --json --no-color --verbose -h --help -v --version"
 
   if [[ \${COMP_CWORD} -eq 1 ]]; then
@@ -44,6 +44,9 @@ _crisismode_completions() {
       ;;
     status)
       COMPREPLY=( $(compgen -W "--json --no-color -h --help" -- "\${cur}") )
+      ;;
+    triage)
+      COMPREPLY=( $(compgen -W "--config --json --no-color --verbose -h --help" -- "\${cur}") )
       ;;
     init)
       COMPREPLY=( $(compgen -W "--agent --json --no-color -h --help" -- "\${cur}") )
@@ -101,6 +104,7 @@ _crisismode() {
         'diagnose:Health check and AI-powered diagnosis (read-only)'
         'recover:Full recovery flow (dry-run default)'
         'status:Quick health probe'
+        'triage:Is it me, my network, or them? (offline localization)'
         'init:Generate crisismode.yaml or scaffold a check plugin'
         'demo:Run simulator demo'
         'webhook:Start webhook receiver for AlertManager'
@@ -147,6 +151,14 @@ _crisismode() {
           _arguments \\
             '--json[Machine-readable JSON output]' \\
             '--no-color[Disable colored output]' \\
+            {-h,--help}'[Show help]'
+          ;;
+        triage)
+          _arguments \\
+            '--config[Path to crisismode.yaml]:config file:_files' \\
+            '--json[Machine-readable JSON output]' \\
+            '--no-color[Disable colored output]' \\
+            '--verbose[Show additional detail]' \\
             {-h,--help}'[Show help]'
           ;;
         init)
@@ -212,6 +224,7 @@ complete -c crisismode -n '__fish_use_subcommand' -a scan        -d 'Health scan
 complete -c crisismode -n '__fish_use_subcommand' -a diagnose    -d 'Health check and AI diagnosis (read-only)'
 complete -c crisismode -n '__fish_use_subcommand' -a recover     -d 'Full recovery flow (dry-run default)'
 complete -c crisismode -n '__fish_use_subcommand' -a status      -d 'Quick health probe'
+complete -c crisismode -n '__fish_use_subcommand' -a triage      -d 'Is it me, my network, or them? (offline localization)'
 complete -c crisismode -n '__fish_use_subcommand' -a init        -d 'Generate crisismode.yaml or scaffold a plugin'
 complete -c crisismode -n '__fish_use_subcommand' -a demo        -d 'Run simulator demo'
 complete -c crisismode -n '__fish_use_subcommand' -a webhook     -d 'Start webhook receiver for AlertManager'
