@@ -8,6 +8,30 @@ import type { TriageReport } from '../framework/triage.js';
 import { resetNetworkProfile } from '../framework/network-profile.js';
 import { resetTriageReport } from '../framework/triage.js';
 
+// The runScan wiring tests below exercise runScan for real. Autodiscovery
+// reads the real filesystem and environment, and check-plugin discovery
+// would find AND EXECUTE this repo's own ./checks/ plugins (live DNS lookups,
+// curl to localhost). Both are stubbed so the scan under test never touches
+// the network — mirrors src/__tests__/scan-run-best-effort.test.ts. The stub
+// objects are built inside the factories because vi.mock is hoisted above
+// module-level consts.
+vi.mock('../cli/autodiscovery.js', () => ({
+  discoverStack: vi.fn(async () => ({
+    services: [],
+    appStack: { framework: null, language: null, hasDockerfile: false, hasCIConfig: false, dependencies: [] },
+    envHints: [],
+    platform: { platform: null, detected: false, signals: [] },
+    aiProviders: [],
+    derivedTargets: [],
+    derivedNotes: {},
+    confidence: 0.5,
+  })),
+  printOnboardingMessage: vi.fn(),
+}));
+vi.mock('../framework/check-discovery.js', () => ({
+  discoverCheckPlugins: vi.fn(async () => ({ plugins: [], warnings: [] })),
+}));
+
 function finding(over: Partial<ScanFinding> = {}): ScanFinding {
   return {
     id: 'PG-001',
