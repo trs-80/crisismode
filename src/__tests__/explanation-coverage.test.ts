@@ -30,6 +30,7 @@ const REPRESENTATIVE_SOURCES: Record<string, string[]> = {
   'aws-dynamodb': ['dynamodb_continuous_backups'],
   'aws-rds': ['rds_backup_retention', 'rds_instance_status', 'rds_connection_saturation', 'rds_storage', 'rds_security_group', 'rds_iam_permissions'],
   'iac-drift': ['iac_state', 'iac_resource_missing', 'iac_attribute_drift'],
+  'llm-provider': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
 };
 
 describe('explanation coverage', () => {
