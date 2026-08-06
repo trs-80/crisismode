@@ -432,20 +432,32 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
   // dropped: a "cluster" of one is not cross-system correlation. A cluster
   // that loses an agent gets its rootCause and investigationOrder
   // re-rendered so its text never names an agent it no longer contains.
+  //
+  // Claims are keyed by the AgentEvidence object reference, not agentKind —
+  // two evidence items can share a kind (e.g. two distinct redis targets),
+  // and a string-keyed Set collapsed both into one 'redis' entry. That let a
+  // stronger cluster's claim on ONE same-kind target silently also strip an
+  // unrelated same-kind target out of a later, weaker cluster it was never
+  // part of (see the config-drift-cascade/streaming-backpressure regression
+  // test). Filtering `clusterAgents` (the evidence array) instead of
+  // `cluster.agents` (the derived kind-name array) fixes this regardless of
+  // how many evidence items share a kind.
   built.sort((a, b) => b.cluster.confidence - a.cluster.confidence);
 
   const specific: CorrelationCluster[] = [];
   const advisory: CorrelationCluster[] = [];
-  const claimed = new Set<string>();
+  const claimed = new Set<AgentEvidence>();
 
   for (const { cluster, rule, clusterAgents } of built) {
     if (ADVISORY_RULE_NAMES.has(rule.name)) {
       advisory.push(cluster);
       continue;
     }
-    const agents = cluster.agents.filter((a) => !claimed.has(a));
-    if (agents.length < 2) continue;
-    for (const a of agents) claimed.add(a);
+    const survivingAgents = clusterAgents.filter((a) => !claimed.has(a));
+    if (survivingAgents.length < 2) continue;
+    for (const a of survivingAgents) claimed.add(a);
+
+    const agents = survivingAgents.map((a) => a.agentKind);
 
     // If this cluster lost agents during de-dup, recalculate reasoning and
     // temporal correlation so both reflect the actual survivors, not the
@@ -453,12 +465,11 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
     // support its surviving evidence doesn't have.
     let reasoning = cluster.reasoning;
     let temporalCorrelation = cluster.temporalCorrelation;
-    if (agents.length < cluster.agents.length) {
+    if (survivingAgents.length < clusterAgents.length) {
       // Every survivor came from `passedSignalAgents`, so it passed the
       // rule's per-agent signal check by construction — signalMatches is
       // just the survivor count, no re-checking needed.
-      const survivingAgents = clusterAgents.filter((a) => agents.includes(a.agentKind));
-      const signalMatches = agents.length;
+      const signalMatches = survivingAgents.length;
       let patternMatches = 0;
       for (const agentEv of survivingAgents) {
         const patterns = agentPatterns.get(agentEv);

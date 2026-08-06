@@ -704,6 +704,50 @@ describe('Root cause synthesis (6.3)', () => {
       expect(cascadeCluster!.temporalCorrelation).toBe(false);
       expect(cascadeCluster!.reasoning).not.toContain('temporally correlated');
     });
+
+    it('does not let one same-kind cluster claim an unrelated same-kind target (de-dup by evidence, not agentKind)', () => {
+      // The winner-take-all pass used to track claims in a Set<string> keyed
+      // by agentKind. config-drift-cascade below matches a redis evidence
+      // item (r3) alongside an application-config item, and scores higher
+      // than streaming-backpressure, which independently matches TWO
+      // *different*, unrelated redis evidence items (r1, r2 — distinct
+      // targets, same kind). Under the bug, config-drift-cascade's claim of
+      // r3 adds the string 'redis' to a Set<string>, which then makes
+      // streaming-backpressure's ['redis', 'redis'] (r1, r2) look fully
+      // claimed too — even though r1 and r2 were never part of
+      // config-drift-cascade's cluster — and the whole streaming-backpressure
+      // cluster is wrongly dropped. Keying claims by the AgentEvidence object
+      // reference instead means only genuinely claimed evidence is removed.
+      const r1 = makeEvidence('redis', {
+        targetName: 'redis-queue-a',
+        signals: [{ type: 'queue_depth', source: 'r1', detail: 'queue backlog', severity: 'critical' }],
+      });
+      const r2 = makeEvidence('redis', {
+        targetName: 'redis-queue-b',
+        signals: [{ type: 'queue_depth', source: 'r2', detail: 'queue backlog', severity: 'critical' }],
+      });
+      const r3 = makeEvidence('redis', {
+        targetName: 'redis-config',
+        signals: [{ type: 'config_mismatch', source: 'r3', detail: 'config drifted', severity: 'critical' }],
+      });
+      const appConfigEvidence = makeEvidence('application-config', {
+        signals: [{ type: 'config_mismatch', source: 'app-config', detail: 'config drifted', severity: 'critical' }],
+      });
+
+      const result = synthesizeByRules([r1, r2, r3, appConfigEvidence]);
+
+      const driftCluster = result.clusters.find((c) => c.reasoning.includes('config-drift-cascade'));
+      expect(driftCluster).toBeDefined();
+      expect(driftCluster!.agents).toEqual(['redis', 'application-config']);
+
+      // r1 and r2 were never part of config-drift-cascade's cluster (only r3
+      // was) — streaming-backpressure must survive with both of them intact,
+      // not be silently dropped because their shared agentKind string
+      // collided with r3's.
+      const backpressureCluster = result.clusters.find((c) => c.reasoning.includes('streaming-backpressure'));
+      expect(backpressureCluster, 'the unrelated r1+r2 cluster must survive de-dup').toBeDefined();
+      expect(backpressureCluster!.agents).toEqual(['redis', 'redis']);
+    });
   });
 
   describe('config-drift-cascade regression (iac-drift arc)', () => {
