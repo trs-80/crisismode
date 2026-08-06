@@ -14,7 +14,7 @@
 import { assembleContext } from '../../framework/context.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { loadConfigWithDetection, ConfigNotFoundError } from '../../config/loader.js';
-import { discoverStack, printOnboardingMessage } from '../autodiscovery.js';
+import { discoverStack, printOnboardingMessage, type StackProfile } from '../autodiscovery.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
@@ -499,7 +499,10 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     stackProfile,
     ranKinds,
     configSource,
-    iamBlockedEntries(findings),
+    [
+      ...iamBlockedEntries(findings),
+      ...aiKeyBlockedEntries(stackProfile),
+    ],
     maturityByKind,
   );
 
@@ -606,6 +609,28 @@ export function iamBlockedEntries(
   }
 
   return entries;
+}
+
+/**
+ * Providers whose SDK is a dependency but whose key is not in this process's
+ * environment. CrisisMode reads process.env only, so a key living in .env is
+ * invisible here — reporting that as an unhealthy finding would accuse a
+ * perfectly working app of being broken. It belongs in the blocked bucket:
+ * found, not checkable, with the reason.
+ *
+ * SECURITY: only env var NAMES reach this function.
+ */
+export function aiKeyBlockedEntries(profile: Pick<StackProfile, 'aiProviders'>): VisibilityEntry[] {
+  return profile.aiProviders
+    .filter((p) => !p.configured)
+    .map((p) => ({
+      // Label format matches the watching rows' label (the kind itself, e.g.
+      // 'llm-provider.anthropic' — see Task 12), so the same provider reads
+      // identically whether it ends up watched or blocked.
+      label: `llm-provider.${p.provider}`,
+      detail: `your project depends on the ${p.provider} SDK, but ${p.envVar} is not set in this environment`,
+      hint: `CrisisMode reads process.env only — it never parses .env files. Export the key (or run CrisisMode from the same environment as your app) to enable live ${p.provider} checks.`,
+    }));
 }
 
 /**
