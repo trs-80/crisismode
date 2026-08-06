@@ -46,7 +46,7 @@ _crisismode_completions() {
       COMPREPLY=( $(compgen -W "--json --no-color -h --help" -- "\${cur}") )
       ;;
     triage)
-      COMPREPLY=( $(compgen -W "--config --json --no-color --verbose -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--config --terse --json --no-color --verbose -h --help" -- "\${cur}") )
       ;;
     init)
       COMPREPLY=( $(compgen -W "--agent --json --no-color -h --help" -- "\${cur}") )
@@ -156,6 +156,7 @@ _crisismode() {
         triage)
           _arguments \\
             '--config[Path to crisismode.yaml]:config file:_files' \\
+            '--terse[Suppress plain-language explanation and next step]' \\
             '--json[Machine-readable JSON output]' \\
             '--no-color[Disable colored output]' \\
             '--verbose[Show additional detail]' \\

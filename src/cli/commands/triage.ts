@@ -14,7 +14,7 @@
 import chalk from 'chalk';
 import { runTriage } from '../../framework/triage.js';
 import { getEscalationInfo } from '../../framework/escalation.js';
-import { getOutputMode, jsonOut, printBanner, printWarning } from '../output.js';
+import { getOutputMode, jsonOut, outputOptions, printBanner, printWarning } from '../output.js';
 import { triageVerdictColor } from '../status-presentation.js';
 import { discoverStack } from '../autodiscovery.js';
 import { ConfigNotFoundError, loadConfigWithDetection } from '../../config/loader.js';
@@ -53,8 +53,13 @@ export function renderTriageReport(report: TriageReport): string[] {
   // chalk emits nothing when --no-color or pipe mode set chalk.level = 0, so
   // substring assertions in tests are unaffected.
   lines.push(chalk.bold(triageVerdictColor(report.verdict)(VERDICT_HEADLINE[report.verdict])));
-  lines.push(report.explanation);
-  lines.push(`Next: ${report.nextStep}`);
+  // --terse suppresses the plain-language explanation and next-step lines,
+  // matching how scan/demo/recover honor it (output.ts) — the verdict
+  // headline stays either way.
+  if (!outputOptions.terse) {
+    lines.push(report.explanation);
+    lines.push(`Next: ${report.nextStep}`);
+  }
   lines.push('');
   lines.push('Layers checked:');
   for (const layer of report.layers) {
