@@ -24,6 +24,8 @@ import type { VisibilityReport } from './visibility.js';
 import { liveValidatedWatching, bestEffortWatching } from './visibility.js';
 import { BEST_EFFORT_GROUP_HINT, BEST_EFFORT_FINDING_SUFFIX } from '../framework/agent-maturity.js';
 import { buildRiskFraming } from './risk-framing.js';
+import type { TriageReport } from '../framework/triage.js';
+import type { ObserverReframe } from './observer-reframe.js';
 
 /**
  * Three output modes:
@@ -481,6 +483,10 @@ export interface ScanResult {
   aiSummary?: string;
   /** What CrisisMode can see, what it found but can't check, and what's invisible by design. */
   visibility?: VisibilityReport;
+  /** Step-0 triage report: is the problem this machine, the network, or the services? */
+  triage?: TriageReport;
+  /** Present when triage attributed unreachable findings to this machine/network. */
+  observerReframe?: ObserverReframe;
 }
 
 export function printScanSummary(result: ScanResult): void {
@@ -513,11 +519,25 @@ export function printScanSummary(result: ScanResult): void {
     return;
   }
 
+  // Observer reframe — "six services are down" is the wrong headline when the
+  // cause is this machine's network. Lead with the cause, collapse the rest.
+  const reframe = result.observerReframe;
+  const reframedIds = new Set(reframe?.findingIds ?? []);
+  if (reframe) {
+    console.log(chalk.yellow.bold('  LIKELY THIS MACHINE, NOT YOUR SERVICES'));
+    console.log(chalk.yellow(`    ${reframe.headline}`));
+    console.log(chalk.dim(`    Next: ${reframe.nextStep}`));
+    console.log(chalk.dim(`    Collapsed ${reframe.findingIds.length} unreachable finding(s): ${reframe.findingIds.join(', ')}`));
+    console.log(chalk.dim('    Run `crisismode triage` for the per-layer detail.'));
+    console.log('');
+  }
+  const presented = result.findings.filter((f) => !reframedIds.has(f.id));
+
   // Group findings by severity
-  const unhealthy = result.findings.filter((f) => f.status === 'unhealthy');
-  const recovering = result.findings.filter((f) => f.status === 'recovering');
-  const unknown = result.findings.filter((f) => f.status === 'unknown');
-  const healthy = result.findings.filter((f) => f.status === 'healthy');
+  const unhealthy = presented.filter((f) => f.status === 'unhealthy');
+  const recovering = presented.filter((f) => f.status === 'recovering');
+  const unknown = presented.filter((f) => f.status === 'unknown');
+  const healthy = presented.filter((f) => f.status === 'healthy');
 
   // Unhealthy first — this is what matters during an incident
   if (unhealthy.length > 0) {
@@ -616,6 +636,21 @@ export function printVisibility(report: VisibilityReport): void {
   for (const e of report.invisible) {
     console.log(chalk.dim(`    invisible    ${e.label} — ${e.detail}`));
   }
+  console.log('');
+}
+
+/**
+ * One line of context when triage found nothing wrong locally. When triage
+ * did localize the problem, the reframe in printScanSummary already says so,
+ * and repeating it here would be noise.
+ */
+export function printTriageContext(report: TriageReport): void {
+  if (outputOptions.mode !== 'human') return;
+  if (report.verdict !== 'healthy' && report.verdict !== 'remote') return;
+  const detail = report.verdict === 'healthy'
+    ? 'triage passed — this machine, its DNS, and its internet path look healthy'
+    : 'triage passed — this machine and its network are fine; the services did not answer';
+  console.log(chalk.dim(`  Network path: ${detail}`));
   console.log('');
 }
 

@@ -20,7 +20,7 @@ import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/che
 import {
   printBanner, printScanSummary, printVisibility, printNextAction,
   printInfo, printDetection, getOutputMode,
-  printPlainEnglishSummary, printSynthesis,
+  printPlainEnglishSummary, printSynthesis, printTriageContext,
 } from '../output.js';
 import {
   buildIncidentSummary, formatIncidentSummaryText,
@@ -34,6 +34,9 @@ import { synthesizeByRules } from '../../framework/root-cause-synthesis.js';
 import type { AgentEvidence } from '../../framework/root-cause-synthesis.js';
 import { healthToSignals } from '../../framework/health-to-signals.js';
 import { explainSourceInContext, type ExplanationContext } from '../../framework/signal-explanations.js';
+import { runTriage, SCAN_PROBE_TIMEOUT_MS } from '../../framework/triage.js';
+import { reframeFindings } from '../observer-reframe.js';
+import type { TriageReport } from '../../framework/triage.js';
 import type { ScanFinding, ScanResult, RecentChange } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { HealthAssessment, HealthStatus } from '../../types/health.js';
@@ -46,6 +49,8 @@ export interface ScanOptions {
   configPath?: string | undefined;
   category?: string[] | undefined;
   verbose?: boolean;
+  /** Injected step-0 triage report. Tests only — the CLI never sets this. */
+  triageReport?: TriageReport | undefined;
 }
 
 /** Per-agent timeout for health checks during scan (ms). */
@@ -255,11 +260,16 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   const startTime = Date.now();
   printBanner();
 
-  // Phase 1: Discovery
+  // Phase 1: Discovery, plus step-0 triage (is it this machine, the network,
+  // or the services?). Triage also populates the cached NetworkProfile that
+  // generatePlainEnglishSummary's offline gate reads later in this function.
   printInfo('Scanning for services...');
-  const [stackProfile, configDetection] = await Promise.all([
+  const [stackProfile, configDetection, triageReport] = await Promise.all([
     discoverStack(),
     loadConfigWithDetectionSafe(opts.configPath),
+    opts.triageReport !== undefined
+      ? Promise.resolve(opts.triageReport)
+      : runTriage({ timeoutMs: SCAN_PROBE_TIMEOUT_MS }),
   ]);
 
   const configResult = configDetection.config;
@@ -433,18 +443,23 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     }
   }
 
+  // Reframe unreachable-service findings when triage blames this machine.
+  const { findings: presentedFindings, reframe } = reframeFindings(findings, triageReport);
+
   // Phase 3: Detect recent changes
   const recentChanges = await detectRecentChanges(findings);
 
   // Phase 4: Compute score
-  const score = computeHealthScore(findings);
+  const score = computeHealthScore(presentedFindings);
 
   const result: ScanResult = {
     score,
-    findings,
+    findings: presentedFindings,
     recentChanges,
     scannedAt: new Date().toISOString(),
     durationMs: Date.now() - startTime,
+    triage: triageReport,
+    ...(reframe !== null ? { observerReframe: reframe } : {}),
   };
 
   // Build incident summary and attach as text for JSON consumers
@@ -467,6 +482,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   printScanSummary(result);
   printVisibility(result.visibility);
+  printTriageContext(triageReport);
 
   // Print next steps from the incident summary (single source of truth)
   for (const step of incidentSummary.nextSteps) {

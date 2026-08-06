@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { isUnreachableFinding, reframeFindings } from '../cli/observer-reframe.js';
-import type { ScanFinding } from '../cli/output.js';
+import { configure, printScanSummary, printTriageContext } from '../cli/output.js';
+import type { ScanFinding, ScanResult } from '../cli/output.js';
 import type { TriageReport } from '../framework/triage.js';
+import { resetNetworkProfile } from '../framework/network-profile.js';
+import { resetTriageReport } from '../framework/triage.js';
 
 function finding(over: Partial<ScanFinding> = {}): ScanFinding {
   return {
@@ -118,4 +121,144 @@ describe('reframeFindings', () => {
   it('returns no reframe when nothing looks unreachable', () => {
     expect(reframeFindings([lagging], reportWith('local')).reframe).toBeNull();
   });
+});
+
+describe('scan rendering with a reframe', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, verbose: false });
+  });
+
+  const base: ScanResult = {
+    score: 30,
+    findings: [
+      { ...finding(), possiblyObserverCaused: true },
+      finding({ id: 'REDIS-001', status: 'unhealthy', summary: 'Memory usage at 95%' }),
+    ],
+    recentChanges: [],
+    scannedAt: '2026-08-05T12:00:00.000Z',
+    durationMs: 900,
+  };
+
+  const reframe = {
+    verdict: 'network' as const,
+    findingIds: ['PG-001'],
+    cause: 'DNS is not resolving from this machine',
+    headline: '1 service appears unreachable, but the likely cause is this machine\'s network (DNS is not resolving from this machine). Fix that first.',
+    nextStep: 'Check the network you are on.',
+  };
+
+  it('leads with the reframe and collapses the attributed finding in human mode', () => {
+    configure({ noColor: true, mode: 'human' });
+    printScanSummary({ ...base, observerReframe: reframe });
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(out).toContain('1 service appears unreachable');
+    expect(out).toContain('Check the network you are on.');
+    // The reframed finding is collapsed, not listed with the real service problems.
+    expect(out).not.toContain('connect ECONNREFUSED');
+    // Findings triage cannot explain are still shown.
+    expect(out).toContain('Memory usage at 95%');
+  });
+
+  it('keeps every finding and the triage report in machine mode', () => {
+    configure({ json: true });
+    printScanSummary({ ...base, observerReframe: reframe, triage: reportWith('network') });
+    const parsed = JSON.parse(String(logSpy.mock.calls[0]![0]));
+    expect(parsed.type).toBe('scan');
+    expect(parsed.findings).toHaveLength(2);
+    expect(parsed.findings[0].possiblyObserverCaused).toBe(true);
+    expect(parsed.observerReframe.findingIds).toEqual(['PG-001']);
+    expect(parsed.triage.verdict).toBe('network');
+  });
+
+  it('lists findings normally when there is no reframe', () => {
+    configure({ noColor: true, mode: 'human' });
+    printScanSummary(base);
+    const out = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(out).toContain('connect ECONNREFUSED');
+  });
+});
+
+describe('printTriageContext', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    configure({ noColor: true, mode: 'human' });
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, verbose: false });
+  });
+
+  it('notes that triage passed for a healthy verdict', () => {
+    printTriageContext(reportWith('healthy'));
+    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).toContain('triage passed');
+  });
+
+  it('says nothing when the verdict already produced a reframe', () => {
+    printTriageContext(reportWith('network'));
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+});
+
+// The wiring test: unit tests cover reframeFindings and the renderers, but
+// only this covers runScan's Promise.all -> reframe -> ScanResult path. The
+// injected report keeps it off the network; findings still depend on what is
+// running locally, so assertions are about relationships, not fixed values.
+describe('runScan step 0 wiring', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    // Machine mode keeps the console quiet and the output structured.
+    configure({ json: true });
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // runScan calls generatePlainEnglishSummary, which makes a real Anthropic
+    // API call when a key is present. A unit test must never do that.
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    vi.unstubAllEnvs();
+    configure({ json: false, noColor: false, verbose: false });
+    resetNetworkProfile();
+    resetTriageReport();
+  });
+
+  it('carries the injected triage report into the result and flags only unreachable findings', async () => {
+    const { runScan } = await import('../cli/commands/scan.js');
+    const injected = reportWith('network');
+
+    const result = await runScan({ triageReport: injected });
+
+    expect(result.triage).toBe(injected);
+    // Every flagged finding is one isUnreachableFinding would have picked.
+    for (const f of result.findings) {
+      if (f.possiblyObserverCaused === true) expect(isUnreachableFinding(f)).toBe(true);
+    }
+    // And the reframe exists exactly when there was something to reframe.
+    const hasUnreachable = result.findings.some(isUnreachableFinding);
+    expect(result.observerReframe !== undefined).toBe(hasUnreachable);
+    if (result.observerReframe) {
+      expect(result.observerReframe.findingIds.length).toBeGreaterThan(0);
+      expect(result.observerReframe.headline).toContain('Fix that first.');
+    }
+  }, 30_000);
+
+  it('leaves findings unflagged when the injected verdict is healthy', async () => {
+    const { runScan } = await import('../cli/commands/scan.js');
+
+    const result = await runScan({ triageReport: reportWith('healthy') });
+
+    expect(result.observerReframe).toBeUndefined();
+    expect(result.findings.every((f) => f.possiblyObserverCaused === undefined)).toBe(true);
+  }, 30_000);
 });
