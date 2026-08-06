@@ -107,6 +107,18 @@ describe('llm-provider registrations', () => {
     await expect(anthropicRegistration.createAgent(target)).rejects.toThrow(/llm-provider\.openai/);
   });
 
+  it('quotes the target\'s actual llm.provider value, not a double-prefixed one', async () => {
+    const target = resolveTarget({
+      name: 'misfiled',
+      kind: 'llm-provider.anthropic',
+      primary: { host: 'api.anthropic.com', port: 443 },
+      llm: { provider: 'openai' },
+    });
+    // The config value is the bare provider id ("openai"), not "llm-provider.openai" —
+    // the error must quote what the user actually wrote, not a re-prefixed guess.
+    await expect(anthropicRegistration.createAgent(target)).rejects.toThrow('its llm.provider is "openai"');
+  });
+
   it('does not throw when the key is absent — a missing key is a finding, not a crash', async () => {
     delete process.env['ANTHROPIC_API_KEY'];
     const target = resolveTarget({

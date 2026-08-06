@@ -39,7 +39,7 @@ function buildLlmProviderRegistration(providerId: LlmProviderId): AgentRegistrat
     buildLiveBackend: async (target) => {
       if (target.llm?.provider !== undefined && target.llm.provider !== providerId) {
         throw new Error(
-          `Target "${target.name}" is registered under kind "llm-provider.${providerId}" but its llm.provider is "llm-provider.${target.llm.provider}". Either use kind "llm-provider.${target.llm.provider}" for this target, or drop llm.provider to default to ${providerId}.`,
+          `Target "${target.name}" is registered under kind "llm-provider.${providerId}" but its llm.provider is "${target.llm.provider}". Either use kind "llm-provider.${target.llm.provider}" for this target, or drop llm.provider to default to ${providerId}.`,
         );
       }
 

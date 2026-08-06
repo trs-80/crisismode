@@ -14,6 +14,14 @@ import { healthToSignals } from '../framework/health-to-signals.js';
 import type { AgentContext } from '../types/agent-context.js';
 import type { OfflineGate } from '../agent/llm-provider/offline-gate.js';
 import type { LlmProviderScenario } from '../agent/llm-provider/simulator.js';
+import type {
+  KeyPresence,
+  KeyValidity,
+  LlmProviderBackend,
+  ModelCheck,
+  ProviderStatusReport,
+  RateLimitHeadroom,
+} from '../agent/llm-provider/backend.js';
 
 describe('llmProviderManifest', () => {
   it('builds manifests for all four providers with per-provider maturity', () => {
@@ -135,6 +143,22 @@ describe('LlmProviderDiagnosisAgent.assessHealth', () => {
     expect(health.signals.find((s) => s.checkId === LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom)!.status).toBe('warning');
   });
 
+  it('is degraded, not unhealthy, when the key authenticated but is scoped too narrowly for this probe', async () => {
+    // Finding 1: a restricted-scope key 403s on the models-list probe while
+    // the app's real calls keep working. The old behavior marked key_valid
+    // critical and told the operator to rotate the key — a false alarm.
+    const { agent, context } = setup('key_scope_limited');
+    const health = await agent.assessHealth(context);
+    expect(health.status).toBe('recovering');
+
+    const keyValid = health.signals.find((s) => s.checkId === LLM_PROVIDER_CHECK_IDS.keyValid)!;
+    expect(keyValid.status).toBe('healthy');
+
+    const quota = health.signals.find((s) => s.checkId === LLM_PROVIDER_CHECK_IDS.quotaBilling)!;
+    expect(quota.status).toBe('warning');
+    expect(quota.detail.toLowerCase()).toContain('scope');
+  });
+
   it('is degraded when the provider reports an ongoing incident', async () => {
     const { agent, context } = setup('provider_incident');
     const health = await agent.assessHealth(context);
@@ -239,6 +263,19 @@ describe('LlmProviderDiagnosisAgent.diagnose', () => {
     expect((await agent.diagnose(context)).scenario).toBe('quota_or_billing_exhausted');
   });
 
+  it('identifies a permission-scoped key as its own degraded scenario, not api_key_invalid', async () => {
+    const { agent, context } = setup('key_scope_limited');
+    const diagnosis = await agent.diagnose(context);
+    expect(diagnosis.scenario).toBe('key_scope_limited');
+
+    const keyValid = diagnosis.findings.find((f) => f.checkId === LLM_PROVIDER_CHECK_IDS.keyValid)!;
+    expect(keyValid.severity).toBe('info');
+
+    const quota = diagnosis.findings.find((f) => f.checkId === LLM_PROVIDER_CHECK_IDS.quotaBilling)!;
+    expect(quota.severity).toBe('warning');
+    expect(quota.observation.toLowerCase()).toContain('scope');
+  });
+
   it('identifies a configured model that no longer exists', async () => {
     const { agent, context } = setup('deprecated_model');
     expect((await agent.diagnose(context)).scenario).toBe('configured_model_unavailable');
@@ -286,5 +323,104 @@ describe('LlmProviderDiagnosisAgent.diagnose', () => {
     expect(diagnosis.status).toBe('unable');
     expect(diagnosis.scenario).toBeNull();
     expect(diagnosis.findings[0]!.observation).toContain('no network interface');
+  });
+});
+
+/**
+ * OpenRouter replaces its key-info response body with an error under HTTP
+ * 429, so checkRateLimitHeadroom() always comes back `known: false` for an
+ * observed rate limit on that provider — the simulator's 'rate_limited'
+ * scenario always returns a known, low headroom, so it can't exercise this
+ * combination. A fake backend is needed instead (same pattern as
+ * iac-drift-agent.test.ts's fixture backends).
+ */
+class ObservedRateLimitUnknownHeadroomBackend implements LlmProviderBackend {
+  getProviderId(): LlmProviderId {
+    return 'openrouter';
+  }
+  async checkKeyPresence(): Promise<KeyPresence> {
+    return {
+      provider: 'openrouter',
+      present: true,
+      envVar: 'OPENROUTER_API_KEY',
+      fingerprint: '…test',
+      checkedEnvVars: ['OPENROUTER_API_KEY'],
+    };
+  }
+  async checkKeyValidity(): Promise<KeyValidity> {
+    return {
+      provider: 'openrouter',
+      outcome: 'rate_limited',
+      httpStatus: 429,
+      detail: 'OpenRouter is rate limiting this key right now (HTTP 429 rate_limit_error) — the key itself is fine.',
+    };
+  }
+  async checkRateLimitHeadroom(): Promise<RateLimitHeadroom> {
+    return {
+      provider: 'openrouter',
+      known: false,
+      requestsRemainingPct: null,
+      tokensRemainingPct: null,
+      detail: "OpenRouter's key-info response under this 429 carried no usable credit fields, so headroom is unknown.",
+    };
+  }
+  async checkModel(): Promise<ModelCheck> {
+    return {
+      provider: 'openrouter',
+      configuredModel: null,
+      source: null,
+      listKnown: true,
+      presentInList: null,
+      sampleModels: [],
+      detail: 'No model id is configured — nothing to verify.',
+    };
+  }
+  async checkProviderStatus(): Promise<ProviderStatusReport> {
+    return { provider: 'openrouter', known: true, ongoingIncidents: [], detail: 'OpenRouter reports no ongoing incidents.' };
+  }
+  async executeCommand(): Promise<unknown> {
+    return {};
+  }
+  async evaluateCheck(): Promise<boolean> {
+    return true;
+  }
+  async close(): Promise<void> {}
+}
+
+function setupObservedRateLimit() {
+  const agent = new LlmProviderDiagnosisAgent(new ObservedRateLimitUnknownHeadroomBackend(), async () => null);
+  const trigger: AgentContext['trigger'] = {
+    type: 'health_check',
+    source: 'cli-scan',
+    payload: { alertname: 'llm-providerScanCheck', instance: 'derived-llm-openrouter', severity: 'info' },
+    receivedAt: new Date().toISOString(),
+  };
+  return { agent, context: assembleContext(trigger, agent.manifest) };
+}
+
+describe('LlmProviderDiagnosisAgent — observed 429 with no headroom signal (Finding 2)', () => {
+  it('reports degraded, not healthy, overall — an observed 429 is not nothing', async () => {
+    const { agent, context } = setupObservedRateLimit();
+    const health = await agent.assessHealth(context);
+    expect(health.status).toBe('recovering');
+
+    const headroom = health.signals.find((s) => s.checkId === LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom)!;
+    expect(headroom.status).toBe('warning');
+    expect(headroom.detail).toContain('429');
+
+    // key_valid and quota_billing stay healthy — the key itself is fine,
+    // this is a rate limit, not an auth or billing problem.
+    expect(health.signals.find((s) => s.checkId === LLM_PROVIDER_CHECK_IDS.keyValid)!.status).toBe('healthy');
+    expect(health.signals.find((s) => s.checkId === LLM_PROVIDER_CHECK_IDS.quotaBilling)!.status).toBe('healthy');
+  });
+
+  it('diagnoses the same case as rate_limit_headroom_low, naming the 429 in the finding', async () => {
+    const { agent, context } = setupObservedRateLimit();
+    const diagnosis = await agent.diagnose(context);
+    expect(diagnosis.scenario).toBe('rate_limit_headroom_low');
+
+    const headroomFinding = diagnosis.findings.find((f) => f.checkId === LLM_PROVIDER_CHECK_IDS.rateLimitHeadroom)!;
+    expect(headroomFinding.severity).toBe('warning');
+    expect(headroomFinding.observation).toContain('429');
   });
 });
