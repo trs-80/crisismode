@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect } from 'vitest';
 import { classifyObserverContext, detectObserverContext } from '../framework/triage-probes.js';
