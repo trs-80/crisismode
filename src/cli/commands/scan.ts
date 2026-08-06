@@ -54,7 +54,7 @@ export interface ScanOptions {
 }
 
 /** Per-agent timeout for health checks during scan (ms). */
-const AGENT_TIMEOUT_MS = 2000;
+export const AGENT_TIMEOUT_MS = 2000;
 
 /** Prefix map: agent kind → finding ID prefix. */
 const KIND_PREFIX: Record<string, string> = {
