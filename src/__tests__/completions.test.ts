@@ -99,4 +99,12 @@ describe('Shell completions (6.2)', () => {
     const output = stdoutChunks.join('');
     expect(output).toContain('complete -c crisismode -f');
   });
+
+  it('completes the triage command in every shell', async () => {
+    for (const shell of ['bash', 'zsh', 'fish'] as const) {
+      stdoutChunks = [];
+      await runCompletions(shell);
+      expect(stdoutChunks.join('')).toContain('triage');
+    }
+  });
 });

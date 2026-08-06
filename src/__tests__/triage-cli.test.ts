@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import { renderTriagePipe, renderTriageReport, triageExitCode } from '../cli/commands/triage.js';
 import type { TriageReport } from '../framework/triage.js';
@@ -72,5 +74,22 @@ describe('renderTriagePipe', () => {
   it('emits one tab-separated line per layer', () => {
     expect(lines).toHaveLength(1 + report.layers.length);
     expect(lines[1]).toBe('layer\tinterfaces\tpass\tActive interfaces: en0');
+  });
+});
+
+describe('CLI registration', () => {
+  const indexSource = readFileSync(
+    fileURLToPath(new URL('../cli/index.ts', import.meta.url)),
+    'utf-8',
+  );
+
+  it('routes the triage subcommand to runTriageCommand', () => {
+    expect(indexSource).toContain("case 'triage':");
+    expect(indexSource).toContain("await import('./commands/triage.js')");
+    expect(indexSource).toContain('runTriageCommand');
+  });
+
+  it('documents triage in the help text', () => {
+    expect(indexSource).toContain('crisismode triage');
   });
 });

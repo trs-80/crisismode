@@ -31,6 +31,7 @@ const HELP = `
     crisismode diagnose [options]           Health check + diagnosis (read-only)
     crisismode recover [options]            Full recovery flow (dry-run default)
     crisismode status                       Quick health probe
+    crisismode triage                       Is it me, my network, or them? (exit 1 when local/network/mixed)
     crisismode readiness                    Scale-readiness report (read-only, will-it-break-under-load)
     crisismode init [path]                  Generate crisismode.yaml
     crisismode init --agent <name>          Scaffold a check plugin
@@ -179,6 +180,12 @@ async function main(): Promise<void> {
     case 'status': {
       const { runStatus } = await import('./commands/status.js');
       await runStatus();
+      break;
+    }
+
+    case 'triage': {
+      const { runTriageCommand } = await import('./commands/triage.js');
+      await runTriageCommand({ configPath: values.config as string | undefined });
       break;
     }
 
