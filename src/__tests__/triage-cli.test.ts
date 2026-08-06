@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import chalk from 'chalk';
 import { renderTriagePipe, renderTriageReport, runTriageCommand, triageExitCode } from '../cli/commands/triage.js';
-import { configure } from '../cli/output.js';
+import { configure, setOutputOptions } from '../cli/output.js';
 import type * as TriageFramework from '../framework/triage.js';
 import type { TriageReport } from '../framework/triage.js';
 
@@ -81,6 +81,8 @@ describe('triageExitCode', () => {
 });
 
 describe('renderTriageReport', () => {
+  afterEach(() => setOutputOptions({ terse: false }));
+
   const out = renderTriageReport(report).join('\n');
 
   it('leads with the verdict and its plain-language explanation', () => {
@@ -103,6 +105,14 @@ describe('renderTriageReport', () => {
     expect(out).toContain('Diagnose');
     expect(out).toContain('laptop');
     expect(out).toContain('assumption');
+  });
+
+  it('suppresses the explanation and next-step lines in terse mode, but keeps the verdict headline', () => {
+    setOutputOptions({ terse: true });
+    const terseOut = renderTriageReport(report).join('\n');
+    expect(terseOut).not.toContain(report.explanation);
+    expect(terseOut).not.toContain(`Next: ${report.nextStep}`);
+    expect(terseOut).toContain('Verdict: network');
   });
 });
 
