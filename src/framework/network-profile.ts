@@ -26,8 +26,8 @@
  *   skip gracefully rather than waiting for a timeout.
  */
 
-import { createConnection } from 'node:net';
 import { lookup } from 'node:dns/promises';
+import { runBounded, probeTcpBounded } from './triage-probes.js';
 
 // Re-export types from SDK so existing imports work
 export type {
@@ -137,20 +137,24 @@ export function setNetworkProfile(profile: NetworkProfile): void {
 
 // ── Internal probing functions ──
 
+/**
+ * Can this machine resolve names the way an application would? Uses
+ * getaddrinfo (honoring /etc/hosts and nsswitch) rather than a raw resolver
+ * query, because that is what the user's app experiences. Triage asks the
+ * narrower "is it the resolver or the network" question and uses raw queries
+ * for it — see the raw-query resolve helper in triage-probes.ts. Only the
+ * timeout plumbing is shared; getaddrinfo offers no cancellation, so there
+ * is no cancel hook.
+ */
 async function probeDns(): Promise<{ available: boolean; latencyMs: number }> {
-  const start = Date.now();
-  try {
-    await withTimeout(lookup(DNS_TEST_HOST), PROBE_TIMEOUT_MS);
-    return { available: true, latencyMs: Date.now() - start };
-  } catch {
-    return { available: false, latencyMs: Date.now() - start };
-  }
+  const outcome = await runBounded(() => lookup(DNS_TEST_HOST), PROBE_TIMEOUT_MS);
+  return { available: outcome.ok, latencyMs: outcome.durationMs };
 }
 
 async function probeEndpoints(
   endpoints: Array<{ host: string; port: number; label: string }>,
 ): Promise<ProbeResult[]> {
-  return Promise.all(endpoints.map((ep) => probeTcp(ep.host, ep.port, ep.label)));
+  return Promise.all(endpoints.map((ep) => probeTcpBounded(ep.host, ep.port, ep.label, PROBE_TIMEOUT_MS)));
 }
 
 async function probeHub(endpoint: string): Promise<ProbeResult[]> {
@@ -158,7 +162,7 @@ async function probeHub(endpoint: string): Promise<ProbeResult[]> {
     const url = new URL(endpoint);
     const host = url.hostname;
     const port = url.port ? parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80);
-    return [await probeTcp(host, port, 'hub')];
+    return [await probeTcpBounded(host, port, 'hub', PROBE_TIMEOUT_MS)];
   } catch {
     return [{
       target: 'hub',
@@ -167,44 +171,6 @@ async function probeHub(endpoint: string): Promise<ProbeResult[]> {
       error: `Invalid hub endpoint: ${endpoint}`,
     }];
   }
-}
-
-function probeTcp(host: string, port: number, label: string): Promise<ProbeResult> {
-  const start = Date.now();
-  return new Promise((resolve) => {
-    const socket = createConnection({ host, port });
-
-    const timer = setTimeout(() => {
-      socket.destroy();
-      resolve({
-        target: label,
-        reachable: false,
-        latencyMs: Date.now() - start,
-        error: `Timeout after ${PROBE_TIMEOUT_MS}ms`,
-      });
-    }, PROBE_TIMEOUT_MS);
-
-    socket.on('connect', () => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve({
-        target: label,
-        reachable: true,
-        latencyMs: Date.now() - start,
-      });
-    });
-
-    socket.on('error', (err) => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve({
-        target: label,
-        reachable: false,
-        latencyMs: Date.now() - start,
-        error: err.message,
-      });
-    });
-  });
 }
 
 function buildLayer(probes: ProbeResult[]): NetworkLayer {
@@ -245,14 +211,4 @@ export function inferNetworkMode(
   if (hasPrivateNetwork || dnsAvailable) return 'private_only';
   if (internet.probes.length === 0 && hub.probes.length === 0 && targets.probes.length === 0) return 'unknown';
   return 'isolated';
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timeout')), ms);
-    promise.then(
-      (val) => { clearTimeout(timer); resolve(val); },
-      (err) => { clearTimeout(timer); reject(err); },
-    );
-  });
 }
