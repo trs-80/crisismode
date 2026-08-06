@@ -105,8 +105,8 @@
 **Interfaces:**
 - Consumes: nothing from earlier tasks. Current shapes it mirrors: `TableStat`/`StatementStat` already live in `src/readiness/types.ts` and are imported by `src/agent/pg-replication/backend.ts:5` — the new pgvector types follow that same direction.
 - Produces:
-  - `PgvectorTable { table: string; column: string; rowEstimate: number | null }`
-  - `PgvectorIndex { indexName: string; table: string; column: string | null; accessMethod: 'ivfflat' | 'hnsw'; lists: number | null }`
+  - `PgvectorTable { schema: string; table: string; column: string; rowEstimate: number | null }`
+  - `PgvectorIndex { schema: string; indexName: string; table: string; column: string | null; accessMethod: 'ivfflat' | 'hnsw'; lists: number | null }`
   - `PgvectorInventory { extensionVersion: string; tables: PgvectorTable[]; indexes: PgvectorIndex[] }`
   - `ReadinessSources.getPgvectorInventory?(): Promise<PgvectorInventory | 'absent' | null>`
   - `ReadinessContext.pgvector?: PgvectorInventory | 'absent' | null | undefined`
@@ -121,6 +121,8 @@ Insert after the `StatementStat` interface (currently ends at line 46), before `
 ```typescript
 /** One table column typed `vector` (pgvector), with the planner's row estimate. */
 export interface PgvectorTable {
+  /** Schema (pg_namespace.nspname). Same-named tables in different schemas are distinct. */
+  schema: string;
   table: string;
   column: string;
   /**
@@ -133,6 +135,8 @@ export interface PgvectorTable {
 
 /** One approximate-nearest-neighbour index (ivfflat or hnsw) on a vector column. */
 export interface PgvectorIndex {
+  /** Schema (pg_namespace.nspname) of the indexed table. Must match the table's schema to count as coverage. */
+  schema: string;
   indexName: string;
   table: string;
   /** First indexed column; null when the index is built on an expression. */
@@ -212,17 +216,17 @@ describe('buildPgvectorInventory', () => {
   it('maps table rows and preserves the estimate', () => {
     const inv = buildPgvectorInventory(
       '0.7.0',
-      [{ table_name: 'documents', column_name: 'embedding', row_estimate: 100_000 }],
+      [{ schema_name: 'public', table_name: 'documents', column_name: 'embedding', row_estimate: 100_000 }],
       [],
     );
     expect(inv.extensionVersion).toBe('0.7.0');
-    expect(inv.tables).toEqual([{ table: 'documents', column: 'embedding', rowEstimate: 100_000 }]);
+    expect(inv.tables).toEqual([{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 }]);
   });
 
   it('maps reltuples = -1 (never analyzed) to a null estimate, not zero', () => {
     const inv = buildPgvectorInventory(
       '0.7.0',
-      [{ table_name: 'documents', column_name: 'embedding', row_estimate: -1 }],
+      [{ schema_name: 'public', table_name: 'documents', column_name: 'embedding', row_estimate: -1 }],
       [],
     );
     expect(inv.tables[0]?.rowEstimate).toBeNull();
@@ -231,12 +235,12 @@ describe('buildPgvectorInventory', () => {
   it('maps ivfflat indexes with their lists value', () => {
     const inv = buildPgvectorInventory('0.7.0', [], [
       {
-        index_name: 'documents_embedding_idx', table_name: 'documents',
+        schema_name: 'public', index_name: 'documents_embedding_idx', table_name: 'documents',
         access_method: 'ivfflat', column_name: 'embedding', reloptions: ['lists=100'],
       },
     ]);
     expect(inv.indexes).toEqual([{
-      indexName: 'documents_embedding_idx', table: 'documents',
+      schema: 'public', indexName: 'documents_embedding_idx', table: 'documents',
       column: 'embedding', accessMethod: 'ivfflat', lists: 100,
     }]);
   });
@@ -244,7 +248,7 @@ describe('buildPgvectorInventory', () => {
   it('maps hnsw indexes with a null lists value (no equivalent tuning knob)', () => {
     const inv = buildPgvectorInventory('0.7.0', [], [
       {
-        index_name: 'chunks_embedding_idx', table_name: 'chunks',
+        schema_name: 'public', index_name: 'chunks_embedding_idx', table_name: 'chunks',
         access_method: 'hnsw', column_name: 'embedding', reloptions: ['m=16'],
       },
     ]);
@@ -255,7 +259,7 @@ describe('buildPgvectorInventory', () => {
   it('drops index rows with an unrecognised access method', () => {
     const inv = buildPgvectorInventory('0.7.0', [], [
       {
-        index_name: 'documents_pkey', table_name: 'documents',
+        schema_name: 'public', index_name: 'documents_pkey', table_name: 'documents',
         access_method: 'btree', column_name: 'id', reloptions: null,
       },
     ]);
@@ -272,7 +276,7 @@ describe('PgSimulator pgvector fixture', () => {
     const sim = new PgSimulator();
     sim.setPgvectorInventory({
       extensionVersion: '0.7.0',
-      tables: [{ table: 'documents', column: 'embedding', rowEstimate: 50_000 }],
+      tables: [{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 50_000 }],
       indexes: [],
     });
     const inv = await sim.getPgvectorInventory();
@@ -315,7 +319,8 @@ export const PGVECTOR_EXTENSION_SQL = `
 
 /** Every user-table column typed `vector`, with the planner's row estimate. */
 export const PGVECTOR_TABLES_SQL = `
-  SELECT c.relname AS table_name,
+  SELECT n.nspname AS schema_name,
+         c.relname AS table_name,
          a.attname AS column_name,
          c.reltuples::float8 AS row_estimate
   FROM pg_attribute a
@@ -332,12 +337,20 @@ export const PGVECTOR_TABLES_SQL = `
     AND a.attnum > 0
     AND NOT a.attisdropped
     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-  ORDER BY c.relname, a.attname
+  ORDER BY n.nspname, c.relname, a.attname
 `;
 
-/** Every ivfflat/hnsw index, with its first indexed column and its reloptions. */
+/**
+ * Every ivfflat/hnsw index, with its first indexed column and its reloptions.
+ * Restricted to indexes that are actually usable for a query planner right
+ * now: `indisvalid`/`indisready` excludes an index stuck mid-CREATE INDEX
+ * CONCURRENTLY (or invalidated by a failed build), and `indpred IS NULL`
+ * excludes partial indexes — a predicate index only covers a subset of rows,
+ * so treating it as full coverage of the column would be a false "ready".
+ */
 export const PGVECTOR_INDEXES_SQL = `
-  SELECT ic.relname AS index_name,
+  SELECT n.nspname AS schema_name,
+         ic.relname AS index_name,
          tc.relname AS table_name,
          am.amname AS access_method,
          a.attname AS column_name,
@@ -350,16 +363,21 @@ export const PGVECTOR_INDEXES_SQL = `
   LEFT JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = i.indkey[0]
   WHERE am.amname IN ('ivfflat', 'hnsw')
     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-  ORDER BY ic.relname
+    AND i.indisvalid
+    AND i.indisready
+    AND i.indpred IS NULL
+  ORDER BY n.nspname, ic.relname
 `;
 
 export interface PgvectorTableRow {
+  schema_name: string;
   table_name: string;
   column_name: string;
   row_estimate: number;
 }
 
 export interface PgvectorIndexRow {
+  schema_name: string;
   index_name: string;
   table_name: string;
   access_method: string;
@@ -391,6 +409,7 @@ export function buildPgvectorInventory(
   indexRows: PgvectorIndexRow[],
 ): PgvectorInventory {
   const tables: PgvectorTable[] = tableRows.map((row) => ({
+    schema: row.schema_name,
     table: row.table_name,
     column: row.column_name,
     // PostgreSQL 14+ uses reltuples = -1 for "never analyzed" — that is an
@@ -402,6 +421,7 @@ export function buildPgvectorInventory(
   for (const row of indexRows) {
     if (!isVectorAccessMethod(row.access_method)) continue;
     indexes.push({
+      schema: row.schema_name,
       indexName: row.index_name,
       table: row.table_name,
       column: row.column_name,
@@ -532,7 +552,7 @@ git commit -m "feat(readiness): add read-only pgvector catalog inventory probe"
 - Modify: `src/__tests__/readiness-run.test.ts:62-67` (the rule-roster test)
 
 **Interfaces:**
-- Consumes (from Task 1): `ReadinessContext.pgvector?: PgvectorInventory | 'absent' | null | undefined`, and the types `PgvectorInventory { extensionVersion: string; tables: PgvectorTable[]; indexes: PgvectorIndex[] }`, `PgvectorTable { table: string; column: string; rowEstimate: number | null }`, `PgvectorIndex { indexName: string; table: string; column: string | null; accessMethod: 'ivfflat' | 'hnsw'; lists: number | null }`.
+- Consumes (from Task 1): `ReadinessContext.pgvector?: PgvectorInventory | 'absent' | null | undefined`, and the types `PgvectorInventory { extensionVersion: string; tables: PgvectorTable[]; indexes: PgvectorIndex[] }`, `PgvectorTable { schema: string; table: string; column: string; rowEstimate: number | null }`, `PgvectorIndex { schema: string; indexName: string; table: string; column: string | null; accessMethod: 'ivfflat' | 'hnsw'; lists: number | null }`.
 - Produces:
   - `vectorIndexMissingRule: ReadinessRule` with `id: 'vector-index-missing'`
   - `VECTOR_MIN_ROWS = 10_000` (exported; Task 3 imports it)
@@ -569,7 +589,7 @@ function inventory(tables: PgvectorTable[], indexes: PgvectorIndex[] = []): Pgve
 }
 
 const hnswOn = (table: string, column: string): PgvectorIndex => ({
-  indexName: `${table}_${column}_idx`, table, column, accessMethod: 'hnsw', lists: null,
+  schema: 'public', indexName: `${table}_${column}_idx`, table, column, accessMethod: 'hnsw', lists: null,
 });
 
 describe('vectorIndexMissingRule applicability', () => {
@@ -594,7 +614,7 @@ describe('vectorIndexMissingRule applicability', () => {
 describe('vectorIndexMissingRule evaluation', () => {
   it('flags a large unindexed vector column', async () => {
     const f = await vectorIndexMissingRule.evaluate(
-      sources, ctxWith(inventory([{ table: 'documents', column: 'embedding', rowEstimate: 100_000 }])));
+      sources, ctxWith(inventory([{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 }])));
     expect(f.status).toBe('at_risk');
     expect(f.evidence.join(' ')).toContain('documents.embedding');
     expect(f.evidence.join(' ')).toContain('(estimated)');
@@ -603,7 +623,7 @@ describe('vectorIndexMissingRule evaluation', () => {
 
   it('is ready when an hnsw index covers the column', async () => {
     const f = await vectorIndexMissingRule.evaluate(sources, ctxWith(inventory(
-      [{ table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
+      [{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
       [hnswOn('documents', 'embedding')],
     )));
     expect(f.status).toBe('ready');
@@ -611,15 +631,15 @@ describe('vectorIndexMissingRule evaluation', () => {
 
   it('is ready when an ivfflat index covers the column', async () => {
     const f = await vectorIndexMissingRule.evaluate(sources, ctxWith(inventory(
-      [{ table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
-      [{ indexName: 'i', table: 'documents', column: 'embedding', accessMethod: 'ivfflat', lists: 316 }],
+      [{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
+      [{ schema: 'public', indexName: 'i', table: 'documents', column: 'embedding', accessMethod: 'ivfflat', lists: 316 }],
     )));
     expect(f.status).toBe('ready');
   });
 
   it('flags when the index is on a different column of the same table', async () => {
     const f = await vectorIndexMissingRule.evaluate(sources, ctxWith(inventory(
-      [{ table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
+      [{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
       [hnswOn('documents', 'title_embedding')],
     )));
     expect(f.status).toBe('at_risk');
@@ -627,13 +647,13 @@ describe('vectorIndexMissingRule evaluation', () => {
 
   it('boundary: flags at exactly VECTOR_MIN_ROWS', async () => {
     const f = await vectorIndexMissingRule.evaluate(
-      sources, ctxWith(inventory([{ table: 't', column: 'e', rowEstimate: VECTOR_MIN_ROWS }])));
+      sources, ctxWith(inventory([{ schema: 'public', table: 't', column: 'e', rowEstimate: VECTOR_MIN_ROWS }])));
     expect(f.status).toBe('at_risk');
   });
 
   it('boundary: ready just below VECTOR_MIN_ROWS', async () => {
     const f = await vectorIndexMissingRule.evaluate(
-      sources, ctxWith(inventory([{ table: 't', column: 'e', rowEstimate: VECTOR_MIN_ROWS - 1 }])));
+      sources, ctxWith(inventory([{ schema: 'public', table: 't', column: 'e', rowEstimate: VECTOR_MIN_ROWS - 1 }])));
     expect(f.status).toBe('ready');
   });
 
@@ -645,15 +665,15 @@ describe('vectorIndexMissingRule evaluation', () => {
 
   it('reports unknown when the only vector table has never been analyzed', async () => {
     const f = await vectorIndexMissingRule.evaluate(
-      sources, ctxWith(inventory([{ table: 'documents', column: 'embedding', rowEstimate: null }])));
+      sources, ctxWith(inventory([{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: null }])));
     expect(f.status).toBe('unknown');
     expect(f.reason).toContain('ANALYZE');
   });
 
   it('an unanalyzed table does not mask a real offender', async () => {
     const f = await vectorIndexMissingRule.evaluate(sources, ctxWith(inventory([
-      { table: 'documents', column: 'embedding', rowEstimate: 100_000 },
-      { table: 'chunks', column: 'embedding', rowEstimate: null },
+      { schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 },
+      { schema: 'public', table: 'chunks', column: 'embedding', rowEstimate: null },
     ])));
     expect(f.status).toBe('at_risk');
     expect(f.evidence.join(' ')).toContain('chunks.embedding');
@@ -666,7 +686,7 @@ describe('vectorIndexMissingRule evaluation', () => {
 
   it('recommends HNSW and the EXPLAIN caveat', async () => {
     const f = await vectorIndexMissingRule.evaluate(
-      sources, ctxWith(inventory([{ table: 'documents', column: 'embedding', rowEstimate: 100_000 }])));
+      sources, ctxWith(inventory([{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 }])));
     expect(f.fix).toContain('hnsw');
     expect(f.fix).toContain('EXPLAIN');
   });
@@ -720,9 +740,9 @@ function isSized(table: PgvectorTable): table is SizedTable {
   return table.rowEstimate !== null;
 }
 
-/** Does this index provide approximate search for that table/column pair? */
+/** Does this index provide approximate search for that schema/table/column? */
 export function coversColumn(index: PgvectorIndex, table: PgvectorTable): boolean {
-  return index.table === table.table && index.column === table.column;
+  return index.schema === table.schema && index.table === table.table && index.column === table.column;
 }
 
 function unanalyzedEvidence(table: PgvectorTable): string {
@@ -880,7 +900,7 @@ import {
 } from '../readiness/rules/ivfflat-lists-mismatch.js';
 
 const ivfflatOn = (table: string, lists: number | null): PgvectorIndex => ({
-  indexName: `${table}_embedding_idx`, table, column: 'embedding', accessMethod: 'ivfflat', lists,
+  schema: 'public', indexName: `${table}_embedding_idx`, table, column: 'embedding', accessMethod: 'ivfflat', lists,
 });
 
 describe('idealLists', () => {
@@ -891,7 +911,7 @@ describe('idealLists', () => {
 
 describe('ivfflatListsMismatchRule', () => {
   // 10,000 rows ⇒ sqrt = 100 ⇒ accepted band is 25..400 at a 4x tolerance.
-  const tenKTable: PgvectorTable = { table: 'documents', column: 'embedding', rowEstimate: 10_000 };
+  const tenKTable: PgvectorTable = { schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 10_000 };
 
   it('shares the vector-rule applicability gate', () => {
     expect(ivfflatListsMismatchRule.applicable(ctxWith('absent'))).toBe(false);
@@ -938,7 +958,7 @@ describe('ivfflatListsMismatchRule', () => {
   });
 
   it('ignores ivfflat indexes on tables below the row threshold', async () => {
-    const small: PgvectorTable = { table: 'documents', column: 'embedding', rowEstimate: 9_999 };
+    const small: PgvectorTable = { schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 9_999 };
     const f = await ivfflatListsMismatchRule.evaluate(
       sources, ctxWith(inventory([small], [ivfflatOn('documents', 4)])));
     expect(f.status).toBe('ready');
@@ -946,7 +966,7 @@ describe('ivfflatListsMismatchRule', () => {
 
   it('exempts hnsw indexes — there is no equivalent tuning invariant to check', async () => {
     const f = await ivfflatListsMismatchRule.evaluate(sources, ctxWith(inventory([tenKTable], [
-      { indexName: 'h', table: 'documents', column: 'embedding', accessMethod: 'hnsw', lists: null },
+      { schema: 'public', indexName: 'h', table: 'documents', column: 'embedding', accessMethod: 'hnsw', lists: null },
     ])));
     expect(f.status).toBe('ready');
     expect(f.evidence.join(' ')).toContain('hnsw');
@@ -961,7 +981,7 @@ describe('ivfflatListsMismatchRule', () => {
 
   it('a real mismatch outranks an unreadable sibling index', async () => {
     const f = await ivfflatListsMismatchRule.evaluate(sources, ctxWith(inventory(
-      [tenKTable, { table: 'chunks', column: 'embedding', rowEstimate: 10_000 }],
+      [tenKTable, { schema: 'public', table: 'chunks', column: 'embedding', rowEstimate: 10_000 }],
       [ivfflatOn('documents', null), ivfflatOn('chunks', 4)],
     )));
     expect(f.status).toBe('at_risk');
@@ -1215,7 +1235,7 @@ describe('connectAndRunReadiness pgvector wiring', () => {
       ...okFakePgClient(),
       getPgvectorInventory: async () => ({
         extensionVersion: '0.7.0',
-        tables: [{ table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
+        tables: [{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
         indexes: [],
       }),
     }));
@@ -2050,6 +2070,35 @@ describe('VectorStoreLiveClient — degradation contract', () => {
   it('returns an empty report list when no provider is configured', async () => {
     expect(await client([]).queryVectorStores()).toEqual([]);
   });
+
+  it('degrades a malformed pinecone body to unknown, not a false "no indexes" fail', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ notIndexes: 'unexpected shape' })));
+    const [report] = await client([PINECONE]).queryVectorStores();
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.reachable)).toBe('pass');
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.authValid)).toBe('pass');
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.indexStatus)).toBe('unknown');
+  });
+
+  it('degrades an unparseable pinecone body to unknown', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not json', { status: 200 })));
+    const [report] = await client([PINECONE]).queryVectorStores();
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.indexStatus)).toBe('unknown');
+  });
+
+  it('degrades a missing upstash result field to unknown, not a false "ready" pass', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({})));
+    const [report] = await client([UPSTASH]).queryVectorStores();
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.reachable)).toBe('pass');
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.authValid)).toBe('pass');
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.indexStatus)).toBe('unknown');
+    expect(report!.indexes).toEqual([]);
+  });
+
+  it('degrades a malformed upstash result field to unknown', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ result: 'not-an-object' })));
+    const [report] = await client([UPSTASH]).queryVectorStores();
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.indexStatus)).toBe('unknown');
+  });
 });
 
 describe('VectorStoreLiveClient — timeout budget', () => {
@@ -2206,6 +2255,20 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
     ];
   }
 
+  /**
+   * A 2xx response whose body could not be parsed as JSON, or whose shape
+   * does not match what this provider is documented to return. This is
+   * distinct from a well-formed body reporting zero indexes: an un-evaluable
+   * response degrades to 'unknown', never to a fabricated definitive status
+   * (never counted as "no indexes" and never counted as "index ready").
+   */
+  private malformedBody(provider: string): VectorStoreCheck {
+    return {
+      checkId: VECTOR_STORE_CHECK_IDS.indexStatus, status: 'unknown',
+      detail: `${provider} returned a response body that could not be parsed into the expected shape — index status could not be determined.`,
+    };
+  }
+
   private indexStatusCheck(provider: string, indexes: VectorStoreIndexInfo[]): VectorStoreCheck {
     if (indexes.length === 0) {
       return {
@@ -2270,12 +2333,20 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
       };
     }
 
+    // `body.indexes` missing or not an array is a malformed response, not a
+    // report of zero indexes — those two cases must not collapse into the
+    // same 'fail: no indexes' outcome (see `malformedBody`).
     let entries: PineconeIndexEntry[] = [];
+    let bodyMalformed = false;
     try {
-      const body = (await response.json()) as { indexes?: PineconeIndexEntry[] };
-      entries = Array.isArray(body.indexes) ? body.indexes : [];
+      const body = (await response.json()) as { indexes?: unknown };
+      if (Array.isArray(body.indexes)) {
+        entries = body.indexes as PineconeIndexEntry[];
+      } else {
+        bodyMalformed = true;
+      }
     } catch {
-      entries = [];
+      bodyMalformed = true;
     }
 
     const indexes = await Promise.all(
@@ -2299,7 +2370,7 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
           checkId: VECTOR_STORE_CHECK_IDS.authValid, status: 'pass',
           detail: `pinecone accepted the key ${fingerprint}.`,
         },
-        this.indexStatusCheck('pinecone', indexes),
+        bodyMalformed ? this.malformedBody('pinecone') : this.indexStatusCheck('pinecone', indexes),
       ],
     };
   }
@@ -2356,12 +2427,34 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
       };
     }
 
-    let result: { vectorCount?: unknown; dimension?: unknown } = {};
+    // A missing or non-object `result` is a malformed response, not "index
+    // ready with unreported stats" — fabricating a synthetic ready index here
+    // would turn an un-evaluable response into a false 'pass' (see
+    // `malformedBody`).
+    let result: { vectorCount?: unknown; dimension?: unknown } | undefined;
     try {
-      const body = (await response.json()) as { result?: { vectorCount?: unknown; dimension?: unknown } };
-      result = body.result ?? {};
+      const body = (await response.json()) as { result?: unknown };
+      if (body.result !== null && typeof body.result === 'object') {
+        result = body.result as { vectorCount?: unknown; dimension?: unknown };
+      }
     } catch {
-      result = {};
+      result = undefined;
+    }
+
+    if (result === undefined) {
+      return {
+        provider: connection.provider,
+        keyFingerprint: fingerprint,
+        indexes: [],
+        checks: [
+          { checkId: VECTOR_STORE_CHECK_IDS.reachable, status: 'pass', detail: `upstash-vector answered in ${latencyMs}ms.` },
+          {
+            checkId: VECTOR_STORE_CHECK_IDS.authValid, status: 'pass',
+            detail: `upstash-vector accepted the token ${fingerprint}.`,
+          },
+          this.malformedBody('upstash-vector'),
+        ],
+      };
     }
 
     // One REST URL addresses exactly one Upstash index; the host is its name.
@@ -2403,7 +2496,10 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
     const reports = await this.queryVectorStores();
 
     if (statement.includes('auth_valid')) {
-      const allValid = reports.every(
+      // `Array.prototype.every` is vacuously true on an empty array — a
+      // client with zero configured providers must not satisfy `auth_valid`,
+      // since nothing was actually verified.
+      const allValid = reports.length > 0 && reports.every(
         (r) => r.checks.find((c) => c.checkId === VECTOR_STORE_CHECK_IDS.authValid)?.status === 'pass',
       );
       return compareCheckValue(allValid ? 'pass' : 'fail', check.expect.operator, check.expect.value);
@@ -3288,7 +3384,7 @@ git commit -m "feat(vector-store): add read-only vector-store agent, manifest, a
 **Anchor by content, not by line number.** PR 3 rewrites this file's import block and replaces the whole ai-provider derivation with per-provider `llm-provider` targets, so any line number or "after the ai-provider block" reference from before that merge is stale. Locate the insertion point by searching for the `// application-config:` comment inside `deriveGatedTargets`.
 
 **Interfaces:**
-- Consumes: `VECTOR_STORE_ENV_VARS` (Task 5); `deriveGatedTargets(appStack: AppStackInfo, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ targets: TargetConfig[]; notes: Record<string, string> }>` (existing, exported from `src/cli/autodiscovery.ts:335`). The `checkId` plumbing verified in Task 7 Step 1 is what makes Step 7's CLI check meaningful.
+- Consumes: `VECTOR_STORE_ENV_VARS`, `buildVectorStoreConnections` (Task 5); `deriveGatedTargets(appStack: AppStackInfo, cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<{ targets: TargetConfig[]; notes: Record<string, string> }>` (existing, exported from `src/cli/autodiscovery.ts:335`). The `checkId` plumbing verified in Task 7 Step 1 is what makes Step 7's CLI check meaningful.
 - Produces: a `TargetConfig` named `derived-vector-store`, `kind: 'vector-store'`, `primary: { host: 'auto', port: 0 }`, with a note naming the env var (never its value).
 
 - [ ] **Step 1: Write the failing autodiscovery test**
@@ -3342,6 +3438,23 @@ describe('deriveGatedTargets — vector-store', () => {
     });
     expect(targets.filter((t) => t.kind === 'vector-store')).toHaveLength(1);
   });
+
+  it('derives nothing from a token-only upstash configuration (URL missing)', async () => {
+    // buildVectorStoreConnections rejects a half-configured Upstash provider;
+    // autodiscovery must agree, or registration.ts throws on a target that
+    // was never actually connectable.
+    const { targets } = await deriveGatedTargets(EMPTY_STACK, CWD, {
+      UPSTASH_VECTOR_REST_TOKEN: 'up-secret',
+    });
+    expect(targets.find((t) => t.kind === 'vector-store')).toBeUndefined();
+  });
+
+  it('derives nothing from a URL-only upstash configuration (token missing)', async () => {
+    const { targets } = await deriveGatedTargets(EMPTY_STACK, CWD, {
+      UPSTASH_VECTOR_REST_URL: 'https://x.upstash.io',
+    });
+    expect(targets.find((t) => t.kind === 'vector-store')).toBeUndefined();
+  });
 });
 ```
 
@@ -3355,17 +3468,26 @@ Expected: FAIL — no `vector-store` target is derived.
 In `src/cli/autodiscovery.ts`, add an import alongside the other agent provider-table imports at the top of the file:
 
 ```typescript
-import { VECTOR_STORE_ENV_VARS } from '../agent/vector-store/provider-table.js';
+import { VECTOR_STORE_ENV_VARS, buildVectorStoreConnections } from '../agent/vector-store/provider-table.js';
 ```
 
 and add this block inside `deriveGatedTargets`, **immediately before the `// application-config:` block** (an order-independent anchor — PR 3 replaces the AI-provider derivation that sits above it):
 
 ```typescript
-  // vector-store: a managed vector-store credential is present. One target
-  // covers every configured provider — the agent reports them all — so the
-  // scan surface never shows duplicate vector-store entries.
-  const vectorEnvName = VECTOR_STORE_ENV_VARS.find((v) => env[v.envVar] !== undefined)?.envVar;
-  if (vectorEnvName) {
+  // vector-store: a managed vector-store credential is present AND complete.
+  // Reuses buildVectorStoreConnections — the same full validation
+  // registration.ts applies — instead of a bare "is any env var set" check.
+  // A single Upstash var (token without URL, or vice versa) must not derive
+  // a target: buildVectorStoreConnections would produce zero connections for
+  // it, and registration.ts throws loudly on zero connections rather than
+  // silently simulating. Deriving nothing here is how that half-configured
+  // case is skipped cleanly instead of surfacing as a crash later.
+  const vectorConnections = buildVectorStoreConnections(env);
+  if (vectorConnections.length > 0) {
+    const configuredProviders = new Set(vectorConnections.map((c) => c.provider));
+    const vectorEnvName = VECTOR_STORE_ENV_VARS.find(
+      (v) => configuredProviders.has(v.provider) && env[v.envVar] !== undefined,
+    )?.envVar;
     const target: TargetConfig = {
       name: 'derived-vector-store',
       kind: 'vector-store',
@@ -3469,6 +3591,16 @@ set -euo pipefail
 # Target: the cm-pg-vector container (postgres:16 + pgvector) on host port 5434.
 
 ROWS="${1:-100000}"
+
+# SECURITY: $ROWS is interpolated directly into SQL below (generate_series(1,
+# $ROWS)) inside a psql -c string. Validate it as a positive decimal integer
+# BEFORE any psql command runs — an unvalidated argument here is a SQL
+# injection vector (e.g. `1)); DROP TABLE documents; --`).
+if ! [[ "$ROWS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "error: rows argument must be a positive integer (got: '$ROWS')" >&2
+    exit 1
+fi
+
 PSQL=(podman exec cm-pg-vector psql -U crisismode -v ON_ERROR_STOP=1)
 
 echo "💉 Seeding pgvector fixture ($ROWS rows per table)..."
