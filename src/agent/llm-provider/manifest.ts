@@ -61,6 +61,9 @@ export function buildLlmProviderManifest(provider: LlmProviderId): AgentManifest
         { type: 'manual', description: 'Operator-initiated LLM provider check' },
       ],
       failureScenarios: [
+        // The neutral no-actionable-finding scenario is a valid plan outcome, not a failure mode
+        // — required so validatePlan accepts healthy-path plans.
+        'no_finding',
         'api_key_missing',
         'api_key_invalid',
         'quota_or_billing_exhausted',
