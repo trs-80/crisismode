@@ -188,7 +188,9 @@ describe('boundedResolve', () => {
       expect(result.publicResolved).toBe(false);
       expect(typeof result.systemResolved).toBe('boolean');
       // Concurrent, not sequential: two 300ms lookups must not cost 600ms+.
-      expect(elapsed).toBeLessThan(2_000);
+      // A sequential implementation would take ~600ms and slip past a loose
+      // bound, so this must sit below that sum, not just below the deadline.
+      expect(elapsed).toBeLessThan(600);
     } finally {
       fixture.close();
     }
