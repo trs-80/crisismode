@@ -16,6 +16,8 @@ export interface HealthSignal {
   learnMoreUrl?: string;
   /** Stable identifier of the concrete resource this signal is about (e.g. an RDS instance id) — used for cross-agent correlation. */
   entityId?: string;
+  /** Stable id of the check that produced this signal (e.g. 'llm-provider.key_valid') — consumed by the guidance registry. Optional: agents adopt it incrementally. */
+  checkId?: string;
 }
 
 export interface HealthAssessment {
