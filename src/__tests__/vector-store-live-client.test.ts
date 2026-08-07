@@ -210,13 +210,21 @@ describe('VectorStoreLiveClient — timeout budget', () => {
   });
 
   it('passes the configured timeout to the request signal', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
       expect(init.signal).toBeInstanceOf(AbortSignal);
       return jsonResponse({ indexes: [] });
     });
     vi.stubGlobal('fetch', fetchMock);
-    await new VectorStoreLiveClient({ connections: [PINECONE], timeoutMs: 50 }).queryVectorStores();
-    expect(fetchMock).toHaveBeenCalled();
+    try {
+      await new VectorStoreLiveClient({ connections: [PINECONE], timeoutMs: 50 }).queryVectorStores();
+      expect(fetchMock).toHaveBeenCalled();
+      // The assertion this test exists for: the configured timeoutMs (50)
+      // actually reaches AbortSignal.timeout, not just some AbortSignal.
+      expect(timeoutSpy.mock.calls[0]?.[0]).toBe(50);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 });
 
