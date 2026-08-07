@@ -105,7 +105,7 @@ export class AwsDynamoDbRecoveryAgent implements RecoveryAgent {
           planIdSuffix: 'aws-dynamo',
           agentName: 'aws-dynamodb-recovery',
           agentVersion: '1.0.0',
-          scenario: 'healthy',
+          scenario: 'no_finding',
           estimatedDuration: 'PT0S',
           summary: `No action required — point-in-time recovery is enabled on DynamoDB table ${table}.`,
         }),

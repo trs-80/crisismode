@@ -135,7 +135,10 @@ describe('AwsDynamoDbRecoveryAgent.plan — healthy short-circuit', () => {
 
     const plan = await agent.plan(context, diagnosis);
     expect(plan.steps).toEqual([]);
-    expect(plan.metadata.scenario).toBe('healthy');
+    // plan() maps the neutral 'healthy' diagnosis to the manifest-declared
+    // 'no_finding' scenario — 'healthy' itself is not a declared failure
+    // scenario, so stamping it on the plan envelope would fail validatePlan.
+    expect(plan.metadata.scenario).toBe('no_finding');
     expect(plan.rollbackStrategy.type).toBe('none');
   });
 

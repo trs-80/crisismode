@@ -48,7 +48,14 @@ export const awsDynamoDbRecoveryManifest: AgentManifest = {
         description: 'Operator-initiated DynamoDB PITR recovery',
       },
     ],
-    failureScenarios: ['pitr_disabled', 'backup_disabled'],
+    failureScenarios: [
+      // The neutral no-actionable-finding scenario plan() emits when
+      // diagnose() reports PITR already enabled — required so validatePlan
+      // accepts the no-op plan for a healthy target.
+      'no_finding',
+      'pitr_disabled',
+      'backup_disabled',
+    ],
     executionContexts: [
       {
         name: 'dynamodb_read',
