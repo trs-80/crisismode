@@ -5,6 +5,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { configure, setOutputOptions, printScanSummary, printDiagnosis } from '../cli/output.js';
 import type { ScanResult } from '../cli/output.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
+import { renderReadinessReport } from '../cli/commands/readiness.js';
+import { attachGuidesByRuleId } from '../framework/guidance/attach.js';
+import type { ReadinessReport } from '../readiness/types.js';
 
 function scanResultWithKeyFinding(): ScanResult {
   return {
@@ -203,5 +206,58 @@ describe('diagnose output — guidance', () => {
     expect(text).toContain('40 GiB');
     expect(text).not.toContain('<instance>');
     expect(text).not.toContain('<target-storage-gb>');
+  });
+});
+
+describe('readiness output — guidance', () => {
+  const report: ReadinessReport = {
+    verdict: 'at-risk',
+    score: 60,
+    evaluated: 1,
+    unknown: 0,
+    findings: [{
+      ruleId: 'serverless-pooling',
+      title: 'Serverless connection pooling',
+      status: 'at_risk',
+      evidence: ['DATABASE_URL points at port 5432 (direct connection)'],
+      explanation: 'Each serverless invocation opens its own connection; the database runs out long before traffic does.',
+      fix: 'Route serverless traffic through a transaction pooler.',
+      learnMoreUrl: 'https://vercel.com/guides/connection-pooling-with-serverless-functions',
+    }],
+  };
+
+  it('renders the matching platform guides under an at-risk finding', () => {
+    const lines = renderReadinessReport(report).join('\n');
+    expect(lines).toContain('How to fix it: Use the Supabase transaction pooler for serverless functions');
+    expect(lines).toContain('How to fix it: Switch Neon to the pooled connection endpoint');
+    expect(lines).toContain('(path verified 2026-08-05)');
+  });
+
+  it('collapses guides to title and URL when terse', () => {
+    const lines = renderReadinessReport(report, { terse: true }).join('\n');
+    expect(lines).toContain('How to fix it: Use the Supabase transaction pooler for serverless functions — https://supabase.com/dashboard/project/_/settings/database');
+    expect(lines).not.toContain('1. Open the Supabase dashboard');
+  });
+
+  it('renders no guidance for a ready finding', () => {
+    const ready: ReadinessReport = {
+      ...report,
+      findings: [{ ...report.findings[0]!, status: 'ready' }],
+    };
+    expect(renderReadinessReport(ready).join('\n')).not.toContain('How to fix it');
+  });
+
+  it('renders no guidance for a rule with no guides', () => {
+    const other: ReadinessReport = {
+      ...report,
+      findings: [{ ...report.findings[0]!, ruleId: 'long-transactions' }],
+    };
+    expect(renderReadinessReport(other).join('\n')).not.toContain('How to fix it');
+  });
+
+  it('attaches full guide objects for --json consumers', () => {
+    const attached = { ...report, findings: report.findings.map((f) => attachGuidesByRuleId(f)) };
+    expect(attached.findings[0]!.guides?.map((g) => g.id)).toEqual(['supabase-pooler-mode', 'neon-pooled-connection']);
+    expect(attached.findings[0]!.guides?.[0]?.consoleSteps.length).toBeGreaterThan(1);
   });
 });

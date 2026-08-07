@@ -9,6 +9,7 @@
 
 import type { ConnectionUsage } from '../agent/pg-replication/backend.js';
 import type { StackProfile } from '../cli/autodiscovery.js';
+import type { RemediationGuide } from '../types/remediation-guide.js';
 import type { WeakLinkVerdict } from './weak-link.js';
 
 export type ReadinessStatus = 'ready' | 'at_risk' | 'blocking' | 'unknown';
@@ -28,6 +29,8 @@ export interface ReadinessFinding {
   learnMoreUrl: string;
   /** Required when status is 'unknown': why the rule could not evaluate */
   reason?: string | undefined;
+  /** Remediation guides matched to this rule id (attached at render time). */
+  guides?: RemediationGuide[] | undefined;
 }
 
 /** Per-table stats from pg_stat_user_tables (null when unavailable). */
