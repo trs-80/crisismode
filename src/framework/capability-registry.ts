@@ -577,6 +577,36 @@ let CAPABILITIES: CapabilityDefinition[] = [
     targetKinds: ['vector-store'],
     manualFallback: "Open the provider console and confirm the index exists, is ready, and the API key is active.",
   },
+
+  // ── AWS RDS ──
+  {
+    id: 'rds.instance.read',
+    actionKind: 'read',
+    description: 'Read RDS instance configuration and status (DescribeDBInstances).',
+    targetKinds: ['aws-rds'],
+    manualFallback: 'Run `aws rds describe-db-instances` or open the RDS console to inspect instance status.',
+  },
+  {
+    id: 'rds.snapshot.read',
+    actionKind: 'read',
+    description: 'Read RDS snapshot inventory and freshness (DescribeDBSnapshots).',
+    targetKinds: ['aws-rds'],
+    manualFallback: 'Run `aws rds describe-db-snapshots` or open the RDS console to inspect snapshot history.',
+  },
+  {
+    id: 'rds.instance.modify',
+    actionKind: 'mutate',
+    description: 'Modify RDS instance configuration, e.g. backup retention period (ModifyDBInstance).',
+    targetKinds: ['aws-rds'],
+    manualFallback: 'Run `aws rds modify-db-instance` or open the RDS console to change instance configuration.',
+  },
+  {
+    id: 'rds.snapshot.create',
+    actionKind: 'mutate',
+    description: 'Create a manual RDS snapshot (CreateDBSnapshot).',
+    targetKinds: ['aws-rds'],
+    manualFallback: 'Run `aws rds create-db-snapshot` or open the RDS console to take a manual snapshot.',
+  },
 ];
 
 const CAPABILITY_INDEX = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));
