@@ -68,3 +68,25 @@ describe('VectorStoreSimulator', () => {
     expect(() => new VectorStoreSimulator().transition('offline')).toThrow();
   });
 });
+
+describe('VectorStoreSimulator — evaluateCheck', () => {
+  // Unlike the live client (default false), an unmatched statement here falls
+  // through to a permissive `true` — that fallback is unchanged by this fix.
+  // What must change is that a statement merely *containing* 'auth_valid' no
+  // longer gets treated as the real check: it must fall through to that
+  // permissive default instead of evaluating (and reporting) the actual
+  // rejected-key status.
+  it('matches auth_valid by exact statement, not by substring', async () => {
+    const sim = new VectorStoreSimulator();
+    sim.transition('bad_key');
+    expect(await sim.evaluateCheck({ type: 'structured_command', statement: 'auth_valid', expect: { operator: 'eq', value: 'pass' } })).toBe(false);
+    expect(await sim.evaluateCheck({ type: 'structured_command', statement: 'vector-store.auth_valid', expect: { operator: 'eq', value: 'pass' } })).toBe(true);
+  });
+
+  it('matches ready_index_count by exact statement, not by substring', async () => {
+    const sim = new VectorStoreSimulator();
+    sim.transition('no_indexes');
+    expect(await sim.evaluateCheck({ type: 'structured_command', statement: 'ready_index_count', expect: { operator: 'eq', value: 5 } })).toBe(false);
+    expect(await sim.evaluateCheck({ type: 'structured_command', statement: 'not_ready_index_count', expect: { operator: 'eq', value: 5 } })).toBe(true);
+  });
+});

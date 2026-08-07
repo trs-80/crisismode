@@ -108,6 +108,11 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://developer.hashicorp.com/terraform/tutorials/state/resource-drift',
   },
   {
+    match: /^vector_store_/,
+    explanation: 'A managed vector store (Pinecone, Upstash Vector) holds the embeddings your app searches to answer questions. If it is unreachable, the key is rejected, or the index is missing or still building, retrieval returns nothing — the app usually stays up and quietly answers without its own data.',
+    learnMoreUrl: 'https://www.pinecone.io/learn/vector-database/',
+  },
+  {
     match: /backup|snapshot|pitr|restore/,
     explanation: 'Backups and point-in-time recovery are the last line of defense against data loss. A misconfigured or stale backup means recovery may be impossible when needed.',
     learnMoreUrl: 'https://docs.aws.amazon.com/aws-backup/latest/devguide/whatisbackup.html',

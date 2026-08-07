@@ -568,6 +568,15 @@ let CAPABILITIES: CapabilityDefinition[] = [
     targetKinds: ['terraform'],
     manualFallback: 'Run `terraform plan` manually to see what Terraform believes has drifted.',
   },
+
+  // ── Vector Stores ──
+  {
+    id: 'vectorstore.index.read',
+    actionKind: 'read',
+    description: 'Read managed vector-store index metadata: reachability, credential validity, and index readiness.',
+    targetKinds: ['vector-store'],
+    manualFallback: "Open the provider console and confirm the index exists, is ready, and the API key is active.",
+  },
 ];
 
 const CAPABILITY_INDEX = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));
