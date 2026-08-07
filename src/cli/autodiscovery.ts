@@ -20,6 +20,7 @@ import { parseRdsEndpoint } from './aws-endpoint.js';
 import { INFRA_PKG_NAMES } from '../config/service-registry.js';
 import type { TargetConfig } from '../config/schema.js';
 import { AI_ENV_VARS, detectConfiguredProviders, hasConfiguredKey } from '../agent/llm-provider/provider-table.js';
+import { VECTOR_STORE_ENV_VARS, buildVectorStoreConnections } from '../agent/vector-store/provider-table.js';
 import { findEnvExample } from '../agent/config-drift/env-example.js';
 import { discoverStateSource, parseTfState, WATCHABLE_TF_TYPES } from '../agent/iac-drift/state-parser.js';
 
@@ -400,6 +401,29 @@ export async function deriveGatedTargets(
     };
     targets.push(target);
     notes[target.name] = `from ${envVar}`;
+  }
+
+  // vector-store: a managed vector-store credential is present AND complete.
+  // Reuses buildVectorStoreConnections — the same full validation
+  // registration.ts applies — instead of a bare "is any env var set" check.
+  // A single Upstash var (token without URL, or vice versa) must not derive
+  // a target: buildVectorStoreConnections would produce zero connections for
+  // it, and registration.ts throws loudly on zero connections rather than
+  // silently simulating. Deriving nothing here is how that half-configured
+  // case is skipped cleanly instead of surfacing as a crash later.
+  const vectorConnections = buildVectorStoreConnections(env);
+  if (vectorConnections.length > 0) {
+    const configuredProviders = new Set(vectorConnections.map((c) => c.provider));
+    const vectorEnvName = VECTOR_STORE_ENV_VARS.find(
+      (v) => configuredProviders.has(v.provider) && env[v.envVar] !== undefined,
+    )?.envVar;
+    const target: TargetConfig = {
+      name: 'derived-vector-store',
+      kind: 'vector-store',
+      primary: { host: 'auto', port: 0 },
+    };
+    targets.push(target);
+    notes[target.name] = `from ${vectorEnvName}`;
   }
 
   // application-config: an env template file exists
