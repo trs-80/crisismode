@@ -51,7 +51,9 @@
     "lint:fix": "eslint . --fix",
     "prepare": "husky || true",
     "eval:diagnosis": "tsx eval/run-diagnosis-eval.ts",
-    "eval:diagnosis:gate": "tsx eval/run-diagnosis-eval.ts --min-score 13"
+    "eval:diagnosis:gate": "tsx eval/run-diagnosis-eval.ts --min-score 13",
+    "guides:walkthrough": "tsx scripts/guide-walkthrough.ts generate",
+    "guides:apply": "tsx scripts/guide-walkthrough.ts apply"
   },
   "packageManager": "pnpm@10.30.3",
   "engines": {

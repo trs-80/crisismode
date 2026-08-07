@@ -133,6 +133,12 @@ Rules for editing them:
   follow your own steps, then set `verifiedOn` to the date you did it. A test
   fails when any guide's `verifiedOn` is more than 12 months old, so stale
   paths surface on their own schedule rather than in someone's incident.
+- **Re-verification has a guided workflow.** `pnpm run guides:walkthrough`
+  generates a per-platform checklist under `docs/guide-verification/` from the
+  live registry; walk the consoles, mark each guide `MATCHES` or `DIFFERS`,
+  then `pnpm run guides:apply <checklist>` stamps `verifiedOn` for every
+  `MATCHES` guide and lists the `DIFFERS` ones for text fixes. Partial passes
+  are fine — re-run `apply` on the same file as you go.
 - **No account-specific deep links, no screenshots.** Top-level console URLs
   and click paths only — they survive UI changes better and work for every
   reader.
