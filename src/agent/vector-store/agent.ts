@@ -50,6 +50,21 @@ function failed(check: VectorStoreCheck | undefined): boolean {
   return check?.status === 'fail';
 }
 
+const KNOWN_CHECK_IDS: readonly string[] = Object.values(VECTOR_STORE_CHECK_IDS);
+
+/**
+ * `finding.data` is an untyped bag (DiagnosisFinding['data'] is
+ * Record<string, unknown>), so the checkId it carries has to be validated
+ * rather than cast — a malformed or missing value falls back to `undefined`
+ * (routing callers to their own generic fallback) instead of silently
+ * indexing FIX_HINT with a string that was never a real VectorStoreCheckId.
+ */
+function asVectorStoreCheckId(value: unknown): VectorStoreCheckId | undefined {
+  return typeof value === 'string' && KNOWN_CHECK_IDS.includes(value)
+    ? (value as VectorStoreCheckId)
+    : undefined;
+}
+
 function checkOf(report: VectorStoreReport, checkId: string): VectorStoreCheck | undefined {
   return report.checks.find((c) => c.checkId === checkId);
 }
@@ -202,7 +217,7 @@ export class VectorStoreAgent implements RecoveryAgent {
     let sequence = 2;
     for (const finding of diagnosis.findings) {
       if (finding.severity !== 'critical') continue;
-      const checkId = String(finding.data?.['checkId'] ?? '') as VectorStoreCheckId;
+      const checkId = asVectorStoreCheckId(finding.data?.['checkId']);
       steps.push({
         stepId: `step-${String(sequence).padStart(3, '0')}`,
         type: 'human_notification',
@@ -210,7 +225,7 @@ export class VectorStoreAgent implements RecoveryAgent {
         recipients: [{ role: 'on_call_engineer', urgency: 'high' }],
         message: {
           summary: finding.observation,
-          detail: FIX_HINT[checkId] ?? 'Review the vector store in the provider console.',
+          detail: checkId ? FIX_HINT[checkId] : 'Review the vector store in the provider console.',
           contextReferences: ['current_vector_store_state'],
           actionRequired: true,
         },
@@ -224,7 +239,10 @@ export class VectorStoreAgent implements RecoveryAgent {
         planIdSuffix: 'vector-store',
         agentName: 'vector-store-diagnosis',
         agentVersion: '1.0.0',
-        scenario: diagnosis.scenario ?? 'healthy',
+        // A null scenario means diagnose found nothing actionable. Defaulting to a
+        // real failure scenario here would make the plan assert an incident that
+        // no check observed — the plan must not out-claim its diagnosis.
+        scenario: diagnosis.scenario ?? 'no_finding',
         estimatedDuration: 'PT5M',
         summary:
           `Vector-store findings: ${diagnosis.scenario ?? 'no issues detected'}. ` +

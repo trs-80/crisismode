@@ -39,7 +39,15 @@ export const vectorStoreManifest: AgentManifest = {
       { type: 'health_check', name: 'vector_store_status', status: 'degraded' },
       { type: 'manual', description: 'Operator-initiated vector-store check' },
     ],
-    failureScenarios: ['unreachable', 'auth_rejected', 'index_not_ready', 'no_indexes'],
+    failureScenarios: [
+      // The neutral no-actionable-finding scenario is a valid plan outcome, not a failure mode
+      // — required so validatePlan accepts healthy-path plans.
+      'no_finding',
+      'unreachable',
+      'auth_rejected',
+      'index_not_ready',
+      'no_indexes',
+    ],
     executionContexts: [
       {
         name: 'vector_store_read',
