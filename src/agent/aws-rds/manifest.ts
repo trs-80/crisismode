@@ -49,7 +49,22 @@ export const awsRdsRecoveryManifest: AgentManifest = {
         description: 'Operator-initiated RDS backup configuration recovery',
       },
     ],
-    failureScenarios: ['backup_disabled', 'retention_disabled', 'stale_snapshot', 'missing_backup'],
+    failureScenarios: [
+      'backup_disabled',
+      'retention_disabled',
+      'stale_snapshot',
+      'missing_backup',
+      // Control-plane scenarios buildControlPlaneSuggestionPlan() emits
+      // (agent.ts's ControlPlaneScenario union), plus the neutral 'healthy'
+      // outcome diagnose() falls back to when nothing is actionable — every
+      // string plan().metadata.scenario can carry must be declared here or
+      // validatePlan's checkScenario rejects every plan for that scenario.
+      'healthy',
+      'storage_full',
+      'connection_saturation',
+      'sg_blocked',
+      'instance_unavailable',
+    ],
     executionContexts: [
       {
         name: 'rds_read',
