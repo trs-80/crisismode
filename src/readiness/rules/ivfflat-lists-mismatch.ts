@@ -49,18 +49,19 @@ export const ivfflatListsMismatchRule: ReadinessRule = {
     }
 
     // Only tables PostgreSQL has an estimate for, and only above the threshold:
-    // below it the whole tuning question is moot.
+    // below it the whole tuning question is moot. Keyed by schema.table —
+    // same-named tables in different schemas are distinct (see PgvectorTable).
     const rowsByTable = new Map<string, number>();
     for (const table of inventory.tables) {
       if (table.rowEstimate !== null && table.rowEstimate >= VECTOR_MIN_ROWS) {
-        rowsByTable.set(table.table, table.rowEstimate);
+        rowsByTable.set(`${table.schema}.${table.table}`, table.rowEstimate);
       }
     }
 
     const candidates: Candidate[] = [];
     for (const index of inventory.indexes) {
       if (index.accessMethod !== 'ivfflat') continue;
-      const rowEstimate = rowsByTable.get(index.table);
+      const rowEstimate = rowsByTable.get(`${index.schema}.${index.table}`);
       if (rowEstimate === undefined) continue;
       candidates.push({ index, rowEstimate });
     }

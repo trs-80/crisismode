@@ -231,4 +231,29 @@ describe('ivfflatListsMismatchRule', () => {
   it('exposes the tolerance factor used in its evidence', () => {
     expect(LISTS_TOLERANCE_FACTOR).toBe(4);
   });
+
+  it('joins row estimates by schema, not by table name alone', async () => {
+    // Same-named table "docs" in two schemas, both above VECTOR_MIN_ROWS so
+    // both enter the row-estimate lookup. public.docs (40,000 rows, ideal
+    // lists ≈ 200) is correctly tuned at lists=100 (within its own 4x band
+    // of 50–800). other.docs is far larger (1,000,000 rows, ideal ≈ 1000,
+    // band 250–4000) and is listed SECOND, so a name-only join (last One
+    // inserted wins in the lookup map) would silently substitute its row
+    // count for public.docs' — making lists=100 look mistuned (100 < 250)
+    // when it is not. A schema-qualified join must judge public.docs by its
+    // own 40,000-row estimate and report it ready.
+    const publicDocs: PgvectorTable = { schema: 'public', table: 'docs', column: 'embedding', rowEstimate: 40_000 };
+    const otherDocs: PgvectorTable = { schema: 'other', table: 'docs', column: 'embedding', rowEstimate: 1_000_000 };
+    const publicIndex: PgvectorIndex = {
+      schema: 'public', indexName: 'public_docs_embedding_idx', table: 'docs', column: 'embedding',
+      accessMethod: 'ivfflat', lists: 100,
+    };
+    const f = await ivfflatListsMismatchRule.evaluate(
+      sources, ctxWith(inventory([publicDocs, otherDocs], [publicIndex])));
+    expect(f.status).toBe('ready');
+    // sqrt(40,000) ≈ 200 — the band derived from public.docs' own row
+    // count, not other.docs' 1,000,000-row estimate.
+    expect(f.evidence.join(' ')).toContain('200');
+    expect(f.evidence.join(' ')).toContain('40,000');
+  });
 });
