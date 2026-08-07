@@ -128,11 +128,11 @@ export class VectorStoreSimulator implements VectorStoreBackend {
     const [report] = await this.queryVectorStores();
     if (!report) return false;
 
-    if (statement.includes('auth_valid')) {
+    if (statement === 'auth_valid') {
       const status = report.checks.find((c) => c.checkId === VECTOR_STORE_CHECK_IDS.authValid)?.status ?? 'unknown';
       return compareCheckValue(status, check.expect.operator, check.expect.value);
     }
-    if (statement.includes('ready_index_count')) {
+    if (statement === 'ready_index_count') {
       const count = report.indexes.filter((i) => i.ready).length;
       return compareCheckValue(count, check.expect.operator, check.expect.value);
     }

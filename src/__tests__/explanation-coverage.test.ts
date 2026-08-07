@@ -34,6 +34,7 @@ const REPRESENTATIVE_SOURCES: Record<string, string[]> = {
   'llm-provider.openai': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
   'llm-provider.google': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
   'llm-provider.openrouter': ['llm_key_present', 'llm_key_valid', 'llm_quota_billing', 'llm_rate_limit_headroom', 'llm_model_deprecated', 'llm_provider_status'],
+  'vector-store': ['vector_store_reachable', 'vector_store_auth', 'vector_store_index'],
 };
 
 describe('explanation coverage', () => {
