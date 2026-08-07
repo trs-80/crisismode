@@ -45,6 +45,7 @@ describe('VectorStoreLiveClient — pinecone', () => {
     const firstCall = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(firstCall[0]).toBe('https://api.pinecone.io/indexes');
     expect((firstCall[1].headers as Record<string, string>)['Api-Key']).toBe('pcsk-supersecret-9876');
+    expect((firstCall[1].headers as Record<string, string>)['X-Pinecone-API-Version']).toBe('2025-10');
     expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.reachable)).toBe('pass');
     expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.authValid)).toBe('pass');
     expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.indexStatus)).toBe('pass');
@@ -286,6 +287,13 @@ describe('VectorStoreLiveClient — evaluateCheck', () => {
     const c = client([PINECONE]);
     expect(await c.evaluateCheck({ type: 'structured_command', statement: 'ready_index_count', expect: { operator: 'eq', value: 1 } })).toBe(true);
     expect(await c.evaluateCheck({ type: 'structured_command', statement: 'not_ready_index_count', expect: { operator: 'eq', value: 1 } })).toBe(false);
+  });
+});
+
+describe('VectorStoreLiveClient — capability descriptor', () => {
+  it('claims simulator_only maturity — no provider credentials have been live-validated (Task 10)', () => {
+    const [descriptor] = client([PINECONE]).listCapabilityProviders();
+    expect(descriptor!.maturity).toBe('simulator_only');
   });
 });
 

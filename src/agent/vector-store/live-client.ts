@@ -25,6 +25,7 @@ import type {
 import { VECTOR_STORE_CHECK_IDS } from './check-ids.js';
 import { fingerprintKey } from '../llm-provider/provider-table.js';
 import type { VectorStoreConnection } from './provider-table.js';
+import { VECTOR_STORE_MATURITY } from './manifest.js';
 
 /**
  * Per-request timeout. Scan races each agent's assessHealth against
@@ -403,7 +404,7 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
       id: 'vector-store-rest-reader',
       kind: 'capability_provider',
       name: 'Vector Store REST Reader',
-      maturity: 'live_validated',
+      maturity: VECTOR_STORE_MATURITY,
       capabilities: ['vectorstore.index.read'],
       executionContexts: ['vector_store_read'],
       targetKinds: ['vector-store'],
