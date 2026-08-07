@@ -15,6 +15,7 @@ import { probeNetwork } from '../../framework/network-profile.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution } from '../../framework/check-plugin.js';
 import { readVercelProjectConfig } from '../autodiscovery.js';
+import { platformsForTarget } from '../../framework/guidance/platforms.js';
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 import {
   printBanner, printHealthStatus, printDiagnosis, printOperatorSummary,
@@ -120,7 +121,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
       networkProfile,
       target.name,
     );
-    printDiagnosis(diagnosis, explanationCtx);
+    printDiagnosis(diagnosis, explanationCtx, { platforms: platformsForTarget(target.kind, target.name) });
 
     printOperatorSummary(buildOperatorSummary({
       health,

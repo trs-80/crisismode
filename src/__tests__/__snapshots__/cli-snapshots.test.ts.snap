@@ -140,7 +140,7 @@ exports[`CLI snapshot — scan JSON mode > scan summary in JSON mode 1`] = `
 
 exports[`CLI snapshot — scan pipe mode > scan summary in pipe mode 1`] = `
 "scan	72	<<TIMESTAMP>>	234
-finding	PG-001	postgresql	healthy	0.95	Replication OK
-finding	REDIS-001	redis	unhealthy	0.8	Memory pressure detected
-finding	ETCD-001	etcd	recovering	0.6	Leader election in progress"
+finding	PG-001	postgresql	healthy	0.95	Replication OK	
+finding	REDIS-001	redis	unhealthy	0.8	Memory pressure detected	
+finding	ETCD-001	etcd	recovering	0.6	Leader election in progress	"
 `;

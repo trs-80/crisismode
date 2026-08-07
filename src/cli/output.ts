@@ -26,6 +26,10 @@ import { BEST_EFFORT_GROUP_HINT, BEST_EFFORT_FINDING_SUFFIX } from '../framework
 import { buildRiskFraming } from './risk-framing.js';
 import type { TriageReport } from '../framework/triage.js';
 import type { ObserverReframe } from './observer-reframe.js';
+import { attachGuidesToScanFinding, attachGuidesToDiagnosis } from '../framework/guidance/attach.js';
+import type { GuidanceScope } from '../framework/guidance/registry.js';
+import { renderGuidesLines, guideReference } from '../framework/guidance/render.js';
+import type { RemediationGuide } from '../types/remediation-guide.js';
 
 /**
  * Three output modes:
@@ -165,8 +169,12 @@ export function printHealthStatus(assessment: HealthAssessment, ctx?: Explanatio
 
 // ── Diagnosis ──
 
-export function printDiagnosis(diagnosis: DiagnosisResult, ctx?: ExplanationContext): void {
-  diagnosis = enrichDiagnosis(diagnosis, ctx);
+export function printDiagnosis(
+  diagnosis: DiagnosisResult,
+  ctx?: ExplanationContext,
+  scope?: GuidanceScope,
+): void {
+  diagnosis = attachGuidesToDiagnosis(enrichDiagnosis(diagnosis, ctx), scope);
   if (outputOptions.mode === 'machine') {
     jsonOut('diagnosis', { diagnosis });
     return;
@@ -202,6 +210,7 @@ export function printDiagnosis(diagnosis: DiagnosisResult, ctx?: ExplanationCont
         console.log(chalk.dim(`        Learn more: ${finding.learnMoreUrl}`));
       }
     }
+    printRemediationGuides(finding.guides, '        ');
   }
   console.log('');
 }
@@ -451,7 +460,14 @@ export interface ScanFinding {
   summary: string;
   confidence: number;
   escalationLevel: EscalationLevel;
-  signals: Array<{ status: string; detail: string; source?: string; checkId?: string }>;
+  signals: Array<{
+    status: string;
+    detail: string;
+    source?: string;
+    checkId?: string;
+    /** Substitutions for this signal's checkId's matched guide(s), applied before attachment. */
+    guideVars?: Record<string, string> | undefined;
+  }>;
   /** Plain-language explanation of the dominant signal (static knowledge map). */
   explanation?: string;
   learnMoreUrl?: string;
@@ -465,6 +481,12 @@ export interface ScanFinding {
   possiblyObserverCaused?: true;
   /** Stable id of the check behind the dominant signal (e.g. 'llm-provider.key_valid'). Present only for agents that emit check ids. */
   checkId?: string;
+  /** Platforms this finding's target may show guides for (see platformsForTarget). Undefined = platform unknown, show every match. */
+  guidancePlatforms?: readonly string[] | undefined;
+  /** Remediation guides matched to this finding (attached at render time). */
+  guides?: RemediationGuide[] | undefined;
+  /** Substitutions for this finding's own checkId's matched guide(s) — see HealthSignal.guideVars. */
+  guideVars?: Record<string, string> | undefined;
 }
 
 export interface RecentChange {
@@ -492,6 +514,8 @@ export interface ScanResult {
 }
 
 export function printScanSummary(result: ScanResult): void {
+  result = { ...result, findings: result.findings.map((f) => attachGuidesToScanFinding(f)) };
+
   if (outputOptions.mode === 'machine') {
     jsonOut('scan', { ...result });
     return;
@@ -501,7 +525,9 @@ export function printScanSummary(result: ScanResult): void {
     // Tab-separated: score, scanned_at, duration_ms
     pipeOut(`scan\t${result.score}\t${result.scannedAt}\t${result.durationMs}`);
     for (const f of result.findings) {
-      pipeOut(`finding\t${f.id}\t${f.service}\t${f.status}\t${f.confidence}\t${f.summary}`);
+      // Always emit the guide column, empty when there is none, so every
+      // finding row has the same field count for cut/awk consumers.
+      pipeOut(`finding\t${f.id}\t${f.service}\t${f.status}\t${f.confidence}\t${f.summary}\t${guideReference(f.guides ?? [])}`);
     }
     return;
   }
@@ -600,6 +626,23 @@ function printFindingGroup(findings: ScanFinding[]): void {
     if (!outputOptions.terse && f.bestEffort) {
       console.log(chalk.dim(`      ${BEST_EFFORT_FINDING_SUFFIX}`));
     }
+    printRemediationGuides(f.guides);
+  }
+}
+
+/**
+ * The one CLI path that prints remediation guidance. Machine mode carries
+ * guides in the JSON payload; pipe mode carries a `guide:<id>` reference on
+ * the finding row; only human mode prints the block, honoring --terse.
+ */
+export function printRemediationGuides(
+  guides: readonly RemediationGuide[] | undefined,
+  indent = '      ',
+): void {
+  if (!guides || guides.length === 0) return;
+  if (outputOptions.mode !== 'human') return;
+  for (const line of renderGuidesLines(guides, { terse: outputOptions.terse })) {
+    console.log(line === '' ? '' : chalk.dim(indent + line));
   }
 }
 
