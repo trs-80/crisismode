@@ -9,6 +9,7 @@ import { missingIndexRule } from './missing-index.js';
 import { slowQueriesRule } from './slow-queries.js';
 import { serverlessPoolingRule } from './serverless-pooling.js';
 import { vectorIndexMissingRule } from './vector-index-missing.js';
+import { ivfflatListsMismatchRule } from './ivfflat-lists-mismatch.js';
 
 export const allRules: ReadinessRule[] = [
   connectionHeadroomRule,
@@ -18,4 +19,5 @@ export const allRules: ReadinessRule[] = [
   slowQueriesRule,
   serverlessPoolingRule,
   vectorIndexMissingRule,
+  ivfflatListsMismatchRule,
 ];

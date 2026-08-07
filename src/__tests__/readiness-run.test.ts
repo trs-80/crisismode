@@ -59,10 +59,11 @@ describe('runRules', () => {
     expect(findings[0]?.reason).toContain('boom');
   });
 
-  it('registry contains the seven rules', () => {
+  it('registry contains the eight rules', () => {
     expect(allRules.map((r) => r.id).sort()).toEqual([
-      'connection-headroom', 'connection-limit-tier', 'long-transactions',
-      'missing-index', 'serverless-pooling', 'slow-queries', 'vector-index-missing',
+      'connection-headroom', 'connection-limit-tier', 'ivfflat-lists-mismatch',
+      'long-transactions', 'missing-index', 'serverless-pooling', 'slow-queries',
+      'vector-index-missing',
     ]);
   });
 });
