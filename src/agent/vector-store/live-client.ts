@@ -177,7 +177,7 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
   ): Promise<VectorStoreReport> {
     const headers = {
       'Api-Key': connection.apiKey,
-      'X-Pinecone-API-Version': '2025-04',
+      'X-Pinecone-API-Version': '2025-10',
       accept: 'application/json',
     };
     // performance.now() (monotonic) drives the shared-deadline math below —
