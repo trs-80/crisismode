@@ -547,23 +547,62 @@ describe('BackupLiveClient evaluateCheck', () => {
     expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(false);
   });
 
-  it('all_verifications_passed reuses a cached report instead of calling verifyAll again', async () => {
+  it('all_verifications_passed reuses a cached report bound to the same configs instead of calling verifyAll again', async () => {
     // lastVerification is set by any prior verifyAll() call — including the
     // plan's earlier 'verify_backups' diagnosis step — so the check should
-    // read it rather than re-running the gzip/tar subprocess work.
+    // read it rather than re-running the gzip/tar subprocess work. The
+    // cache is keyed by the configs that produced it (CodeRabbit finding
+    // B — see backup-live-client-cache.test.ts for the real, unstubbed
+    // regression coverage of that binding), so this stub must supply a
+    // matching configsKey for the reuse to occur.
+    const { BackupLiveClient } = await import('../agent/backup/live-client.js');
+    const locations = ['/var/backups'];
+    const configsKey = (BackupLiveClient as unknown as { configsKey(configs: unknown[]): string }).configsKey([
+      { kind: 'file_directory', locations, source: 'default', rpoSeconds: 86400 },
+    ]);
     const verifyAll = vi.fn();
     const client = await makeClient({
+      config: { locations },
       verifyAll,
       lastVerification: {
-        verifiedAt: new Date().toISOString(),
-        providers: [{ kind: 'file_directory', source: 'default', detected: true, items: [], verifications: [{ item: {}, passed: true, checks: [] }] }],
-        rpoEvaluations: [],
-        rtoEstimates: [],
-        uncoveredSources: [],
+        configsKey,
+        report: {
+          verifiedAt: new Date().toISOString(),
+          providers: [{ kind: 'file_directory', source: 'default', detected: true, items: [], verifications: [{ item: {}, passed: true, checks: [] }] }],
+          rpoEvaluations: [],
+          rtoEstimates: [],
+          uncoveredSources: [],
+        },
       },
     });
     expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(true);
     expect(verifyAll).not.toHaveBeenCalled();
+  });
+
+  it('all_verifications_passed does NOT reuse a cached report whose configsKey does not match this client\'s configured locations', async () => {
+    const verifyAll = vi.fn().mockResolvedValue({
+      verifiedAt: new Date().toISOString(),
+      providers: [],
+      rpoEvaluations: [],
+      rtoEstimates: [],
+      uncoveredSources: [],
+    });
+    const client = await makeClient({
+      config: { locations: ['/var/backups'] },
+      verifyAll,
+      lastVerification: {
+        configsKey: 'some-other-configs-entirely',
+        report: {
+          verifiedAt: new Date().toISOString(),
+          providers: [{ kind: 'file_directory', source: 'default', detected: true, items: [], verifications: [{ item: {}, passed: true, checks: [] }] }],
+          rpoEvaluations: [],
+          rtoEstimates: [],
+          uncoveredSources: [],
+        },
+      },
+    });
+    expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(false);
+    expect(verifyAll).toHaveBeenCalledTimes(1);
   });
 
   it('all_verifications_passed fails closed when verification throws', async () => {

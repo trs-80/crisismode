@@ -364,10 +364,32 @@ describe('PgSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk(IDLE_IN_TX, 'gte', 20))).toBe(true);
   });
 
-  it('structured_command eq branch', async () => {
+  it('structured_command load-balancer service_status branch (the real check step-005/step-009a emit)', async () => {
     const sim = new PgSimulator();
-    expect(await sim.evaluateCheck(mk('service_state', 'eq', 'running', 'structured_command'))).toBe(true);
-    expect(await sim.evaluateCheck(mk('service_state', 'eq', 'stopped', 'structured_command'))).toBe(false);
+    const loadBalancerStatus = (value: unknown): CheckExpression => ({
+      type: 'structured_command',
+      operation: 'service_status',
+      parameters: { service: 'load-balancer' },
+      expect: { operator: 'eq', value },
+    });
+    expect(await sim.evaluateCheck(loadBalancerStatus('running'))).toBe(true);
+    expect(await sim.evaluateCheck(loadBalancerStatus('stopped'))).toBe(false);
+  });
+
+  it('structured_command fails closed for a statement/operation this simulator does not recognize, even with expect eq "running" (CodeRabbit finding A)', async () => {
+    // The old generic `check.type === 'structured_command' && operator ===
+    // 'eq' -> value === 'running'` branch returned true for ANY unknown
+    // structured_command check whose expected value happened to be
+    // 'running' — a fail-open remnant. Only the load-balancer
+    // service_status check above should pass.
+    const sim = new PgSimulator();
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 'running', 'structured_command'))).toBe(false);
+    expect(await sim.evaluateCheck({
+      type: 'structured_command',
+      operation: 'service_status',
+      parameters: { service: 'some-unrelated-service' },
+      expect: { operator: 'eq', value: 'running' },
+    })).toBe(false);
   });
 
   it("'SELECT 1;' primary-reachability branch", async () => {
@@ -443,6 +465,29 @@ describe('PgSimulator.evaluateCheck()', () => {
     expect((await sim.queryReplicationSlots()).map((s) => s.slot_name)).toContain(slotName);
   });
 
+  it('creating a brand-new slot name (not one of the three modeled fixtures) is reflected in both the count check and the listing (CodeRabbit finding C)', async () => {
+    const sim = new PgSimulator();
+    const newSlotName = 'replica_ap_southeast_2a';
+    const countCheck = (n: number) =>
+      mk(`SELECT count(*) FROM pg_replication_slots WHERE slot_name = '${newSlotName}';`, 'eq', n);
+
+    // Doesn't exist yet — neither the count check nor the listing know about it.
+    expect(await sim.evaluateCheck(countCheck(0))).toBe(true);
+    expect((await sim.queryReplicationSlots()).map((s) => s.slot_name)).not.toContain(newSlotName);
+
+    await sim.executeCommand({
+      type: 'sql',
+      subtype: 'function_call',
+      statement: `SELECT pg_create_physical_replication_slot('${newSlotName}');`,
+    } as Command);
+
+    // Both sources of truth must agree that it now exists.
+    expect(await sim.evaluateCheck(countCheck(1))).toBe(true);
+    const slotsAfterCreate = await sim.queryReplicationSlots();
+    expect(slotsAfterCreate.map((s) => s.slot_name)).toContain(newSlotName);
+    expect(slotsAfterCreate.find((s) => s.slot_name === newSlotName)?.wal_status).toBe('reserved');
+  });
+
   it('returns false for unknown statement (fail-closed)', async () => {
     const sim = new PgSimulator();
     expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
@@ -495,6 +540,22 @@ describe('PgSimulator.evaluateCheck()', () => {
       const sim = new PgSimulator();
       // 10.0.1.99 never appears in any state's modeled replica list.
       expect(await sim.evaluateCheck(presentCheck('10.0.1.99'))).toBe(false);
+    });
+
+    it('honors an explicit state predicate that does not match the modeled state (CodeRabbit finding D)', async () => {
+      // Every modeled replica is always 'streaming', so a real plan check
+      // (which only ever asks for state = 'streaming') sees no behavior
+      // change. But the merged branch matches on client_addr alone and
+      // ignores any state predicate in the statement — a check asking for
+      // a state no replica is ever modeled as (e.g. 'catchup') must report
+      // not-matching rather than reusing the address-only presence answer.
+      const sim = new PgSimulator();
+      const catchupCheck = mk(
+        "SELECT count(*) FROM pg_stat_replication WHERE client_addr = '10.0.1.52' AND state = 'catchup';",
+        'gte',
+        1,
+      );
+      expect(await sim.evaluateCheck(catchupCheck)).toBe(false);
     });
   });
 });

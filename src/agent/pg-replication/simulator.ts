@@ -19,14 +19,30 @@ export class PgSimulator implements PgBackend {
   private replayPaused = false;
   private idleInTxSessions: IdleInTransactionSession[] = [];
   private otherActiveConnections = 4;
-  // Tracks which replication slots currently exist, independent of the
-  // active/wal_status fields queryReplicationSlots() reports. Mutated by
-  // executeCommand()'s pg_drop_replication_slot / pg_create_physical_replication_slot
-  // handling so the replan()-generated drop/create successCriteria checks
-  // (`SELECT count(*) FROM pg_replication_slots WHERE slot_name = '...'`)
-  // observe a real state transition instead of falling through to a
-  // fail-open default.
-  private slotNames = new Set(['replica_us_east_1a', 'replica_us_east_1b', 'replica_us_east_1c']);
+  // Single source of truth for which replication slots currently exist and
+  // (for slot names outside the three modeled fixtures) what their record
+  // looks like. Mutated by executeCommand()'s pg_drop_replication_slot /
+  // pg_create_physical_replication_slot handling so the replan()-generated
+  // drop/create successCriteria checks (`SELECT count(*) FROM
+  // pg_replication_slots WHERE slot_name = '...'`) AND the
+  // queryReplicationSlots() listing both observe the same state — no two
+  // sources of truth that can disagree.
+  //
+  // Value `null` means "one of the three modeled fixture slots — look up
+  // its current record from invalidSlotFixtures()/validSlotFixtures(),
+  // which vary by simulator state (e.g. replica_us_east_1b's wal_status
+  // flips between 'reserved' and 'lost')". A non-null value is a
+  // synthesized static record for a slot name created via
+  // pg_create_physical_replication_slot() that isn't one of those three —
+  // there's no state-dependent model for it, so it's simply healthy.
+  private static readonly FIXTURE_SLOT_NAMES = new Set([
+    'replica_us_east_1a',
+    'replica_us_east_1b',
+    'replica_us_east_1c',
+  ]);
+  private slots = new Map<string, ReplicationSlot | null>(
+    [...PgSimulator.FIXTURE_SLOT_NAMES].map((name) => [name, null]),
+  );
   private tableStats: TableStat[] = [];
   private statementStats: StatementStat[] | null = null;
   private statementAggregate: StatementAggregate | null = null;
@@ -206,13 +222,32 @@ export class PgSimulator implements PgBackend {
   }
 
   async queryReplicationSlots(): Promise<ReplicationSlot[]> {
-    const allSlots = this.slotInvalid && this.state !== 'degraded' ? this.invalidSlotFixtures() : this.validSlotFixtures();
-    // slotNames is the one source of truth for which slots currently exist
-    // (mutated by executeCommand()'s drop/create handling). Filtering here
-    // keeps this listing — used by diagnose() and the
-    // slot_state_before_drop capture — consistent with the count-based
-    // evaluateCheck() query above instead of always reporting all three.
-    return allSlots.filter((slot) => this.slotNames.has(slot.slot_name));
+    const fixtureRecords = this.slotInvalid && this.state !== 'degraded' ? this.invalidSlotFixtures() : this.validSlotFixtures();
+    const fixtureByName = new Map(fixtureRecords.map((r) => [r.slot_name, r]));
+
+    const result: ReplicationSlot[] = [];
+    for (const [name, syntheticRecord] of this.slots) {
+      if (syntheticRecord) {
+        result.push(syntheticRecord);
+        continue;
+      }
+      const fixture = fixtureByName.get(name);
+      if (fixture) result.push(fixture);
+    }
+    return result;
+  }
+
+  /** A healthy record for a slot name created outside the three modeled fixtures. */
+  private synthesizeHealthySlot(slotName: string): ReplicationSlot {
+    return {
+      slot_name: slotName,
+      plugin: '',
+      slot_type: 'physical',
+      active: true,
+      restart_lsn: '0/5000000',
+      confirmed_flush_lsn: '',
+      wal_status: 'reserved',
+    };
   }
 
   private invalidSlotFixtures(): ReplicationSlot[] {
@@ -300,17 +335,23 @@ export class PgSimulator implements PgBackend {
     // Replica connected/streaming checks — parameterized on whichever
     // address the statement names (plan() interpolates the dynamically
     // chosen worst replica, so this must not be hardcoded to one literal
-    // address). Every entry queryReplicationStatus() returns already has
-    // `state: 'streaming'`, and the state's replica list IS the model of
-    // which replicas are currently connected (e.g. the disconnected target
-    // is absent from the 'recovering' list), so "present in the current
-    // state's list" answers both the with- and without-state-qualifier
-    // forms of this query identically and correctly.
+    // address), and honoring an optional `AND state = '...'` predicate.
+    // Every entry queryReplicationStatus() returns already has `state:
+    // 'streaming'`, and the state's replica list IS the model of which
+    // replicas are currently connected (e.g. the disconnected target is
+    // absent from the 'recovering' list), so real plan checks (which only
+    // ever ask for `state = 'streaming'`) see no behavior change from
+    // honoring the predicate. But a check asking for a state no replica is
+    // ever modeled as (e.g. 'catchup') must not be answered by
+    // address-presence alone.
     const clientAddrMatch = /pg_stat_replication WHERE client_addr = '([^']+)'/.exec(stmt);
     if (clientAddrMatch) {
       const targetAddr = clientAddrMatch[1]!;
+      const requiredState = /\bstate\s*=\s*'([^']+)'/.exec(stmt)?.[1];
       const replicas = await this.queryReplicationStatus();
-      const count = replicas.some((r) => r.client_addr === targetAddr) ? 1 : 0;
+      const count = replicas.filter(
+        (r) => r.client_addr === targetAddr && (requiredState === undefined || r.state === requiredState),
+      ).length;
       return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
@@ -336,7 +377,7 @@ export class PgSimulator implements PgBackend {
     const slotCountMatch = /FROM pg_replication_slots WHERE slot_name = '([^']+)'/.exec(stmt);
     if (slotCountMatch) {
       const slotName = slotCountMatch[1]!;
-      const count = this.slotNames.has(slotName) ? 1 : 0;
+      const count = this.slots.has(slotName) ? 1 : 0;
       return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
@@ -359,7 +400,20 @@ export class PgSimulator implements PgBackend {
       return compareCheckValue(reachable, check.expect.operator, check.expect.value);
     }
 
-    if (check.type === 'structured_command' && check.expect.operator === 'eq') {
+    // Load-balancer service_status check — the only structured_command
+    // check pg-replication's agent.ts actually emits (step-005 / step-009a
+    // successCriteria: `{ operation: 'service_status', parameters: {
+    // service: 'load-balancer' }, expect: { eq: 'running' } }`, no
+    // `statement`). Narrowly matched by operation + parameters.service so
+    // an unrelated/unrecognized structured_command check does not pass
+    // just because its expected value happens to be 'running' — that was a
+    // fail-open remnant that survived the sweep.
+    if (
+      check.type === 'structured_command' &&
+      check.operation === 'service_status' &&
+      (check.parameters as { service?: string } | undefined)?.service === 'load-balancer' &&
+      check.expect.operator === 'eq'
+    ) {
       return check.expect.value === 'running';
     }
 
@@ -398,13 +452,19 @@ export class PgSimulator implements PgBackend {
       if (stmt.includes('pg_drop_replication_slot')) {
         const match = /pg_drop_replication_slot\('([^']+)'\)/.exec(stmt);
         const slotName = match?.[1];
-        if (slotName) this.slotNames.delete(slotName);
+        if (slotName) this.slots.delete(slotName);
         return { simulated: true, statement: stmt };
       }
       if (stmt.includes('pg_create_physical_replication_slot')) {
         const match = /pg_create_physical_replication_slot\('([^']+)'\)/.exec(stmt);
         const slotName = match?.[1];
-        if (slotName) this.slotNames.add(slotName);
+        if (slotName) {
+          // Re-creating one of the three modeled fixture slots restores
+          // dynamic (state-dependent) modeling; a brand-new name gets a
+          // synthesized static healthy record — there's no fixture to
+          // dynamically model it against.
+          this.slots.set(slotName, PgSimulator.FIXTURE_SLOT_NAMES.has(slotName) ? null : this.synthesizeHealthySlot(slotName));
+        }
         return { simulated: true, statement: stmt };
       }
       if (stmt.includes('pg_terminate_backend') && stmt.includes('idle in transaction')) {

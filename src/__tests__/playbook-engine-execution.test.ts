@@ -47,6 +47,57 @@ function compilePlan(): { plan: RecoveryPlan; manifest: ReturnType<typeof buildP
   return { plan: playbookToPlan(parsed), manifest: buildPlaybookManifest(parsed) };
 }
 
+/**
+ * A minimal playbook whose system_action step declares no `capability:`.
+ *
+ * Used only for the execute-mode tests below. buildPlaybookManifest()
+ * hardcodes every execution context's `target` to the literal string
+ * 'primary' (src/framework/playbook/runtime.ts) — a per-step instance
+ * identifier, not a technology kind. resolveStepProviders()
+ * (src/framework/provider-registry.ts) compares that `target` against each
+ * required capability's `targetKinds`, which are technology strings (e.g.
+ * 'postgresql', 'linux' — see src/agent/pg-replication/manifest.ts). That
+ * mismatch means the SHIPPED pg-replication-lag.md playbook's own
+ * capability-declaring steps (4, 5, 8) fail provider resolution the moment
+ * execute mode's `!providerResolution.resolved -> fail` gate is reached
+ * (engine.ts, graph-nodes.ts) — a real, pre-existing bug, unrelated to C1 or
+ * this check-evaluation sweep, and out of scope here. A step with no
+ * declared capability skips that gate entirely (empty
+ * requiredCapabilities.every(...) is vacuously true), which is enough to
+ * isolate and exercise what this test actually targets: the success-criteria
+ * no-op path (isDeclarativeNoOpCheck()) in execute mode.
+ */
+function compileMinimalNoOpPlan(): { plan: RecoveryPlan; manifest: ReturnType<typeof buildPlaybookManifest> } {
+  const content = `---
+name: "noop-execute-test"
+version: "1.0.0"
+description: "Minimal playbook for execute-mode success-criteria no-op coverage"
+agent: pg-replication
+severity: routine
+---
+
+### 1. Mutate the system
+- type: system_action
+- risk: routine
+- target: primary
+
+\`\`\`sql
+SELECT 1;
+\`\`\`
+
+### 2. Verify or escalate
+- type: conditional
+- condition: "system recovered"
+- on_success: "All good"
+
+## Rollback
+
+Revert the single mutation manually.
+`;
+  const parsed = parsePlaybook(content, 'noop-execute-test.md');
+  return { plan: playbookToPlan(parsed), manifest: buildPlaybookManifest(parsed) };
+}
+
 function makeStubAgent(manifest: ReturnType<typeof buildPlaybookManifest>, plan: RecoveryPlan): RecoveryAgent {
   return {
     manifest,
@@ -133,6 +184,57 @@ describe('compiled playbook plans against a fail-closed backend', () => {
     const backend = new PgSimulator();
 
     const engine = new RecoveryGraphEngine(context, manifest, agent, recorder, backend, 'dry-run', {
+      checkpointer: new MemorySaver(),
+    });
+    engine.setCoveredRiskLevels(['routine', 'elevated', 'high']);
+
+    const results = await engine.executePlan(plan, makeDiagnosis());
+
+    expect(results.length).toBe(plan.steps.length);
+    const failed = results.filter((r) => r.status === 'failed');
+    expect(failed.map((r) => ({ stepId: r.stepId, error: r.error }))).toEqual([]);
+  });
+
+  // CodeRabbit finding E: the two tests above are dry-run only, so
+  // successCriteria evaluation (engine.ts's Phase 6 / graph-nodes.ts's
+  // success-criteria check) is never exercised — dry-run returns success
+  // before reaching it. Preconditions and conditionals ARE evaluated in
+  // dry-run, but success criteria are not (see engine.ts's dry-run early
+  // return and graph-nodes.ts's mirrored branch). Execute mode is safe here
+  // because the backend is a simulator — no real infrastructure is touched.
+  //
+  // These use compileMinimalNoOpPlan() rather than the shipped
+  // pg-replication-lag.md playbook — see that function's doc comment for
+  // why the shipped playbook cannot run in execute mode today (a separate,
+  // pre-existing provider-resolution bug).
+
+  it('LegacyExecutionEngine completes every step in execute mode, exercising the success-criteria no-op path', async () => {
+    const { plan, manifest } = compileMinimalNoOpPlan();
+    const context = makeContext(manifest);
+    const agent = makeStubAgent(manifest, plan);
+    const recorder = new ForensicRecorder();
+    recorder.setContext(context);
+    const backend = new PgSimulator();
+
+    const engine = new LegacyExecutionEngine(context, manifest, agent, recorder, backend, {}, 'execute');
+    engine.setCoveredRiskLevels(['routine', 'elevated', 'high']);
+
+    const results = await engine.executePlan(plan, makeDiagnosis());
+
+    expect(results.length).toBe(plan.steps.length);
+    const failed = results.filter((r) => r.status === 'failed');
+    expect(failed.map((r) => ({ stepId: r.stepId, error: r.error }))).toEqual([]);
+  });
+
+  it('RecoveryGraphEngine completes every step in execute mode, exercising the success-criteria no-op path', async () => {
+    const { plan, manifest } = compileMinimalNoOpPlan();
+    const context = makeContext(manifest);
+    const agent = makeStubAgent(manifest, plan);
+    const recorder = new ForensicRecorder();
+    recorder.setContext(context);
+    const backend = new PgSimulator();
+
+    const engine = new RecoveryGraphEngine(context, manifest, agent, recorder, backend, 'execute', {
       checkpointer: new MemorySaver(),
     });
     engine.setCoveredRiskLevels(['routine', 'elevated', 'high']);

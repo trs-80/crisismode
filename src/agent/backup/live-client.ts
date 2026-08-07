@@ -57,16 +57,38 @@ export interface BackupLiveConfig {
 
 export class BackupLiveClient implements BackupBackend {
   private config: BackupLiveConfig;
-  // Set whenever verifyAll() completes — including via the diagnosis-phase
-  // 'verify_backups' executeCommand path, which calls verifyAll() directly.
-  // Lets the all_verifications_passed check (evaluateCheck below) reuse a
-  // report the plan already produced instead of re-running the heaviest
-  // part of the workload (gzip -t / tar -tf subprocesses) from inside a
-  // check that also runs in dry-run mode.
-  private lastVerification: BackupVerificationReport | undefined;
+  // Set whenever verifyAll() completes with a non-empty result — including
+  // via the diagnosis-phase 'verify_backups' executeCommand path, which
+  // calls verifyAll() directly. Lets the all_verifications_passed check
+  // (evaluateCheck below) reuse a report the plan already produced instead
+  // of re-running the heaviest part of the workload (gzip -t / tar -tf
+  // subprocesses) from inside a check that also runs in dry-run mode.
+  //
+  // Bound to the configs that produced it (`configsKey`): verifyAll() can
+  // be called with ANY configs by ANY caller (e.g. FileSystemProvider's
+  // single-item verify() calls with a one-item subdirectory), so a cached
+  // report must only answer a check when it actually covers the locations
+  // that check would verify — otherwise a healthy verification of unrelated
+  // directories could satisfy all_verifications_passed for locations that
+  // were never checked.
+  private lastVerification: { report: BackupVerificationReport; configsKey: string } | undefined;
 
   constructor(config: BackupLiveConfig) {
     this.config = config;
+  }
+
+  /** Deterministic, order-insensitive key identifying which configs a verifyAll() report covers. */
+  private static configsKey(configs: BackupProviderConfig[]): string {
+    return JSON.stringify(
+      configs
+        .map((c) => ({
+          kind: c.kind,
+          source: c.source,
+          locations: [...c.locations].sort(),
+          rpoSeconds: c.rpoSeconds ?? DEFAULT_RPO_SECONDS,
+        }))
+        .sort((a, b) => a.source.localeCompare(b.source) || a.kind.localeCompare(b.kind)),
+    );
   }
 
   listProviderKinds(): BackupProviderKind[] {
@@ -144,7 +166,7 @@ export class BackupLiveClient implements BackupBackend {
     // would silently overwrite a genuine prior result. See evaluateCheck()'s
     // matching cache-miss check below.
     if (report.providers.length > 0) {
-      this.lastVerification = report;
+      this.lastVerification = { report, configsKey: BackupLiveClient.configsKey(configs) };
     }
     return report;
   }
@@ -325,23 +347,29 @@ export class BackupLiveClient implements BackupBackend {
       // not propagate out of LangGraph's stream() uncaught — fail closed on
       // failure to verify.
       try {
-        let report = this.lastVerification;
-        // A cached report with zero providers cannot answer this check — it
-        // means the cache was never actually populated by a real
-        // verification (verifyAll() no longer caches that shape; this
-        // guard is defense in depth against the same poisoning regardless
-        // of how a zero-provider report might reach here). Treat it as a
-        // cache miss and fall through to the real verification path.
-        if (!report || report.providers.length === 0) {
+        const fallbackConfig: BackupProviderConfig = {
+          kind: 'file_directory',
+          locations: this.config.locations,
+          source: 'default',
+          rpoSeconds: DEFAULT_RPO_SECONDS,
+        };
+        const expectedKey = BackupLiveClient.configsKey([fallbackConfig]);
+        const cached = this.lastVerification;
+        // A cached report only answers this check when it (a) has at least
+        // one provider — a cache miss guard in its own right; verifyAll()
+        // no longer stores a zero-provider report, but this stays as
+        // defense in depth — and (b) actually covers the locations this
+        // check would verify. Without (b), a verifyAll() call against
+        // unrelated directories (e.g. FileSystemProvider.verify()'s
+        // single-item calls) could satisfy this check for locations that
+        // were never checked.
+        let report = cached && cached.report.providers.length > 0 && cached.configsKey === expectedKey
+          ? cached.report
+          : undefined;
+        if (!report) {
           const location = this.config.locations[0];
           if (!location) return compareCheckValue(false, check.expect.operator, check.expect.value);
-          const config: BackupProviderConfig = {
-            kind: 'file_directory',
-            locations: this.config.locations,
-            source: 'default',
-            rpoSeconds: DEFAULT_RPO_SECONDS,
-          };
-          report = await this.verifyAll([config]);
+          report = await this.verifyAll([fallbackConfig]);
         }
         const allPassed = report.providers.length > 0 &&
           report.providers.every((p) => p.detected && p.verifications.every((v) => v.passed));
