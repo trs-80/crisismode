@@ -53,6 +53,33 @@ const CONTROL_PLANE_ACTION: Record<ControlPlaneScenario, string> = {
 };
 
 /**
+ * Whether this control-plane item is the guide's actionable condition for its
+ * source, not merely any item from that source. A single source can emit more
+ * than one item — e.g. 'rds_instance_status' covers both the instance-status
+ * item itself and a separate pending-modifications warning item — and
+ * checkIdForRdsSource() maps by source alone, so without this gate a healthy
+ * status, a healthy storage reading, an open security group, or a
+ * pending-modification notice would all attach the same source's remediation
+ * guide (e.g. "bring the instance back to available") even though nothing is
+ * actionable. Mirrors the severity gates buildControlPlaneSuggestionPlan()
+ * already uses to decide whether to push a suggestion for each source, so a
+ * signal/finding only ever carries a guide reference for the condition that
+ * would actually generate a suggestion.
+ */
+function isActionableControlPlaneItem(item: ControlPlaneItem): boolean {
+  switch (item.source) {
+    case 'rds_storage':
+    case 'rds_security_group':
+    case 'rds_instance_status':
+      return item.critical;
+    case 'rds_connection_saturation':
+      return item.critical || item.warning;
+    default:
+      return false;
+  }
+}
+
+/**
  * The guide placeholder substitutions for one control-plane item, derived
  * from the same `source` and `data` used to build its signal/finding. Shared
  * by assessHealth's controlPlaneSignals, diagnose's controlPlaneFindings, and
@@ -322,8 +349,8 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
         : 'healthy';
 
     const controlPlaneSignals: HealthSignal[] = controlPlaneItems.map((item) => {
-      const checkId = checkIdForRdsSource(item.source);
-      const guideVars = controlPlaneGuideVars(item.source, config.instanceId, item.data);
+      const checkId = isActionableControlPlaneItem(item) ? checkIdForRdsSource(item.source) : undefined;
+      const guideVars = checkId !== undefined ? controlPlaneGuideVars(item.source, config.instanceId, item.data) : undefined;
       return {
         source: item.source,
         status: item.isPermissionMissing ? 'unknown' : signalStatus(item.critical, item.warning),
@@ -462,8 +489,8 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
       : config.backupRetentionPeriod === 0 ? 0.98 : 0.90;
 
     const controlPlaneFindings: DiagnosisFinding[] = controlPlaneItems.map((item) => {
-      const checkId = checkIdForRdsSource(item.source);
-      const guideVars = controlPlaneGuideVars(item.source, config.instanceId, item.data);
+      const checkId = isActionableControlPlaneItem(item) ? checkIdForRdsSource(item.source) : undefined;
+      const guideVars = checkId !== undefined ? controlPlaneGuideVars(item.source, config.instanceId, item.data) : undefined;
       return {
         source: item.source,
         observation: item.message,

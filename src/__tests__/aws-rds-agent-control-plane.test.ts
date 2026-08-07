@@ -210,6 +210,74 @@ describe('aws-rds control-plane diagnosis', () => {
     expect(signal?.checkId).toBe('aws-rds.connection_saturation');
   });
 
+  describe('guide attachment only fires for the actionable condition, not every item from its source', () => {
+    it('a healthy instance-status signal carries no checkId or guideVars', async () => {
+      const { agent, context } = makeAgent('healthy');
+      const health = await agent.assessHealth(context);
+      const signal = health.signals.find((s) => s.source === 'rds_instance_status' && s.status === 'healthy');
+      expect(signal).toBeDefined();
+      expect(signal!.checkId).toBeUndefined();
+      expect(signal!.guideVars).toBeUndefined();
+    });
+
+    it('a healthy storage signal carries no checkId or guideVars', async () => {
+      const { agent, context } = makeAgent('healthy');
+      const health = await agent.assessHealth(context);
+      const signal = health.signals.find((s) => s.source === 'rds_storage');
+      expect(signal).toBeDefined();
+      expect(signal!.status).toBe('healthy');
+      expect(signal!.checkId).toBeUndefined();
+      expect(signal!.guideVars).toBeUndefined();
+    });
+
+    it('an open (non-blocked) security group signal carries no checkId or guideVars', async () => {
+      const { agent, context } = makeAgent('healthy');
+      const health = await agent.assessHealth(context);
+      const signal = health.signals.find((s) => s.source === 'rds_security_group');
+      expect(signal).toBeDefined();
+      expect(signal!.status).toBe('healthy');
+      expect(signal!.checkId).toBeUndefined();
+      expect(signal!.guideVars).toBeUndefined();
+    });
+
+    it('a pending-modification warning item carries no checkId or guideVars, even though the instance is available', async () => {
+      const { agent, context } = makeAgent('maintenance_pending');
+      const health = await agent.assessHealth(context);
+      const diagnosis = await agent.diagnose(context);
+
+      const pendingSignal = health.signals.find(
+        (s) => s.source === 'rds_instance_status' && /pending/i.test(s.detail),
+      );
+      expect(pendingSignal).toBeDefined();
+      expect(pendingSignal!.checkId).toBeUndefined();
+      expect(pendingSignal!.guideVars).toBeUndefined();
+
+      // The instance-status item itself is still 'available' (not critical),
+      // so it must not carry the guide either.
+      const statusSignal = health.signals.find(
+        (s) => s.source === 'rds_instance_status' && !/pending/i.test(s.detail),
+      );
+      expect(statusSignal).toBeDefined();
+      expect(statusSignal!.checkId).toBeUndefined();
+
+      const pendingFinding = diagnosis.findings.find(
+        (f) => f.source === 'rds_instance_status' && /pending/i.test(f.observation),
+      );
+      expect(pendingFinding).toBeDefined();
+      expect(pendingFinding!.checkId).toBeUndefined();
+      expect(pendingFinding!.guideVars).toBeUndefined();
+    });
+
+    it('a critical instance-status item (instance unavailable) still carries its checkId and guideVars', async () => {
+      const { agent, context } = makeAgent('instance_stopped');
+      const health = await agent.assessHealth(context);
+      const signal = health.signals.find((s) => s.source === 'rds_instance_status' && s.status === 'critical');
+      expect(signal).toBeDefined();
+      expect(signal!.checkId).toBe('aws-rds.instance_status');
+      expect(signal!.guideVars).toMatchObject({ instance: 'prod-db-01' });
+    });
+  });
+
   it('instance_unavailable (e.g. a stopped instance) still yields a suggestion plan, not an empty one', async () => {
     const { agent, context } = makeAgent('instance_stopped');
     const diagnosis = await agent.diagnose(context);
