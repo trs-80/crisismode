@@ -18,6 +18,8 @@ export interface HealthSignal {
   entityId?: string;
   /** Stable id of the check that produced this signal (e.g. 'llm-provider.key_valid') — consumed by the guidance registry. Optional: agents adopt it incrementally. */
   checkId?: string;
+  /** Per-target substitutions (e.g. { instance: 'prod-db-01' }) for this signal's checkId's matched guide, applied before the guide is attached. Undefined when the checkId's guide has no placeholders to fill. */
+  guideVars?: Record<string, string> | undefined;
 }
 
 export interface HealthAssessment {
