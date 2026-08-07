@@ -41,9 +41,9 @@ export function isDeclarativeNoOpCheck(check: CheckExpression): boolean {
   const hasStatement = typeof check.statement === 'string' && check.statement.trim().length > 0;
   if (hasStatement) return false;
 
-  if (check.type === 'expression' || check.type === 'placeholder') return true;
+  if (check.type === 'expression') return true;
 
-  if (check.type === 'api_field') {
+  if (check.type === 'placeholder' || check.type === 'api_field') {
     const hasOperation = typeof check.operation === 'string' && check.operation.trim().length > 0;
     return !hasOperation;
   }
