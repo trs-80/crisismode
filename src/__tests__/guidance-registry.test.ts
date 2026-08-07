@@ -163,6 +163,19 @@ describe('platformsForTarget', () => {
   it('does not treat an unrelated kind that merely starts with the same prefix as llm-provider', () => {
     expect(platformsForTarget('llm-provider-legacy', 'anthropic')).toBeUndefined();
   });
+
+  // The kind suffix (llm-provider.<provider>) is the authoritative provider
+  // carrier (src/config/schema.ts:88-93) — TargetConfig.name is free-form
+  // user input from LlmTargetOptions, not something guidance should trust.
+  // A user-configured target can name-collide with a different vendor.
+  it('trusts the kind suffix over a misleading target name for a dotted kind', () => {
+    // Named 'claude-router' but its kind says openrouter — must not leak the
+    // Anthropic console guide onto an OpenRouter problem.
+    expect(platformsForTarget('llm-provider.openrouter', 'claude-router')).toEqual([]);
+    // Named 'my-llm' (matches no vendor regex) but its kind says anthropic —
+    // guidance must not be silently suppressed for a known-Anthropic target.
+    expect(platformsForTarget('llm-provider.anthropic', 'my-llm')).toEqual(['anthropic-console']);
+  });
 });
 
 describe('applyGuideVariables', () => {
