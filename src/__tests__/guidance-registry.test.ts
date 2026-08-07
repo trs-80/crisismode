@@ -129,14 +129,19 @@ describe('guidance scope — platform filtering', () => {
 });
 
 describe('platformsForTarget', () => {
-  it('maps a provider-named llm-provider target to that provider\'s console', () => {
-    expect(platformsForTarget('llm-provider', 'anthropic')).toEqual(['anthropic-console']);
-    expect(platformsForTarget('llm-provider', 'openai')).toEqual(['openai-platform']);
+  // autodiscovery.ts (src/cli/autodiscovery.ts) deliberately never emits a
+  // bare 'llm-provider' kind — every derived target's kind is
+  // `llm-provider.${provider}` (e.g. 'llm-provider.anthropic'), with a
+  // matching derived name like 'derived-llm-anthropic'. These are the real
+  // kind/name shapes scan.ts and diagnose.ts pass to platformsForTarget.
+  it('maps a per-provider llm-provider kind to that provider\'s console', () => {
+    expect(platformsForTarget('llm-provider.anthropic', 'derived-llm-anthropic')).toEqual(['anthropic-console']);
+    expect(platformsForTarget('llm-provider.openai', 'derived-llm-openai')).toEqual(['openai-platform']);
   });
 
-  it('returns an empty list for a provider with no guides, never another vendor\'s', () => {
-    expect(platformsForTarget('llm-provider', 'google')).toEqual([]);
-    expect(platformsForTarget('llm-provider', 'openrouter')).toEqual([]);
+  it('returns an empty list for a per-provider kind with no guides, never another vendor\'s', () => {
+    expect(platformsForTarget('llm-provider.google', 'derived-llm-google')).toEqual([]);
+    expect(platformsForTarget('llm-provider.openrouter', 'derived-llm-openrouter')).toEqual([]);
     expect(platformsForTarget('vector-store', 'pinecone')).toEqual([]);
   });
 
@@ -146,6 +151,17 @@ describe('platformsForTarget', () => {
 
   it('leaves the platform unknown for a plain postgres target', () => {
     expect(platformsForTarget('postgresql', 'primary')).toBeUndefined();
+  });
+
+  it('still recognizes the bare "llm-provider" kind as a defensive fallback', () => {
+    // No real caller emits this bare kind (see above), but platformsForTarget
+    // should not regress on it if something else ever does.
+    expect(platformsForTarget('llm-provider', 'anthropic')).toEqual(['anthropic-console']);
+    expect(platformsForTarget('llm-provider', 'openai')).toEqual(['openai-platform']);
+  });
+
+  it('does not treat an unrelated kind that merely starts with the same prefix as llm-provider', () => {
+    expect(platformsForTarget('llm-provider-legacy', 'anthropic')).toBeUndefined();
   });
 });
 
@@ -236,16 +252,18 @@ describe('guidance registry — content coverage', () => {
   });
 
   it('an Anthropic-scoped finding never surfaces OpenAI steps, and vice versa', () => {
+    // Realistic kind/name pair, as autodiscovery.ts derives them — not the
+    // bare 'llm-provider' kind, which no real target ever carries.
     const anthropic = guidesForFindingTypes(
       ['llm-provider.key_valid', 'llm-provider.quota_billing', 'llm-provider.rate_limit_headroom'],
-      { platforms: platformsForTarget('llm-provider', 'anthropic') },
+      { platforms: platformsForTarget('llm-provider.anthropic', 'derived-llm-anthropic') },
     );
     expect(anthropic.every((g) => g.platform === 'anthropic-console')).toBe(true);
     expect(anthropic.length).toBeGreaterThan(0);
 
     const openai = guidesForFindingTypes(
       ['llm-provider.key_valid', 'llm-provider.quota_billing'],
-      { platforms: platformsForTarget('llm-provider', 'openai') },
+      { platforms: platformsForTarget('llm-provider.openai', 'derived-llm-openai') },
     );
     expect(openai.every((g) => g.platform === 'openai-platform')).toBe(true);
     expect(openai.map((g) => g.id)).not.toContain('anthropic-rotate-key');
@@ -254,7 +272,7 @@ describe('guidance registry — content coverage', () => {
   it('a provider with no guides gets nothing rather than another vendor\'s console', () => {
     const google = guidesForFindingTypes(
       ['llm-provider.key_valid'],
-      { platforms: platformsForTarget('llm-provider', 'google') },
+      { platforms: platformsForTarget('llm-provider.google', 'derived-llm-google') },
     );
     expect(google).toEqual([]);
   });
