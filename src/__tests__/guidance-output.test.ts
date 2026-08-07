@@ -109,6 +109,11 @@ describe('scan output — guidance', () => {
         summary: 'RDS storage is full on instance prod-db-01',
         confidence: 0.95,
         escalationLevel: 2,
+        // Real scan output always sets a finding-level checkId (dominantCheckId
+        // in scan.ts), never a finding-level guideVars — the vars only ever
+        // live on the signal. Omitting this checkId here would flatter the
+        // code: it wouldn't exercise the same shape checkTargetHealth produces.
+        checkId: 'aws-rds.storage_full',
         guidancePlatforms: ['aws-rds'],
         signals: [{
           status: 'critical',
@@ -206,6 +211,74 @@ describe('scan output — guidance scoping for real llm-provider.<provider> kind
     });
     const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(text).not.toContain('How to fix it');
+  });
+});
+
+// Regression for the finding-level-checkId-shadows-signal-vars bug found in
+// the PR 5 final review: checkTargetHealth (scan.ts) always sets a
+// finding-level checkId via dominantCheckId but never a finding-level
+// guideVars — only the signal carries the real substitutions. This drives
+// the real checkTargetHealth end to end (not a hand-built finding literal)
+// to prove the rendered guide substitutes the real values and never leaks
+// the placeholder tokens.
+describe('scan output — guidance for a real aws-rds storage_full finding', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, verbose: false, mode: 'human' });
+  });
+
+  function storageFullRegistry(): HealthCheckRegistry {
+    return {
+      supportedKinds: () => ['aws-rds'],
+      createForTarget: () => Promise.resolve({
+        agent: {
+          manifest: { name: 'aws-rds', version: '1.0.0', spec: { executionContexts: [] } },
+          assessHealth: () => Promise.resolve({
+            status: 'unhealthy',
+            confidence: 0.9,
+            summary: 'RDS storage is full on instance prod-db-01',
+            observedAt: new Date().toISOString(),
+            signals: [{
+              status: 'critical',
+              detail: 'allocated storage exhausted',
+              source: 'rds_storage',
+              checkId: 'aws-rds.storage_full',
+              guideVars: { instance: 'prod-db-01', 'target-storage-gb': '40' },
+            }],
+          }),
+        },
+        backend: { close: () => Promise.resolve() },
+      } as never),
+    };
+  }
+
+  it('renders the substituted values and never a literal <token>', async () => {
+    const target: TargetConfig = { name: 'prod-rds', kind: 'aws-rds' };
+    const result = await checkTargetHealth(target, storageFullRegistry());
+    // dominantCheckId derives a finding-level checkId from the signal; the
+    // finding itself never carries guideVars — the exact real shape.
+    expect(result.finding.checkId).toBe('aws-rds.storage_full');
+    expect(result.finding.guideVars).toBeUndefined();
+
+    configure({ mode: 'human', noColor: true });
+    printScanSummary({
+      score: 55,
+      findings: [{ id: 'RDS-001', ...result.finding }],
+      recentChanges: [],
+      scannedAt: '2026-08-05T12:00:00.000Z',
+      durationMs: 1,
+    });
+    const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(text).toContain('prod-db-01');
+    expect(text).toContain('40 GiB');
+    expect(text).not.toContain('<instance>');
+    expect(text).not.toContain('<target-storage-gb>');
   });
 });
 
