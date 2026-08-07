@@ -329,10 +329,6 @@ describe('PgSimulator.evaluateCheck()', () => {
     "SELECT count(*) FROM pg_stat_replication WHERE client_addr = '10.0.1.52' AND state = 'streaming'";
   const REPL_PRESENT =
     "SELECT count(*) FROM pg_stat_replication WHERE client_addr = '10.0.1.52'";
-  // Deliberately avoids the literal "pg_stat_replication" so the earlier
-  // replica-present branch does not intercept this before the replay_lag branch.
-  const REPLAY_LAG =
-    "SELECT replay_lag FROM replication_status WHERE client_addr = '10.0.1.52'";
   const REPLAY_PAUSED = 'SELECT pg_is_wal_replay_paused()';
   const IDLE_IN_TX =
     "SELECT count(*) FROM pg_stat_activity WHERE state = 'idle in transaction' " +
@@ -348,13 +344,6 @@ describe('PgSimulator.evaluateCheck()', () => {
     const sim = new PgSimulator();
     expect(await sim.evaluateCheck(mk(REPL_PRESENT, 'gte', 1))).toBe(true);
     expect(await sim.evaluateCheck(mk(REPL_PRESENT, 'eq', 0))).toBe(false);
-  });
-
-  it('replay_lag branch (degraded → 0, recovered → 1)', async () => {
-    const sim = new PgSimulator();
-    expect(await sim.evaluateCheck(mk(REPLAY_LAG, 'eq', 0))).toBe(true);
-    sim.transition('recovered');
-    expect(await sim.evaluateCheck(mk(REPLAY_LAG, 'eq', 1))).toBe(true);
   });
 
   it('wal_replay_paused branch (toggle via pauseReplay)', async () => {

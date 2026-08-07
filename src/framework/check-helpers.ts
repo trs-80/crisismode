@@ -10,11 +10,20 @@ import type { CheckExpression } from '../types/common.js';
  * `playbookToPlan()` (src/framework/playbook/runtime.ts) emits `type:
  * 'expression'` checks with no `statement` when a playbook step declares no
  * author-written precondition/success/condition text. The action-template
- * registry and built-in templates (src/framework/action-template-registry.ts,
- * src/framework/action-templates.ts) emit `type: 'placeholder'` and `type:
- * 'api_field'` checks the same way — `operation` describes intent, but there
- * is no `statement` for a backend to evaluate. These are the plan author's
- * explicit no-op: there was nothing to assert, not a bug.
+ * registry's fallback success_check (src/framework/action-template-
+ * registry.ts) emits a `type: 'placeholder'` check the same way, with
+ * neither `statement` nor `operation`. Both are the plan author's explicit
+ * no-op: there was nothing to assert, not a bug.
+ *
+ * `type: 'api_field'` is narrower: it counts as a no-op ONLY when it has
+ * NEITHER `statement` NOR `operation`. Several built-in templates
+ * (src/framework/action-templates.ts — get_active_revision,
+ * get_node_pod_count, replacement_pod_running) emit `api_field` checks with
+ * a real `operation` and a meaningful `expect`, as the mandated
+ * success_check for mutating (action_class >= 2) templates. No backend
+ * happens to dispatch `operation` yet, but that is a missing dispatcher, not
+ * an absent assertion — treating those as no-ops would turn a required
+ * safety gate into a guaranteed pass.
  *
  * This is deliberately narrow: a missing `statement` on a `sql` or
  * `structured_command` check is NOT covered here — for those types a missing
@@ -31,7 +40,15 @@ import type { CheckExpression } from '../types/common.js';
 export function isDeclarativeNoOpCheck(check: CheckExpression): boolean {
   const hasStatement = typeof check.statement === 'string' && check.statement.trim().length > 0;
   if (hasStatement) return false;
-  return check.type === 'expression' || check.type === 'placeholder' || check.type === 'api_field';
+
+  if (check.type === 'expression' || check.type === 'placeholder') return true;
+
+  if (check.type === 'api_field') {
+    const hasOperation = typeof check.operation === 'string' && check.operation.trim().length > 0;
+    return !hasOperation;
+  }
+
+  return false;
 }
 
 /**
