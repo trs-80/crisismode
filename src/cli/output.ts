@@ -27,9 +27,10 @@ import { buildRiskFraming } from './risk-framing.js';
 import type { TriageReport } from '../framework/triage.js';
 import type { ObserverReframe } from './observer-reframe.js';
 import { attachGuidesToScanFinding, attachGuidesToDiagnosis } from '../framework/guidance/attach.js';
-import type { GuidanceScope } from '../framework/guidance/registry.js';
+import { applyGuideVariables, getGuideById, type GuidanceScope } from '../framework/guidance/registry.js';
 import { renderGuidesLines, guideReference } from '../framework/guidance/render.js';
 import type { RemediationGuide } from '../types/remediation-guide.js';
+import type { RecoveryStep } from '../types/step-types.js';
 
 /**
  * Three output modes:
@@ -246,6 +247,22 @@ export function printSynthesis(result: SynthesisResult): void {
 
 // ── Plan ──
 
+/**
+ * Guides a plan step points at, resolved with the substitutions the agent
+ * recorded. Rendering from guideIds + guideVars (not from message.detail)
+ * keeps one renderer in charge of the words: the step records *which* guide
+ * and *what values*, never the formatting.
+ */
+function guidesForStep(step: RecoveryStep): RemediationGuide[] {
+  if (step.type !== 'human_notification') return [];
+  const ids = step.message.guideIds ?? [];
+  const vars = step.message.guideVars ?? {};
+  return ids
+    .map((id) => getGuideById(id))
+    .filter((g): g is RemediationGuide => g !== undefined)
+    .map((g) => applyGuideVariables(g, vars));
+}
+
 export function printPlan(plan: RecoveryPlan): void {
   if (outputOptions.mode === 'machine') {
     jsonOut('plan', { plan });
@@ -280,6 +297,7 @@ export function printPlan(plan: RecoveryPlan): void {
       console.log(chalk.yellow(`       risk:  `) + chalk.dim(framing.couldGoWrong));
       console.log(chalk.dim(`       undo:  ${framing.undo}`));
     }
+    printRemediationGuides(guidesForStep(s), '       ');
   }
   console.log('');
 }
