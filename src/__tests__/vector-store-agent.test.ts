@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VectorStoreAgent } from '../agent/vector-store/agent.js';
 import { VectorStoreSimulator, SIMULATOR_FIXTURE_KEY } from '../agent/vector-store/simulator.js';
+import { VectorStoreLiveClient } from '../agent/vector-store/live-client.js';
 import { vectorStoreManifest } from '../agent/vector-store/manifest.js';
 import { vectorStoreRegistration } from '../agent/vector-store/registration.js';
 import { builtinAgents } from '../config/builtin-agents.js';
@@ -13,6 +14,17 @@ import { explainSource } from '../framework/signal-explanations.js';
 import { VECTOR_STORE_CHECK_IDS } from '../agent/vector-store/check-ids.js';
 import type { OfflineGate } from '../agent/llm-provider/offline-gate.js';
 import type { AgentContext } from '../types/agent-context.js';
+
+const VECTOR_STORE_ENV_KEYS = ['PINECONE_API_KEY', 'UPSTASH_VECTOR_REST_TOKEN', 'UPSTASH_VECTOR_REST_URL'] as const;
+const originalVectorStoreEnv: Record<string, string | undefined> = {};
+for (const key of VECTOR_STORE_ENV_KEYS) originalVectorStoreEnv[key] = process.env[key];
+afterEach(() => {
+  for (const key of VECTOR_STORE_ENV_KEYS) {
+    const original = originalVectorStoreEnv[key];
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
+  }
+});
 
 function context(): AgentContext {
   return assembleContext(
@@ -187,6 +199,30 @@ describe('registration', () => {
       name: 'sim', kind: 'vector-store', primary: { host: 'simulator', port: 0 },
     } as never);
     expect(instance.backend).toBeInstanceOf(VectorStoreSimulator);
+    await instance.backend.close();
+  });
+
+  it('fails loudly for a non-simulator target when no provider credentials are configured', async () => {
+    for (const key of VECTOR_STORE_ENV_KEYS) delete process.env[key];
+    const target = {
+      name: 'derived-vector-store', kind: 'vector-store', primary: { host: 'some-vector-host', port: 443 },
+    } as never;
+    // Fail loud, not a silent simulator substitution — claiming coverage
+    // that doesn't exist would be worse than a construction error.
+    await expect(vectorStoreRegistration.createAgent(target)).rejects.toThrow(/No vector-store credentials found/);
+  });
+
+  it('builds a live client for a non-simulator target when credentials are configured', async () => {
+    for (const key of VECTOR_STORE_ENV_KEYS) delete process.env[key];
+    process.env['UPSTASH_VECTOR_REST_URL'] = 'https://demo-vector.upstash.io';
+    process.env['UPSTASH_VECTOR_REST_TOKEN'] = 'up-registration-test-secret';
+    const target = {
+      name: 'derived-vector-store', kind: 'vector-store', primary: { host: 'some-vector-host', port: 443 },
+    } as never;
+    // Construction alone must not touch the network — no fetch is stubbed
+    // here, so a live probe firing during createAgent would fail this test.
+    const instance = await vectorStoreRegistration.createAgent(target);
+    expect(instance.backend).toBeInstanceOf(VectorStoreLiveClient);
     await instance.backend.close();
   });
 });
