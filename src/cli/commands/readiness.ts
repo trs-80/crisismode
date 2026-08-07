@@ -7,19 +7,25 @@
  */
 
 import { runReadiness } from '../../readiness/run.js';
-import { printBanner, printInfo, jsonOut, getOutputMode } from '../output.js';
+import { attachGuidesByRuleId } from '../../framework/guidance/attach.js';
+import { renderGuidesLines } from '../../framework/guidance/render.js';
+import { printBanner, printInfo, jsonOut, getOutputMode, outputOptions } from '../output.js';
 import type { ReadinessReport } from '../../readiness/types.js';
 
 const STATUS_ICON: Record<string, string> = {
   ready: '✅', at_risk: '🟡', blocking: '🔴', unknown: '❔',
 };
 
-export function renderReadinessReport(report: ReadinessReport): string[] {
+export function renderReadinessReport(
+  report: ReadinessReport,
+  opts: { terse?: boolean | undefined } = {},
+): string[] {
   const lines: string[] = [];
   lines.push(`Scale readiness: ${report.verdict} (score ${report.score}/100)`);
   lines.push(`${report.evaluated} rules evaluated, ${report.unknown} could not run`);
   lines.push('');
-  for (const f of report.findings) {
+  for (const raw of report.findings) {
+    const f = attachGuidesByRuleId(raw);
     lines.push(`${STATUS_ICON[f.status] ?? '·'} ${f.title} [${f.status}]`);
     for (const e of f.evidence) lines.push(`    ${e}`);
     if (f.status === 'unknown' && f.reason) lines.push(`    could not run: ${f.reason}`);
@@ -27,6 +33,9 @@ export function renderReadinessReport(report: ReadinessReport): string[] {
       lines.push(`    ${f.explanation}`);
       lines.push(`    Fix: ${f.fix}`);
       lines.push(`    Learn more: ${f.learnMoreUrl}`);
+      for (const line of renderGuidesLines(f.guides ?? [], { terse: opts.terse })) {
+        lines.push(line === '' ? '' : `    ${line}`);
+      }
     }
   }
   if (report.ceilings) {
@@ -59,11 +68,12 @@ export function renderReadinessReport(report: ReadinessReport): string[] {
 }
 
 export async function runReadinessCommand(): Promise<void> {
-  const report = await runReadiness();
+  const raw = await runReadiness();
+  const report: ReadinessReport = { ...raw, findings: raw.findings.map((f) => attachGuidesByRuleId(f)) };
   if (getOutputMode() === 'machine') {
     jsonOut('readiness', report);
     return;
   }
   printBanner();
-  for (const line of renderReadinessReport(report)) printInfo(line);
+  for (const line of renderReadinessReport(report, { terse: outputOptions.terse })) printInfo(line);
 }
