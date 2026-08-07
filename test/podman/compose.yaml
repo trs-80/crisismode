@@ -16,6 +16,7 @@ networks:
 volumes:
   pg-primary-data:
   pg-replica-data:
+  pg-vector-data:
   prometheus-data:
   alertmanager-data:
 
@@ -69,6 +70,26 @@ services:
     depends_on:
       pg-primary:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crisismode"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- PostgreSQL 16 + pgvector (readiness vector rules) ---
+  pg-vector:
+    image: docker.io/pgvector/pgvector:pg16
+    container_name: cm-pg-vector
+    networks:
+      - crisismode-net
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_USER: crisismode
+      POSTGRES_PASSWORD: crisismode
+      POSTGRES_DB: crisismode
+    volumes:
+      - pg-vector-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crisismode"]
       interval: 5s
