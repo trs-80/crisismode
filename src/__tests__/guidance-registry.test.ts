@@ -174,4 +174,83 @@ describe('applyGuideVariables', () => {
     expect(JSON.stringify(guide)).toBe(before);
     expect(resolved.id).toBe(guide.id);
   });
+
+  it('leaves a specific unsupplied token literally in place when only some tokens are resolved', () => {
+    const guide: RemediationGuide = {
+      id: 'partial-token-test',
+      platform: 'aws-rds',
+      title: 'Resize <instance> in <region>',
+      applicableFindingTypes: ['aws-rds.storage_full'],
+      consoleSteps: ['Open Databases → <instance> in <region>.'],
+      expectedAfter: '<instance> in <region> returns to available.',
+      verifiedOn: '2026-08-05',
+    };
+
+    // Only 'instance' is supplied — 'region' is deliberately left unknown.
+    const resolved = applyGuideVariables(guide, { instance: 'prod-db-01' });
+
+    expect(resolved.title).toBe('Resize prod-db-01 in <region>');
+    expect(resolved.consoleSteps[0]).toContain('<region>');
+    expect(resolved.expectedAfter).toContain('<region>');
+  });
+});
+
+describe('guidance registry — content coverage', () => {
+  const expectedIdsByPlatform: Record<string, string[]> = {
+    'anthropic-console': ['anthropic-rotate-key', 'anthropic-rate-limits', 'anthropic-billing-credits'],
+    'openai-platform': ['openai-rotate-key', 'openai-usage-limits', 'openai-billing'],
+    supabase: [
+      'supabase-pooler-mode',
+      'supabase-connection-limits',
+      'supabase-upgrade-compute',
+      'supabase-pgvector-index',
+    ],
+    neon: ['neon-pooled-connection', 'neon-compute-size'],
+  };
+
+  for (const [platform, ids] of Object.entries(expectedIdsByPlatform)) {
+    it(`${platform} guides are registered`, () => {
+      const registered = REMEDIATION_GUIDES.filter((g) => g.platform === platform).map((g) => g.id);
+      for (const id of ids) expect(registered).toContain(id);
+    });
+  }
+
+  it('serverless pooling findings reach both Supabase and Neon guides', () => {
+    const ids = guidesForFindingType('serverless-pooling').map((g) => g.id);
+    expect(ids).toContain('supabase-pooler-mode');
+    expect(ids).toContain('neon-pooled-connection');
+  });
+
+  it('the pgvector index guide answers both vector readiness rules', () => {
+    expect(guidesForFindingType('vector-index-missing').map((g) => g.id)).toContain('supabase-pgvector-index');
+    expect(guidesForFindingType('ivfflat-lists-mismatch').map((g) => g.id)).toContain('supabase-pgvector-index');
+  });
+
+  it('OpenAI quota findings reach a billing guide', () => {
+    expect(guidesForFindingType('llm-provider.quota_billing').map((g) => g.id)).toContain('openai-billing');
+  });
+
+  it('an Anthropic-scoped finding never surfaces OpenAI steps, and vice versa', () => {
+    const anthropic = guidesForFindingTypes(
+      ['llm-provider.key_valid', 'llm-provider.quota_billing', 'llm-provider.rate_limit_headroom'],
+      { platforms: platformsForTarget('llm-provider', 'anthropic') },
+    );
+    expect(anthropic.every((g) => g.platform === 'anthropic-console')).toBe(true);
+    expect(anthropic.length).toBeGreaterThan(0);
+
+    const openai = guidesForFindingTypes(
+      ['llm-provider.key_valid', 'llm-provider.quota_billing'],
+      { platforms: platformsForTarget('llm-provider', 'openai') },
+    );
+    expect(openai.every((g) => g.platform === 'openai-platform')).toBe(true);
+    expect(openai.map((g) => g.id)).not.toContain('anthropic-rotate-key');
+  });
+
+  it('a provider with no guides gets nothing rather than another vendor\'s console', () => {
+    const google = guidesForFindingTypes(
+      ['llm-provider.key_valid'],
+      { platforms: platformsForTarget('llm-provider', 'google') },
+    );
+    expect(google).toEqual([]);
+  });
 });
