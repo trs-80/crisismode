@@ -14,6 +14,9 @@ import { KafkaSimulator } from '../agent/kafka/simulator.js';
 import { K8sSimulator } from '../agent/kubernetes/simulator.js';
 import { PgSimulator } from '../agent/pg-replication/simulator.js';
 import { TlsSimulator } from '../agent/tls/simulator.js';
+import { DiskSimulator } from '../agent/disk/simulator.js';
+import { DnsSimulator } from '../agent/dns/simulator.js';
+import { IacDriftSimulator } from '../agent/iac-drift/simulator.js';
 
 // ---------------------------------------------------------------------------
 // evaluateCheck() dispatch coverage for the simulators whose per-agent test
@@ -73,9 +76,9 @@ describe('RedisSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('CONFIG GET maxmemory-policy', 'gt', 'noeviction'))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new RedisSimulator();
-    expect(await sim.evaluateCheck(mk('nonexistent', 'eq', 'x'))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nonexistent', 'eq', 'x'))).toBe(false);
   });
 });
 
@@ -104,9 +107,9 @@ describe('RdsRecoverySimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('instance_status', 'neq', 'available'))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new RdsRecoverySimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -129,9 +132,9 @@ describe('S3RecoverySimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('bucket_exists', 'neq', 'true'))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new S3RecoverySimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -148,9 +151,9 @@ describe('DynamoDbRecoverySimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('continuous_backups_status', 'neq', 'DISABLED'))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new DynamoDbRecoverySimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -179,9 +182,9 @@ describe('FlinkSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('taskmanager_count', 'lt', 3))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new FlinkSimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -204,9 +207,9 @@ describe('EtcdSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('cluster_size', 'lt', 3))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new EtcdSimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -235,9 +238,9 @@ describe('CephSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('usage_percent', 'gt', 85))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new CephSimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -284,9 +287,9 @@ describe('KafkaSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('consumer_group_rebalancing_count', 'eq', 0))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new KafkaSimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -315,9 +318,9 @@ describe('K8sSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('deployment_ready', 'eq', true))).toBe(true);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it('unknown statement fails closed', async () => {
     const sim = new K8sSimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -439,6 +442,45 @@ describe('TlsSimulator.evaluateCheck()', () => {
 
   it('unknown statement falls through to false (fail-closed)', async () => {
     const sim = new TlsSimulator();
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+describe('DiskSimulator.evaluateCheck()', () => {
+  it('available_bytes (min across filesystems)', async () => {
+    const sim = new DiskSimulator();
+    expect(await sim.evaluateCheck(mk('available_bytes', 'gt', 0))).toBe(true);
+    expect(await sim.evaluateCheck(mk('available_bytes', 'lt', 0))).toBe(false);
+  });
+
+  it('unknown statement fails closed', async () => {
+    const sim = new DiskSimulator();
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+describe('DnsSimulator.evaluateCheck()', () => {
+  it('resolver_reachable (2 of 3 resolvers reachable in the default state)', async () => {
+    const sim = new DnsSimulator();
+    expect(await sim.evaluateCheck(mk('resolver_reachable', 'eq', 2))).toBe(true);
+    expect(await sim.evaluateCheck(mk('resolver_reachable', 'eq', 3))).toBe(false);
+  });
+
+  it('unknown statement fails closed', async () => {
+    const sim = new DnsSimulator();
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+describe('IacDriftSimulator.evaluateCheck()', () => {
+  it('iac_drift_count (non-negative in the default drifted scenario)', async () => {
+    const sim = new IacDriftSimulator();
+    expect(await sim.evaluateCheck(mk('iac_drift_count', 'gte', 0))).toBe(true);
+    expect(await sim.evaluateCheck(mk('iac_drift_count', 'lt', 0))).toBe(false);
+  });
+
+  it('unknown statement fails closed', async () => {
+    const sim = new IacDriftSimulator();
     expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
