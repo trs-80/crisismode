@@ -128,7 +128,10 @@ export class AwsS3RecoveryAgent implements RecoveryAgent {
   }
 
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
-    const bucket = String(context.trigger.payload.bucket || 'unknown-bucket');
+    const diagnosedBucket = diagnosis.findings.find(
+      (finding) => finding.source === 's3_versioning',
+    )?.data?.bucket;
+    const bucket = String(context.trigger.payload.bucket || diagnosedBucket || 'unknown-bucket');
 
     // Versioning enabled and lifecycle rules configured — nothing to
     // recover. Return a no-op plan rather than building the full

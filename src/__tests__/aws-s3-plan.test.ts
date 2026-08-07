@@ -72,4 +72,40 @@ describe('AwsS3RecoveryAgent.plan — real validatePlan per simulator scenario',
     expect(plan.metadata.scenario).toBe('no_finding');
     expect(plan.rollbackStrategy.type).toBe('none');
   });
+
+  it('falls back to the diagnosed bucket when the trigger payload omits one', async () => {
+    const backend = new S3RecoverySimulator();
+    backend.transition('recovered');
+    const agent = new AwsS3RecoveryAgent(backend);
+    const trigger: AgentContext['trigger'] = {
+      type: 'health_check',
+      source: 'cli-scan',
+      payload: { alertname: 'aws-s3ScanCheck', severity: 'info' },
+      receivedAt: new Date().toISOString(),
+    };
+    const context = assembleContext(trigger, awsS3RecoveryManifest);
+
+    const diagnosis = await agent.diagnose(context);
+    const plan = await agent.plan(context, diagnosis);
+
+    expect(plan.impact.affectedSystems[0]?.identifier).toBe('prod-backup-bucket');
+    expect(plan.metadata.summary).not.toContain('unknown-bucket');
+  });
+
+  it('keeps lifecycle rules after enabling versioning from an isolated versioning state', async () => {
+    for (const state of ['versioning_disabled', 'versioning_suspended'] as const) {
+      const backend = new S3RecoverySimulator();
+      backend.transition(state);
+
+      await backend.executeCommand({
+        type: 'structured_command',
+        operation: 'put_bucket_versioning',
+        parameters: { bucket: 'prod-backup-bucket', status: 'Enabled' },
+      });
+
+      const config = await backend.getBucketConfig();
+      expect(config.versioningStatus).toBe('Enabled');
+      expect(config.lifecycleRules.length).toBeGreaterThan(0);
+    }
+  });
 });
