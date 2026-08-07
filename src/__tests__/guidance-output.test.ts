@@ -94,8 +94,7 @@ describe('scan output — guidance', () => {
     expect(guide.verifiedOn).toBe('2026-08-05');
   });
 
-  // re-enabled in Task 9 (the aws-rds guides it asserts on are written there)
-  it.skip('resolves aws-rds guide placeholders to concrete target values, not literal tokens', () => {
+  it('resolves aws-rds guide placeholders to concrete target values, not literal tokens', () => {
     configure({ mode: 'human', noColor: true });
     const result: ScanResult = {
       score: 55,
@@ -184,8 +183,7 @@ describe('diagnose output — guidance', () => {
     expect(new Set(platforms)).toEqual(new Set(['anthropic-console', 'openai-platform']));
   });
 
-  // re-enabled in Task 9 (the aws-rds guides it asserts on are written there)
-  it.skip('resolves aws-rds guide placeholders to concrete target values, not literal tokens', () => {
+  it('resolves aws-rds guide placeholders to concrete target values, not literal tokens', () => {
     configure({ mode: 'human', noColor: true });
     const rdsDiagnosis: DiagnosisResult = {
       status: 'identified',

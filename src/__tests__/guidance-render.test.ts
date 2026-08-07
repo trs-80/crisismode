@@ -121,8 +121,7 @@ describe('attachment', () => {
     expect(unguided.guides).toBeUndefined();
   });
 
-  // re-enabled in Task 9 (the aws-rds guides it asserts on are written there)
-  it.skip('attaches guides to diagnosis findings by checkId', () => {
+  it('attaches guides to diagnosis findings by checkId', () => {
     const diagnosis: DiagnosisResult = {
       status: 'identified',
       scenario: 'storage_full',
