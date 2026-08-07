@@ -16,6 +16,7 @@ export * from './types/forensic-record.js';
 export * from './types/network.js';
 export * from './types/evidence-bundle.js';
 export * from './types/action-template.js';
+export * from './types/remediation-guide.js';
 
 // Agent interface
 export * from './agent/interface.js';
