@@ -4,7 +4,7 @@
 import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage, IdleInTransactionSession } from './backend.js';
 import type { Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
-import type { TableStat, StatementStat, StatementAggregate } from '../../readiness/types.js';
+import type { TableStat, StatementStat, StatementAggregate, PgvectorInventory } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
 export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
@@ -22,6 +22,7 @@ export class PgSimulator implements PgBackend {
   private tableStats: TableStat[] = [];
   private statementStats: StatementStat[] | null = null;
   private statementAggregate: StatementAggregate | null = null;
+  private pgvectorInventory: PgvectorInventory | 'absent' | null = 'absent';
 
   getState(): SimulatorState {
     return this.state;
@@ -82,6 +83,18 @@ export class PgSimulator implements PgBackend {
   }
 
   async queryStatementAggregate(): Promise<StatementAggregate | null> { return this.statementAggregate; }
+
+  /**
+   * Configure the pgvector fixture. 'absent' (the default) simulates a
+   * database without the extension; null simulates a failed catalog read.
+   */
+  setPgvectorInventory(inventory: PgvectorInventory | 'absent' | null): void {
+    this.pgvectorInventory = inventory;
+  }
+
+  async getPgvectorInventory(): Promise<PgvectorInventory | 'absent' | null> {
+    return this.pgvectorInventory;
+  }
 
   async queryConnectionUsage(): Promise<ConnectionUsage | null> {
     const idleCount = this.idleInTxSessions.length;

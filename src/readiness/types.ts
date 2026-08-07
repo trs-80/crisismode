@@ -45,6 +45,44 @@ export interface StatementStat {
   meanMs: number;
 }
 
+/** One table column typed `vector` (pgvector), with the planner's row estimate. */
+export interface PgvectorTable {
+  /** Schema (pg_namespace.nspname). Same-named tables in different schemas are distinct. */
+  schema: string;
+  table: string;
+  column: string;
+  /**
+   * pg_class.reltuples — an ESTIMATE maintained by ANALYZE/autovacuum.
+   * null when PostgreSQL has no estimate yet (reltuples = -1, never analyzed);
+   * the vector rules report that as unknown rather than assuming zero rows.
+   */
+  rowEstimate: number | null;
+}
+
+/** One approximate-nearest-neighbour index (ivfflat or hnsw) on a vector column. */
+export interface PgvectorIndex {
+  /** Schema (pg_namespace.nspname) of the indexed table. Must match the table's schema to count as coverage. */
+  schema: string;
+  indexName: string;
+  table: string;
+  /** First indexed column; null when the index is built on an expression. */
+  column: string | null;
+  accessMethod: 'ivfflat' | 'hnsw';
+  /**
+   * ivfflat `lists` read from pg_class.reloptions. null when the index was
+   * created without an explicit `WITH (lists = ...)` — pgvector's built-in
+   * default is deliberately NOT substituted (omit, never fabricate).
+   */
+  lists: number | null;
+}
+
+/** Read-only snapshot of the pgvector catalog on one database. */
+export interface PgvectorInventory {
+  extensionVersion: string;
+  tables: PgvectorTable[];
+  indexes: PgvectorIndex[];
+}
+
 export type EvidenceClass = 'declared' | 'measured' | 'typical';
 
 /** Aggregate over ALL of pg_stat_statements — the true mean, not the top-N-slowest mean. */
@@ -97,6 +135,13 @@ export interface ReadinessSources {
   redisLimits?(): Promise<RedisLimits | null>;
   fdLimit?(): Promise<number | null>;
   declaredEgressMbps?(): Promise<number | null>;
+  /**
+   * pgvector catalog inventory. Three-way return keeps the causes distinct:
+   * an inventory (extension installed), 'absent' (confirmed not installed —
+   * the vector rules skip silently), null (the catalog read failed — the
+   * vector rules run and report 'unknown').
+   */
+  getPgvectorInventory?(): Promise<PgvectorInventory | 'absent' | null>;
 }
 
 export interface ReadinessContext {
@@ -105,6 +150,14 @@ export interface ReadinessContext {
   serverless: boolean;
   /** kind/host/port of the resolved postgresql target, if any */
   target?: { host: string; port: number } | undefined;
+  /**
+   * pgvector inventory, fetched ONCE by the runner before rule evaluation.
+   * `applicable(ctx)` is synchronous and cannot query the database, and it is
+   * the only mechanism that skips a rule silently — a rule returning
+   * status 'unknown' still renders in the report. undefined ⇒ no source at
+   * all (non-PG path); 'absent' ⇒ extension not installed; null ⇒ read failed.
+   */
+  pgvector?: PgvectorInventory | 'absent' | null | undefined;
 }
 
 export interface ReadinessRule {
