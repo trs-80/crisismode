@@ -329,3 +329,13 @@ describe('LlmProviderLiveClient.checkProviderStatus', () => {
     expect(status.known).toBe(false);
   });
 });
+
+describe('LlmProviderLiveClient.evaluateCheck', () => {
+  it('fails closed on an unrecognized statement', async () => {
+    // Matching the vector-store precedent: a check on a statement neither
+    // backend recognizes is a plan-authoring bug, and must not silently pass.
+    routeFetch({ 'api.anthropic.com': { status: 200, body: { data: [] } } });
+    const client = new LlmProviderLiveClient({ provider: 'anthropic', apiKey: 'sk-ant' });
+    expect(await client.evaluateCheck({ type: 'api_call', statement: 'nonsense_statement', expect: { operator: 'eq', value: 'ok' } })).toBe(false);
+  });
+});
