@@ -446,6 +446,97 @@ describe('DeployLiveClient evaluateCheck', () => {
     const client = await makeClient({ getHealthEndpoints: vi.fn().mockResolvedValue([]) });
     expect(await client.evaluateCheck(check('deploy_health', 'lte', 0))).toBe(true);
   });
+
+  it('traffic_distribution compares the primary target percentage', async () => {
+    const client = await makeClient({
+      getTrafficDistribution: vi.fn().mockResolvedValue({ entries: [{ target: 'abc12345', percentage: 10 }] }),
+    });
+    expect(await client.evaluateCheck(check('traffic_distribution', 'lte', 10))).toBe(true);
+    expect(await client.evaluateCheck(check('traffic_distribution', 'gt', 10))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+// ── Backup Live Client ──
+
+describe('BackupLiveClient evaluateCheck', () => {
+  async function makeClient(overrides: Record<string, unknown>) {
+    const { BackupLiveClient } = await import('../agent/backup/live-client.js');
+    const client = Object.create(BackupLiveClient.prototype) as InstanceType<typeof BackupLiveClient>;
+    inject(client, { config: { locations: ['/var/backups'] }, ...overrides });
+    return client;
+  }
+
+  it('all_verifications_passed is true when verifyAll reports a detected, fully-passing provider', async () => {
+    const client = await makeClient({
+      verifyAll: vi.fn().mockResolvedValue({
+        verifiedAt: new Date().toISOString(),
+        providers: [{ kind: 'file_directory', source: 'default', detected: true, items: [], verifications: [{ item: {}, passed: true, checks: [] }] }],
+        rpoEvaluations: [],
+        rtoEstimates: [],
+        uncoveredSources: [],
+      }),
+    });
+    expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(true);
+  });
+
+  it('all_verifications_passed is false when a verification failed', async () => {
+    const client = await makeClient({
+      verifyAll: vi.fn().mockResolvedValue({
+        verifiedAt: new Date().toISOString(),
+        providers: [{ kind: 'file_directory', source: 'default', detected: true, items: [], verifications: [{ item: {}, passed: false, checks: [] }] }],
+        rpoEvaluations: [],
+        rtoEstimates: [],
+        uncoveredSources: [],
+      }),
+    });
+    expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(false);
+  });
+
+  it('all_verifications_passed is false when there is no configured location', async () => {
+    const client = await makeClient({ config: { locations: [] } });
+    expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+// ── TLS Live Client ──
+
+describe('TlsLiveClient evaluateCheck', () => {
+  async function makeClient(overrides: Record<string, unknown>) {
+    const { TlsLiveClient } = await import('../agent/tls/live-client.js');
+    const client = Object.create(TlsLiveClient.prototype) as InstanceType<typeof TlsLiveClient>;
+    inject(client, overrides);
+    return client;
+  }
+
+  it('cert_valid counts endpoints whose chain validates', async () => {
+    const client = await makeClient({
+      getEndpointConfig: vi.fn().mockResolvedValue([{ host: 'a', port: 443 }, { host: 'b', port: 443 }]),
+      checkChainValidity: vi.fn().mockImplementation((host: string, port: number) =>
+        Promise.resolve(
+          host === 'a'
+            ? { host, port, valid: true, chainLength: 3, hostnameMatch: true, error: null, errorCode: null }
+            : { host, port, valid: false, chainLength: 0, hostnameMatch: false, error: 'x', errorCode: 'X' },
+        ),
+      ),
+    });
+    expect(await client.evaluateCheck(check('cert_valid', 'eq', 1))).toBe(true);
+    expect(await client.evaluateCheck(check('cert_valid', 'eq', 2))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({ getEndpointConfig: vi.fn().mockResolvedValue([]) });
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
 });
 
 // ── PG Replication Live Client ──

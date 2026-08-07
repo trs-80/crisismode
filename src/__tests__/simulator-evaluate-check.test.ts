@@ -2,7 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect } from 'vitest';
-import type { CheckExpression } from '../types/common.js';
+import type { CheckExpression, Command } from '../types/common.js';
 import { RedisSimulator } from '../agent/redis/simulator.js';
 import { RdsRecoverySimulator } from '../agent/aws-rds/simulator.js';
 import { S3RecoverySimulator } from '../agent/aws-s3/simulator.js';
@@ -13,6 +13,7 @@ import { CephSimulator } from '../agent/ceph/simulator.js';
 import { KafkaSimulator } from '../agent/kafka/simulator.js';
 import { K8sSimulator } from '../agent/kubernetes/simulator.js';
 import { PgSimulator } from '../agent/pg-replication/simulator.js';
+import { TlsSimulator } from '../agent/tls/simulator.js';
 
 // ---------------------------------------------------------------------------
 // evaluateCheck() dispatch coverage for the simulators whose per-agent test
@@ -377,8 +378,67 @@ describe('PgSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('service_state', 'eq', 'stopped', 'structured_command'))).toBe(false);
   });
 
-  it('unknown statement falls through to true', async () => {
+  it("'SELECT 1;' primary-reachability branch", async () => {
     const sim = new PgSimulator();
-    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('SELECT 1;', 'eq', 1))).toBe(true);
+    expect(await sim.evaluateCheck(mk('SELECT 1;', 'eq', 0))).toBe(false);
+  });
+
+  it('replication slot count reflects drop/create via executeCommand (replan flow)', async () => {
+    const sim = new PgSimulator();
+    const slotName = 'replica_us_east_1b';
+    const countCheck = (n: number) =>
+      mk(`SELECT count(*) FROM pg_replication_slots WHERE slot_name = '${slotName}';`, 'eq', n);
+
+    // Slot exists initially.
+    expect(await sim.evaluateCheck(countCheck(1))).toBe(true);
+    expect(await sim.evaluateCheck(countCheck(0))).toBe(false);
+
+    await sim.executeCommand({
+      type: 'sql',
+      subtype: 'function_call',
+      statement: `SELECT pg_drop_replication_slot('${slotName}');`,
+    } as Command);
+    expect(await sim.evaluateCheck(countCheck(0))).toBe(true);
+    expect(await sim.evaluateCheck(countCheck(1))).toBe(false);
+
+    await sim.executeCommand({
+      type: 'sql',
+      subtype: 'function_call',
+      statement: `SELECT pg_create_physical_replication_slot('${slotName}');`,
+    } as Command);
+    expect(await sim.evaluateCheck(countCheck(1))).toBe(true);
+    expect(await sim.evaluateCheck(countCheck(0))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const sim = new PgSimulator();
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+describe('TlsSimulator.evaluateCheck()', () => {
+  it('cert_valid counts endpoints whose chain validates', async () => {
+    const sim = new TlsSimulator();
+    // Default 'cert_expiring' state: internal.example.com is self-signed
+    // (invalid); the other two endpoints validate.
+    expect(await sim.evaluateCheck(mk('cert_valid', 'eq', 2))).toBe(true);
+    expect(await sim.evaluateCheck(mk('cert_valid', 'eq', 3))).toBe(false);
+  });
+
+  it('days_until_expiry reflects the soonest-expiring certificate', async () => {
+    const sim = new TlsSimulator();
+    expect(await sim.evaluateCheck(mk('days_until_expiry', 'lte', 5))).toBe(true);
+    expect(await sim.evaluateCheck(mk('days_until_expiry', 'gt', 30))).toBe(false);
+  });
+
+  it('hostname_match is true when all endpoints match', async () => {
+    const sim = new TlsSimulator();
+    expect(await sim.evaluateCheck(mk('hostname_match', 'eq', true))).toBe(true);
+  });
+
+  it('unknown statement falls through to false (fail-closed)', async () => {
+    const sim = new TlsSimulator();
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });

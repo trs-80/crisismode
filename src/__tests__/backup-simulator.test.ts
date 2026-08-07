@@ -319,14 +319,14 @@ describe('BackupSimulator', () => {
       expect(result).toBe(false);
     });
 
-    it('returns true for unknown statement', async () => {
+    it('returns false for unknown statement (fail-closed)', async () => {
       const sim = new BackupSimulator();
       const result = await sim.evaluateCheck({
         type: 'check',
         statement: 'unknown_check',
         expect: { operator: 'eq', value: 'anything' },
       });
-      expect(result).toBe(true);
+      expect(result).toBe(false);
     });
   });
 
