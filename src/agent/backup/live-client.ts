@@ -57,6 +57,13 @@ export interface BackupLiveConfig {
 
 export class BackupLiveClient implements BackupBackend {
   private config: BackupLiveConfig;
+  // Set whenever verifyAll() completes — including via the diagnosis-phase
+  // 'verify_backups' executeCommand path, which calls verifyAll() directly.
+  // Lets the all_verifications_passed check (evaluateCheck below) reuse a
+  // report the plan already produced instead of re-running the heaviest
+  // part of the workload (gzip -t / tar -tf subprocesses) from inside a
+  // check that also runs in dry-run mode.
+  private lastVerification: BackupVerificationReport | undefined;
 
   constructor(config: BackupLiveConfig) {
     this.config = config;
@@ -123,13 +130,15 @@ export class BackupLiveClient implements BackupBackend {
       return { provider, rpo, rto, uncovered: null as string | null };
     }));
 
-    return {
+    const report: BackupVerificationReport = {
       verifiedAt,
       providers: results.map((r) => r.provider),
       rpoEvaluations: results.map((r) => r.rpo),
       rtoEstimates: results.map((r) => r.rto).filter((r): r is RtoEstimate => r !== null),
       uncoveredSources: results.map((r) => r.uncovered).filter((s): s is string => s !== null),
     };
+    this.lastVerification = report;
+    return report;
   }
 
   // ── Private: inventory ──
@@ -296,18 +305,36 @@ export class BackupLiveClient implements BackupBackend {
       // that emits it carries no config), so compute honestly from the same
       // filesystem locations backup_count inspects rather than hardcoding a
       // result: a detected provider with every verification check passing.
-      const location = this.config.locations[0];
-      if (!location) return compareCheckValue(false, check.expect.operator, check.expect.value);
-      const config: BackupProviderConfig = {
-        kind: 'file_directory',
-        locations: this.config.locations,
-        source: 'default',
-        rpoSeconds: DEFAULT_RPO_SECONDS,
-      };
-      const report = await this.verifyAll([config]);
-      const allPassed = report.providers.length > 0 &&
-        report.providers.every((p) => p.detected && p.verifications.every((v) => v.passed));
-      return compareCheckValue(allPassed, check.expect.operator, check.expect.value);
+      //
+      // verifyAll() shells out to `gzip -t` / `tar -tf` per backup item
+      // (up to MAX_ITEMS_PER_LOCATION subprocesses, 30s timeout each) and
+      // this check runs in dry-run mode too (conditionals are evaluated in
+      // both modes). Reuse lastVerification — set by any prior verifyAll()
+      // call, including the plan's earlier 'verify_backups' diagnosis step
+      // — instead of re-running that I/O from inside a check. Also wrap in
+      // try/catch: the graph engine's node functions call evaluateCheck
+      // without a surrounding try/catch, so a subprocess/fs error here must
+      // not propagate out of LangGraph's stream() uncaught — fail closed on
+      // failure to verify.
+      try {
+        let report = this.lastVerification;
+        if (!report) {
+          const location = this.config.locations[0];
+          if (!location) return compareCheckValue(false, check.expect.operator, check.expect.value);
+          const config: BackupProviderConfig = {
+            kind: 'file_directory',
+            locations: this.config.locations,
+            source: 'default',
+            rpoSeconds: DEFAULT_RPO_SECONDS,
+          };
+          report = await this.verifyAll([config]);
+        }
+        const allPassed = report.providers.length > 0 &&
+          report.providers.every((p) => p.detected && p.verifications.every((v) => v.passed));
+        return compareCheckValue(allPassed, check.expect.operator, check.expect.value);
+      } catch {
+        return false;
+      }
     }
 
     // Fail closed, matching the simulator (and the llm-provider/vector-store

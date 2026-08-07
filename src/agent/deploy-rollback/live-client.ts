@@ -238,9 +238,18 @@ export class DeployLiveClient implements DeployBackend {
     }
 
     if (stmt === 'traffic_distribution') {
-      const traffic = await this.getTrafficDistribution();
-      const primaryPct = traffic.entries[0]?.percentage ?? 0;
-      return compareCheckValue(primaryPct, check.expect.operator, check.expect.value);
+      // Recognized but UNMEASURABLE on Vercel: getTrafficDistribution() does
+      // not measure anything (see its own comment — Vercel exposes no
+      // traffic-split API, so it hardcodes 100% to the current production
+      // deployment). Comparing that placeholder against the plan's real
+      // threshold (e.g. `lte 10` right after a traffic shift) would produce
+      // a definite-looking verdict from a non-measurement and permanently
+      // fail a succeeded elevated-risk mutation, aborting recovery
+      // mid-incident. This follows the same no-data fail-open semantic as
+      // the `endpoints.length === 0` guards above: a check the backend
+      // cannot substantiate reports healthy rather than fabricating a
+      // result.
+      return true;
     }
 
     // Fail closed, matching the simulator (and the llm-provider/vector-store

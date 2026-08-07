@@ -206,38 +206,48 @@ export class PgSimulator implements PgBackend {
   }
 
   async queryReplicationSlots(): Promise<ReplicationSlot[]> {
-    if (this.slotInvalid && this.state !== 'degraded') {
-      return [
-        {
-          slot_name: 'replica_us_east_1a',
-          plugin: '',
-          slot_type: 'physical',
-          active: true,
-          restart_lsn: '0/5100000',
-          confirmed_flush_lsn: '',
-          wal_status: 'reserved',
-        },
-        {
-          slot_name: 'replica_us_east_1b',
-          plugin: '',
-          slot_type: 'physical',
-          active: false,
-          restart_lsn: '0/2800000',
-          confirmed_flush_lsn: '',
-          wal_status: 'lost',
-        },
-        {
-          slot_name: 'replica_us_east_1c',
-          plugin: '',
-          slot_type: 'physical',
-          active: true,
-          restart_lsn: '0/5000000',
-          confirmed_flush_lsn: '',
-          wal_status: 'reserved',
-        },
-      ];
-    }
+    const allSlots = this.slotInvalid && this.state !== 'degraded' ? this.invalidSlotFixtures() : this.validSlotFixtures();
+    // slotNames is the one source of truth for which slots currently exist
+    // (mutated by executeCommand()'s drop/create handling). Filtering here
+    // keeps this listing — used by diagnose() and the
+    // slot_state_before_drop capture — consistent with the count-based
+    // evaluateCheck() query above instead of always reporting all three.
+    return allSlots.filter((slot) => this.slotNames.has(slot.slot_name));
+  }
 
+  private invalidSlotFixtures(): ReplicationSlot[] {
+    return [
+      {
+        slot_name: 'replica_us_east_1a',
+        plugin: '',
+        slot_type: 'physical',
+        active: true,
+        restart_lsn: '0/5100000',
+        confirmed_flush_lsn: '',
+        wal_status: 'reserved',
+      },
+      {
+        slot_name: 'replica_us_east_1b',
+        plugin: '',
+        slot_type: 'physical',
+        active: false,
+        restart_lsn: '0/2800000',
+        confirmed_flush_lsn: '',
+        wal_status: 'lost',
+      },
+      {
+        slot_name: 'replica_us_east_1c',
+        plugin: '',
+        slot_type: 'physical',
+        active: true,
+        restart_lsn: '0/5000000',
+        confirmed_flush_lsn: '',
+        wal_status: 'reserved',
+      },
+    ];
+  }
+
+  private validSlotFixtures(): ReplicationSlot[] {
     return [
       {
         slot_name: 'replica_us_east_1a',
@@ -287,13 +297,20 @@ export class PgSimulator implements PgBackend {
   async evaluateCheck(check: { type: string; statement?: string; operation?: string; parameters?: Record<string, unknown>; expect: { operator: string; value: unknown } }): Promise<boolean> {
     const stmt = check.statement ?? '';
 
-    if (stmt.includes('pg_stat_replication') && stmt.includes("client_addr = '10.0.1.52'") && stmt.includes("state = 'streaming'")) {
-      const count = this.state === 'degraded' ? 1 : this.state === 'recovered' ? 1 : 0;
-      return compareCheckValue(count, check.expect.operator, check.expect.value);
-    }
-
-    if (stmt.includes('pg_stat_replication') && stmt.includes("client_addr = '10.0.1.52'") && !stmt.includes("state = 'streaming'")) {
-      const count = this.state === 'recovered' ? 1 : this.state === 'degraded' ? 1 : 0;
+    // Replica connected/streaming checks — parameterized on whichever
+    // address the statement names (plan() interpolates the dynamically
+    // chosen worst replica, so this must not be hardcoded to one literal
+    // address). Every entry queryReplicationStatus() returns already has
+    // `state: 'streaming'`, and the state's replica list IS the model of
+    // which replicas are currently connected (e.g. the disconnected target
+    // is absent from the 'recovering' list), so "present in the current
+    // state's list" answers both the with- and without-state-qualifier
+    // forms of this query identically and correctly.
+    const clientAddrMatch = /pg_stat_replication WHERE client_addr = '([^']+)'/.exec(stmt);
+    if (clientAddrMatch) {
+      const targetAddr = clientAddrMatch[1]!;
+      const replicas = await this.queryReplicationStatus();
+      const count = replicas.some((r) => r.client_addr === targetAddr) ? 1 : 0;
       return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
@@ -329,10 +346,22 @@ export class PgSimulator implements PgBackend {
     }
 
     // Primary-reachability precondition ("Primary is reachable and accepting
-    // connections" / "PostgreSQL is accepting connections") — the simulator
-    // always represents a reachable primary when it's being queried at all.
+    // connections" / "PostgreSQL is accepting connections") — used as the
+    // database_unreachable plan's restart-step success criterion, so this
+    // must be an honest probe rather than an unconditional "reachable". The
+    // stock PgSimulator's queries never throw, but a subclass modeling an
+    // unreachable primary (e.g. UnreachablePgSimulator in
+    // pg-unreachable-plan.test.ts, which overrides queryReplicationStatus()
+    // to throw) must make this check reflect that instead of always
+    // reporting 1.
     if (stmt === 'SELECT 1;') {
-      return compareCheckValue(1, check.expect.operator, check.expect.value);
+      let reachable = 1;
+      try {
+        await this.queryReplicationStatus();
+      } catch {
+        reachable = 0;
+      }
+      return compareCheckValue(reachable, check.expect.operator, check.expect.value);
     }
 
     if (check.type === 'structured_command' && check.expect.operator === 'eq') {
