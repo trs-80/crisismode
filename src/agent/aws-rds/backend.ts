@@ -23,6 +23,7 @@ export interface InstanceBackupConfig {
 
 export { isPermissionMissing } from '../aws-common.js';
 export type { PermissionMissing } from '../aws-common.js';
+export { AWS_RDS_CHECK_IDS, checkIdForRdsSource } from './check-ids.js';
 
 export interface RdsInstanceHealth {
   instanceId: string;
