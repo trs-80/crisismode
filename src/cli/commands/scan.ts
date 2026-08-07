@@ -36,6 +36,7 @@ import { healthToSignals } from '../../framework/health-to-signals.js';
 import { explainSourceInContext, type ExplanationContext } from '../../framework/signal-explanations.js';
 import { runTriage, SCAN_PROBE_TIMEOUT_MS } from '../../framework/triage.js';
 import { reframeFindings } from '../observer-reframe.js';
+import { platformsForTarget } from '../../framework/guidance/platforms.js';
 import type { TriageReport } from '../../framework/triage.js';
 import type { ScanFinding, ScanResult, RecentChange } from '../output.js';
 import type { AgentContext } from '../../types/agent-context.js';
@@ -246,6 +247,7 @@ export async function checkTargetHealth(
       detail: s.detail,
       source: s.source,
       ...(s.checkId !== undefined ? { checkId: s.checkId } : {}),
+      ...(s.guideVars !== undefined ? { guideVars: s.guideVars } : {}),
     }));
     const checkId = dominantCheckId(signals);
 
@@ -261,6 +263,9 @@ export async function checkTargetHealth(
         escalationLevel: health.status === 'healthy' ? 1 : 2,
         signals,
         ...(checkId !== undefined ? { checkId } : {}),
+        ...(platformsForTarget(target.kind, target.name) !== undefined
+          ? { guidancePlatforms: platformsForTarget(target.kind, target.name) }
+          : {}),
       },
     };
   } catch (err) {
@@ -278,6 +283,9 @@ export async function checkTargetHealth(
         confidence: 0,
         escalationLevel: 2,
         signals: [],
+        ...(platformsForTarget(target.kind, target.name) !== undefined
+          ? { guidancePlatforms: platformsForTarget(target.kind, target.name) }
+          : {}),
       },
     };
   }
