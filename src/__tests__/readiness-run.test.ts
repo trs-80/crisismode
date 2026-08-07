@@ -59,10 +59,10 @@ describe('runRules', () => {
     expect(findings[0]?.reason).toContain('boom');
   });
 
-  it('registry contains the six v1 rules', () => {
+  it('registry contains the seven rules', () => {
     expect(allRules.map((r) => r.id).sort()).toEqual([
       'connection-headroom', 'connection-limit-tier', 'long-transactions',
-      'missing-index', 'serverless-pooling', 'slow-queries',
+      'missing-index', 'serverless-pooling', 'slow-queries', 'vector-index-missing',
     ]);
   });
 });

@@ -8,6 +8,7 @@ import { longTransactionsRule } from './long-transactions.js';
 import { missingIndexRule } from './missing-index.js';
 import { slowQueriesRule } from './slow-queries.js';
 import { serverlessPoolingRule } from './serverless-pooling.js';
+import { vectorIndexMissingRule } from './vector-index-missing.js';
 
 export const allRules: ReadinessRule[] = [
   connectionHeadroomRule,
@@ -16,4 +17,5 @@ export const allRules: ReadinessRule[] = [
   missingIndexRule,
   slowQueriesRule,
   serverlessPoolingRule,
+  vectorIndexMissingRule,
 ];
