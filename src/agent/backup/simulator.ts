@@ -422,7 +422,16 @@ export class BackupSimulator implements BackupBackend {
       return compareCheckValue(passed, check.expect.operator, check.expect.value);
     }
 
-    return true;
+    // Fail closed, matching the live client (and the llm-provider/vector-store
+    // precedent): a precondition/success-criteria check on an unrecognized
+    // statement is a plan-authoring bug, and this backend must not let it
+    // pass silently. Throwing was considered instead, but the graph engine's
+    // node functions (src/framework/graph-nodes.ts) call evaluateCheck
+    // without a surrounding try/catch — an exception here would propagate
+    // out of LangGraph's stream() uncaught rather than surface as a failed
+    // step, so `false` is the only semantic both execution engines handle
+    // safely.
+    return false;
   }
 
   listCapabilityProviders(): CapabilityProviderDescriptor[] {

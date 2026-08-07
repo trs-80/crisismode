@@ -291,7 +291,35 @@ export class BackupLiveClient implements BackupBackend {
       }
     }
 
-    return true;
+    if (stmt === 'all_verifications_passed') {
+      // No parameters are threaded through this check (the conditional step
+      // that emits it carries no config), so compute honestly from the same
+      // filesystem locations backup_count inspects rather than hardcoding a
+      // result: a detected provider with every verification check passing.
+      const location = this.config.locations[0];
+      if (!location) return compareCheckValue(false, check.expect.operator, check.expect.value);
+      const config: BackupProviderConfig = {
+        kind: 'file_directory',
+        locations: this.config.locations,
+        source: 'default',
+        rpoSeconds: DEFAULT_RPO_SECONDS,
+      };
+      const report = await this.verifyAll([config]);
+      const allPassed = report.providers.length > 0 &&
+        report.providers.every((p) => p.detected && p.verifications.every((v) => v.passed));
+      return compareCheckValue(allPassed, check.expect.operator, check.expect.value);
+    }
+
+    // Fail closed, matching the simulator (and the llm-provider/vector-store
+    // precedent): a precondition/success-criteria check on an unrecognized
+    // statement is a plan-authoring bug, and this backend must not let it
+    // pass silently. Throwing was considered instead, but the graph engine's
+    // node functions (src/framework/graph-nodes.ts) call evaluateCheck
+    // without a surrounding try/catch — an exception here would propagate
+    // out of LangGraph's stream() uncaught rather than surface as a failed
+    // step, so `false` is the only semantic both execution engines handle
+    // safely.
+    return false;
   }
 
   listCapabilityProviders(): CapabilityProviderDescriptor[] {

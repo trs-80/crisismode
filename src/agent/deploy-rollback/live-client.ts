@@ -237,7 +237,22 @@ export class DeployLiveClient implements DeployBackend {
       return compareCheckValue(avgErrorRate, check.expect.operator, check.expect.value);
     }
 
-    return true;
+    if (stmt === 'traffic_distribution') {
+      const traffic = await this.getTrafficDistribution();
+      const primaryPct = traffic.entries[0]?.percentage ?? 0;
+      return compareCheckValue(primaryPct, check.expect.operator, check.expect.value);
+    }
+
+    // Fail closed, matching the simulator (and the llm-provider/vector-store
+    // precedent): a precondition/success-criteria check on an unrecognized
+    // statement is a plan-authoring bug, and this backend must not let it
+    // pass silently. Throwing was considered instead, but the graph engine's
+    // node functions (src/framework/graph-nodes.ts) call evaluateCheck
+    // without a surrounding try/catch — an exception here would propagate
+    // out of LangGraph's stream() uncaught rather than surface as a failed
+    // step, so `false` is the only semantic both execution engines handle
+    // safely.
+    return false;
   }
 
   listCapabilityProviders(): CapabilityProviderDescriptor[] {

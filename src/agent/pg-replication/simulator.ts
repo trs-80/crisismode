@@ -19,6 +19,14 @@ export class PgSimulator implements PgBackend {
   private replayPaused = false;
   private idleInTxSessions: IdleInTransactionSession[] = [];
   private otherActiveConnections = 4;
+  // Tracks which replication slots currently exist, independent of the
+  // active/wal_status fields queryReplicationSlots() reports. Mutated by
+  // executeCommand()'s pg_drop_replication_slot / pg_create_physical_replication_slot
+  // handling so the replan()-generated drop/create successCriteria checks
+  // (`SELECT count(*) FROM pg_replication_slots WHERE slot_name = '...'`)
+  // observe a real state transition instead of falling through to a
+  // fail-open default.
+  private slotNames = new Set(['replica_us_east_1a', 'replica_us_east_1b', 'replica_us_east_1c']);
   private tableStats: TableStat[] = [];
   private statementStats: StatementStat[] | null = null;
   private statementAggregate: StatementAggregate | null = null;
@@ -309,11 +317,38 @@ export class PgSimulator implements PgBackend {
       return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
+    // Replication-slot existence check used by replan()'s drop/create steps
+    // (`SELECT count(*) FROM pg_replication_slots WHERE slot_name = '...'`).
+    // Reflects executeCommand()'s pg_drop_replication_slot /
+    // pg_create_physical_replication_slot handling below.
+    const slotCountMatch = /FROM pg_replication_slots WHERE slot_name = '([^']+)'/.exec(stmt);
+    if (slotCountMatch) {
+      const slotName = slotCountMatch[1]!;
+      const count = this.slotNames.has(slotName) ? 1 : 0;
+      return compareCheckValue(count, check.expect.operator, check.expect.value);
+    }
+
+    // Primary-reachability precondition ("Primary is reachable and accepting
+    // connections" / "PostgreSQL is accepting connections") — the simulator
+    // always represents a reachable primary when it's being queried at all.
+    if (stmt === 'SELECT 1;') {
+      return compareCheckValue(1, check.expect.operator, check.expect.value);
+    }
+
     if (check.type === 'structured_command' && check.expect.operator === 'eq') {
       return check.expect.value === 'running';
     }
 
-    return true;
+    // Fail closed, matching the live client (and the llm-provider/vector-store
+    // precedent): a precondition/success-criteria check on an unrecognized
+    // statement is a plan-authoring bug, and this backend must not let it
+    // pass silently. Throwing was considered instead, but the graph engine's
+    // node functions (src/framework/graph-nodes.ts) call evaluateCheck
+    // without a surrounding try/catch — an exception here would propagate
+    // out of LangGraph's stream() uncaught rather than surface as a failed
+    // step, so `false` is the only semantic both execution engines handle
+    // safely.
+    return false;
   }
 
   private countStaleIdleInTx(stmt: string): number {
@@ -335,6 +370,18 @@ export class PgSimulator implements PgBackend {
       }
       if (stmt.includes('pg_is_wal_replay_paused')) {
         return { replay_paused: this.replayPaused };
+      }
+      if (stmt.includes('pg_drop_replication_slot')) {
+        const match = /pg_drop_replication_slot\('([^']+)'\)/.exec(stmt);
+        const slotName = match?.[1];
+        if (slotName) this.slotNames.delete(slotName);
+        return { simulated: true, statement: stmt };
+      }
+      if (stmt.includes('pg_create_physical_replication_slot')) {
+        const match = /pg_create_physical_replication_slot\('([^']+)'\)/.exec(stmt);
+        const slotName = match?.[1];
+        if (slotName) this.slotNames.add(slotName);
+        return { simulated: true, statement: stmt };
       }
       if (stmt.includes('pg_terminate_backend') && stmt.includes('idle in transaction')) {
         const thresholdMatch = /INTERVAL '(\d+) seconds?'/i.exec(stmt);
