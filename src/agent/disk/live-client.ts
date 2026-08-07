@@ -205,7 +205,10 @@ export class DiskLiveClient implements DiskBackend {
       return compareCheckValue(minAvail, check.expect.operator, check.expect.value);
     }
 
-    return true;
+    // Fail closed, matching the simulator (and the vector-store precedent):
+    // a precondition/success-criteria check on an unrecognized statement is
+    // a plan-authoring bug, and this backend must not let it pass silently.
+    return false;
   }
 
   listCapabilityProviders(): CapabilityProviderDescriptor[] {

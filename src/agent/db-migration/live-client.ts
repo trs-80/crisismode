@@ -407,7 +407,12 @@ export class DbMigrationLiveClient implements DbMigrationBackend {
       }
     }
 
-    return true;
+    // Fail closed, matching the simulator (and the vector-store precedent):
+    // reaching here means check.statement was empty, so there is no
+    // statement to dispatch on or fall back to raw SQL for. A
+    // precondition/success-criteria check with no recognizable statement is
+    // a plan-authoring bug, and this backend must not let it pass silently.
+    return false;
   }
 
   listCapabilityProviders(): CapabilityProviderDescriptor[] {

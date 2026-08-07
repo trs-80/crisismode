@@ -437,11 +437,11 @@ describe('K8sLiveClient', () => {
       })).toBe(false);
     });
 
-    it('returns true for unknown check statements (safe default)', async () => {
+    it('returns false for unknown check statements (fail-closed)', async () => {
       const client = createMockClient();
       expect(await client.evaluateCheck({
         type: 'structured_command', statement: 'unknown_check', expect: { operator: 'eq', value: 1 },
-      })).toBe(true);
+      })).toBe(false);
     });
   });
 

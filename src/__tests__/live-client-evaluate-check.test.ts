@@ -87,6 +87,11 @@ describe('RedisLiveClient evaluateCheck', () => {
     const client = await makeClient({ client: { info: vi.fn().mockResolvedValue('# Memory\r\nused_memory:1') } });
     expect(await client.evaluateCheck(check('INFO memory', 'eq', 'ignored'))).toBe(true);
   });
+
+  it('returns false for an unknown, non-INFO statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
 });
 
 // ── DB Migration Live Client ──
@@ -154,6 +159,11 @@ describe('DbMigrationLiveClient evaluateCheck', () => {
     const client = await makeClient({ pool });
     expect(await client.evaluateCheck(check('NOT VALID SQL', 'eq', 1))).toBe(false);
   });
+
+  it('returns false (fail-closed) when no statement is present to dispatch on or fall back to raw SQL for', async () => {
+    const client = await makeClient({ pool: { query: vi.fn() } });
+    expect(await client.evaluateCheck({ type: 'sql', expect: { operator: 'eq', value: 1 } })).toBe(false);
+  });
 });
 
 // ── AI Provider Live Client ──
@@ -209,6 +219,11 @@ describe('AiProviderLiveClient evaluateCheck', () => {
     });
     expect(await client.evaluateCheck(check('fallback_active', 'eq', 'false'))).toBe(true);
   });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
 });
 
 // ── Queue Backlog Live Client ──
@@ -260,6 +275,11 @@ describe('QueueLiveClient evaluateCheck', () => {
     expect(await client.evaluateCheck(check('dlq_depth', 'gt', 0))).toBe(true);
     expect(await client.evaluateCheck(check('dlq_depth', 'eq', 0))).toBe(false);
   });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
 });
 
 // ── AWS RDS Live Client ──
@@ -296,6 +316,11 @@ describe('RdsRecoveryLiveClient evaluateCheck', () => {
     const client = await makeClient({ status: 'available' });
     expect(await client.evaluateCheck(check('instance_status', 'eq', 'available'))).toBe(true);
     expect(await client.evaluateCheck(check('instance_status', 'eq', 'rebooting'))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -366,6 +391,11 @@ describe('S3RecoveryLiveClient evaluateCheck', () => {
     });
     await expect(client.evaluateCheck(check('bucket_exists', 'eq', 'false'))).rejects.toThrow('access denied');
   });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
 });
 
 // ── AWS DynamoDB Live Client ──
@@ -388,6 +418,11 @@ describe('DynamoDbRecoveryLiveClient evaluateCheck', () => {
     const client = await makeClient({ pitrEnabled: false });
     expect(await client.evaluateCheck(check('continuous_backups_status', 'eq', 'DISABLED'))).toBe(true);
     expect(await client.evaluateCheck(check('continuous_backups_status', 'eq', 'ENABLED'))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -415,6 +450,11 @@ describe('ConfigDriftLiveClient evaluateCheck', () => {
     });
     expect(await client.evaluateCheck(check('env_var_mismatches', 'eq', 2))).toBe(true);
     expect(await client.evaluateCheck(check('env_var_mismatches', 'eq', 0))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({});
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
   });
 });
 
@@ -580,5 +620,78 @@ describe('PgLiveClient evaluateCheck', () => {
     expect(await client.evaluateCheck(check('SELECT bad', 'eq', 1))).toBe(false);
     expect(errorSpy).toHaveBeenCalled();
     errorSpy.mockRestore();
+  });
+});
+
+// ── Disk Live Client ──
+
+describe('DiskLiveClient evaluateCheck', () => {
+  async function makeClient(overrides: Record<string, unknown> = {}) {
+    const { DiskLiveClient } = await import('../agent/disk/live-client.js');
+    const client = Object.create(DiskLiveClient.prototype) as InstanceType<typeof DiskLiveClient>;
+    inject(client, overrides);
+    return client;
+  }
+
+  it('available_bytes compares the minimum available bytes across filesystems', async () => {
+    const client = await makeClient({
+      getDiskUsage: vi.fn().mockResolvedValue([{ availableBytes: 500 }, { availableBytes: 100 }]),
+    });
+    expect(await client.evaluateCheck(check('available_bytes', 'eq', 100))).toBe(true);
+    expect(await client.evaluateCheck(check('available_bytes', 'gt', 100))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient();
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+// ── DNS Live Client ──
+
+describe('DnsLiveClient evaluateCheck', () => {
+  async function makeClient(overrides: Record<string, unknown> = {}) {
+    const { DnsLiveClient } = await import('../agent/dns/live-client.js');
+    const client = Object.create(DnsLiveClient.prototype) as InstanceType<typeof DnsLiveClient>;
+    inject(client, overrides);
+    return client;
+  }
+
+  it('resolver_reachable counts probes that succeeded', async () => {
+    const client = await makeClient({
+      probeResolvers: vi.fn().mockResolvedValue([
+        { reachable: true }, { reachable: false }, { reachable: true },
+      ]),
+    });
+    expect(await client.evaluateCheck(check('resolver_reachable', 'eq', 2))).toBe(true);
+    expect(await client.evaluateCheck(check('resolver_reachable', 'eq', 0))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient();
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+// ── IaC Drift Live Client ──
+
+describe('IacDriftLiveClient evaluateCheck', () => {
+  async function makeClient(overrides: Record<string, unknown> = {}) {
+    const { IacDriftLiveClient } = await import('../agent/iac-drift/live-client.js');
+    const client = Object.create(IacDriftLiveClient.prototype) as InstanceType<typeof IacDriftLiveClient>;
+    inject(client, overrides);
+    return client;
+  }
+
+  it('iac_state_readable maps the state-status readable flag to 1/0', async () => {
+    const readable = await makeClient({ getStateStatus: vi.fn().mockResolvedValue({ readable: true }) });
+    expect(await readable.evaluateCheck(check('iac_state_readable', 'eq', 1))).toBe(true);
+    const unreadable = await makeClient({ getStateStatus: vi.fn().mockResolvedValue({ readable: false }) });
+    expect(await unreadable.evaluateCheck(check('iac_state_readable', 'eq', 1))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient();
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
   });
 });
