@@ -387,6 +387,22 @@ describe('PgSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(mk('SELECT 1;', 'eq', 0))).toBe(false);
   });
 
+  it("'SELECT 1;' reports unreachable (0) rather than unconditionally reachable (final-review M6)", async () => {
+    // The database_unreachable plan's restart step uses 'SELECT 1;' as a
+    // success criterion ("PostgreSQL is accepting connections"). A simulator
+    // whose replication query throws (the UnreachablePgSimulator pattern
+    // from pg-unreachable-plan.test.ts) must make this check honest instead
+    // of unconditionally reporting reachable.
+    class UnreachablePgSimulator extends PgSimulator {
+      override async queryReplicationStatus(): Promise<never> {
+        throw new Error('connection refused');
+      }
+    }
+    const sim = new UnreachablePgSimulator();
+    expect(await sim.evaluateCheck(mk('SELECT 1;', 'eq', 0))).toBe(true);
+    expect(await sim.evaluateCheck(mk('SELECT 1;', 'eq', 1))).toBe(false);
+  });
+
   it('replication slot count reflects drop/create via executeCommand (replan flow)', async () => {
     const sim = new PgSimulator();
     const slotName = 'replica_us_east_1b';
@@ -414,9 +430,83 @@ describe('PgSimulator.evaluateCheck()', () => {
     expect(await sim.evaluateCheck(countCheck(0))).toBe(false);
   });
 
+  it('queryReplicationSlots() reflects a drop/create rather than always returning all three slots (final-review M5)', async () => {
+    const sim = new PgSimulator();
+    const slotName = 'replica_us_east_1b';
+
+    expect((await sim.queryReplicationSlots()).map((s) => s.slot_name)).toContain(slotName);
+
+    await sim.executeCommand({
+      type: 'sql',
+      subtype: 'function_call',
+      statement: `SELECT pg_drop_replication_slot('${slotName}');`,
+    } as Command);
+    // evaluateCheck's slot-count query already reports 0 after a drop; the
+    // slot listing used by diagnose() and the slot_state_before_drop capture
+    // must agree — a dropped slot must not still appear in the listing.
+    expect((await sim.queryReplicationSlots()).map((s) => s.slot_name)).not.toContain(slotName);
+
+    await sim.executeCommand({
+      type: 'sql',
+      subtype: 'function_call',
+      statement: `SELECT pg_create_physical_replication_slot('${slotName}');`,
+    } as Command);
+    expect((await sim.queryReplicationSlots()).map((s) => s.slot_name)).toContain(slotName);
+  });
+
   it('returns false for unknown statement (fail-closed)', async () => {
     const sim = new PgSimulator();
     expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
+  });
+
+  describe('client_addr checks are parameterized on address (final-review I4)', () => {
+    const presentCheck = (addr: string, streaming = false) =>
+      mk(
+        `SELECT count(*) FROM pg_stat_replication WHERE client_addr = '${addr}'${streaming ? " AND state = 'streaming'" : ''};`,
+        'gte',
+        1,
+      );
+
+    it('10.0.1.50 is connected in every state (never disconnected in this model)', async () => {
+      const sim = new PgSimulator();
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.50'))).toBe(true);
+      sim.transition('recovering');
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.50'))).toBe(true);
+      sim.transition('recovered');
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.50'))).toBe(true);
+    });
+
+    it("still answers honestly for the literal '10.0.1.52' address the demo/tests hardcode — degraded and recovered semantics are unchanged", async () => {
+      const sim = new PgSimulator();
+      // degraded: connected and streaming (matches the pre-existing REPL_STREAMING/REPL_PRESENT tests above)
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.52', true))).toBe(true);
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.52', false))).toBe(true);
+      // recovering: disconnected (this is the target of the initial disconnect step)
+      sim.transition('recovering');
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.52', true))).toBe(false);
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.52', false))).toBe(false);
+      // recovered: reconnected via basebackup
+      sim.transition('recovered');
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.52', true))).toBe(true);
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.52', false))).toBe(true);
+    });
+
+    it('a non-.52 target address is answered from the modeled replica set instead of falling through to fail-closed', async () => {
+      const sim = new PgSimulator();
+      sim.transition('recovering');
+      // 10.0.1.51 IS present in the 'recovering' state's modeled replica
+      // list — the check must reflect that instead of unconditionally
+      // failing closed just because the address isn't the literal '10.0.1.52'
+      // the simulator used to hardcode.
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.51', true))).toBe(true);
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.51', false))).toBe(true);
+    });
+
+    it('an address absent from the current state reports not-connected rather than fail-closed', async () => {
+      const sim = new PgSimulator();
+      // 10.0.1.99 never appears in any state's modeled replica list.
+      expect(await sim.evaluateCheck(presentCheck('10.0.1.99'))).toBe(false);
+    });
   });
 });
 

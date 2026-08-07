@@ -487,12 +487,17 @@ describe('DeployLiveClient evaluateCheck', () => {
     expect(await client.evaluateCheck(check('deploy_health', 'lte', 0))).toBe(true);
   });
 
-  it('traffic_distribution compares the primary target percentage', async () => {
+  it('traffic_distribution is unmeasurable on Vercel — always reports healthy', async () => {
+    // getTrafficDistribution() is a hardcoded placeholder (Vercel exposes no
+    // traffic-split API), so comparing it against a real threshold would
+    // mark a succeeded elevated-risk traffic shift as failed. The handler no
+    // longer calls getTrafficDistribution() at all — it unconditionally
+    // reports the check as passed, regardless of the configured operator.
     const client = await makeClient({
-      getTrafficDistribution: vi.fn().mockResolvedValue({ entries: [{ target: 'abc12345', percentage: 10 }] }),
+      getTrafficDistribution: vi.fn().mockResolvedValue({ entries: [{ target: 'abc12345', percentage: 100 }] }),
     });
     expect(await client.evaluateCheck(check('traffic_distribution', 'lte', 10))).toBe(true);
-    expect(await client.evaluateCheck(check('traffic_distribution', 'gt', 10))).toBe(false);
+    expect(await client.evaluateCheck(check('traffic_distribution', 'gt', 10))).toBe(true);
   });
 
   it('returns false for unknown statement (fail-closed)', async () => {
@@ -539,6 +544,35 @@ describe('BackupLiveClient evaluateCheck', () => {
 
   it('all_verifications_passed is false when there is no configured location', async () => {
     const client = await makeClient({ config: { locations: [] } });
+    expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(false);
+  });
+
+  it('all_verifications_passed reuses a cached report instead of calling verifyAll again', async () => {
+    // lastVerification is set by any prior verifyAll() call — including the
+    // plan's earlier 'verify_backups' diagnosis step — so the check should
+    // read it rather than re-running the gzip/tar subprocess work.
+    const verifyAll = vi.fn();
+    const client = await makeClient({
+      verifyAll,
+      lastVerification: {
+        verifiedAt: new Date().toISOString(),
+        providers: [{ kind: 'file_directory', source: 'default', detected: true, items: [], verifications: [{ item: {}, passed: true, checks: [] }] }],
+        rpoEvaluations: [],
+        rtoEstimates: [],
+        uncoveredSources: [],
+      },
+    });
+    expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(true);
+    expect(verifyAll).not.toHaveBeenCalled();
+  });
+
+  it('all_verifications_passed fails closed when verification throws', async () => {
+    // checkIntegrity() shells out to gzip -t / tar -tf; a subprocess error
+    // must not propagate uncaught through the graph engine's node functions
+    // (which call evaluateCheck without a try/catch).
+    const client = await makeClient({
+      verifyAll: vi.fn().mockRejectedValue(new Error('spawn gzip ENOENT')),
+    });
     expect(await client.evaluateCheck(check('all_verifications_passed', 'eq', true))).toBe(false);
   });
 
