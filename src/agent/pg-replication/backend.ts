@@ -2,7 +2,7 @@
 // Copyright 2026 CrisisMode Contributors
 
 import type { ExecutionBackend } from '../../framework/backend.js';
-import type { TableStat, StatementStat, StatementAggregate } from '../../readiness/types.js';
+import type { TableStat, StatementStat, StatementAggregate, PgvectorInventory } from '../../readiness/types.js';
 
 /**
  * PgBackend — the interface that both the simulator and the live client implement.
@@ -90,6 +90,13 @@ export interface PgBackend extends ExecutionBackend {
    * Optional; null when the extension is absent.
    */
   queryStatementAggregate?(): Promise<StatementAggregate | null>;
+
+  /**
+   * pgvector catalog inventory (readiness: vector rules). Optional so
+   * simulators and non-PG backends are unaffected. 'absent' means the
+   * extension is confirmed not installed; null means the read failed.
+   */
+  getPgvectorInventory?(): Promise<PgvectorInventory | 'absent' | null>;
 
   /** Transition state (simulator) or no-op (live) */
   transition(to: string): void;

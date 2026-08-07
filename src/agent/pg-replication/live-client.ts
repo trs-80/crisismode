@@ -13,9 +13,14 @@ import pg, { type Pool as PoolType } from 'pg';
 import type { PgBackend, ReplicaStatus, ReplicationSlot, ConnectionUsage } from './backend.js';
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
-import type { TableStat, StatementStat, StatementAggregate } from '../../readiness/types.js';
+import type { TableStat, StatementStat, StatementAggregate, PgvectorInventory } from '../../readiness/types.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 import { guardPoolErrors, poolTimeouts } from '../pg-common.js';
+import {
+  PGVECTOR_EXTENSION_SQL, PGVECTOR_TABLES_SQL, PGVECTOR_INDEXES_SQL,
+  buildPgvectorInventory,
+  type PgvectorTableRow, type PgvectorIndexRow,
+} from './pgvector-catalog.js';
 
 const { Pool } = pg;
 
@@ -257,6 +262,29 @@ export class PgLiveClient implements PgBackend {
       return { meanMs: row.mean_ms, calls: row.calls };
     } catch {
       return null; // extension absent or no privilege — ceiling reports omitted
+    }
+  }
+
+  /**
+   * pgvector catalog inventory — feeds the readiness vector rules. Read-only,
+   * on the existing primary pool. Returns 'absent' when the extension is not
+   * installed (a definite answer, so the rules can skip silently) and null on
+   * any query failure, per this client's null-on-error convention — the rules
+   * turn that into an honest 'unknown' finding.
+   */
+  async getPgvectorInventory(): Promise<PgvectorInventory | 'absent' | null> {
+    try {
+      const extension = await this.primaryPool.query<{ extversion: string }>(PGVECTOR_EXTENSION_SQL);
+      const version = extension.rows[0]?.extversion;
+      if (version === undefined) return 'absent';
+
+      const [tables, indexes] = await Promise.all([
+        this.primaryPool.query<PgvectorTableRow>(PGVECTOR_TABLES_SQL),
+        this.primaryPool.query<PgvectorIndexRow>(PGVECTOR_INDEXES_SQL),
+      ]);
+      return buildPgvectorInventory(version, tables.rows, indexes.rows);
+    } catch {
+      return null; // connection or permission failure — rules report unknown
     }
   }
 
