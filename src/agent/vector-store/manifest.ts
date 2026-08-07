@@ -8,6 +8,14 @@ import {
   defaultManifestMetadata,
 } from '../../framework/manifest-defaults.js';
 
+/**
+ * Single source of truth for this agent's maturity claim, shared with the
+ * live client's listCapabilityProviders() (src/agent/vector-store/live-client.ts)
+ * so the two can never drift. Promoted to 'live_validated' only after
+ * real-account validation (Task 10 ruling — no provider credentials yet).
+ */
+export const VECTOR_STORE_MATURITY = 'simulator_only' as const;
+
 export const vectorStoreManifest: AgentManifest = {
   apiVersion: MANIFEST_API_VERSION,
   kind: 'AgentManifest',
@@ -22,8 +30,7 @@ export const vectorStoreManifest: AgentManifest = {
     plugin: {
       id: 'vector-store.domain-pack',
       kind: 'domain_pack',
-      // Promoted to live_validated only after real-account validation (Task 10).
-      maturity: 'simulator_only',
+      maturity: VECTOR_STORE_MATURITY,
       compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
     },
   },
