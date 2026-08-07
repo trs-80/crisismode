@@ -20,7 +20,12 @@ const LLM_PROVIDER_PLATFORMS: Array<{ match: RegExp; platform: string }> = [
 ];
 
 export function platformsForTarget(kind: string, targetName: string): readonly string[] | undefined {
-  if (kind === 'llm-provider') {
+  // autodiscovery.ts never emits a bare 'llm-provider' kind — every derived
+  // target's kind is `llm-provider.<provider>` (e.g. 'llm-provider.anthropic')
+  // — so match on the dotted family, not an exact string. Comparing the
+  // first '.'-segment (rather than a plain startsWith) avoids accidentally
+  // matching an unrelated kind that merely shares the prefix.
+  if (kind.split('.', 1)[0] === 'llm-provider') {
     for (const entry of LLM_PROVIDER_PLATFORMS) {
       if (entry.match.test(targetName)) return [entry.platform];
     }

@@ -9,6 +9,9 @@ import { renderReadinessReport } from '../cli/commands/readiness.js';
 import { attachGuidesByRuleId } from '../framework/guidance/attach.js';
 import type { ReadinessReport } from '../readiness/types.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
+import { checkTargetHealth } from '../cli/commands/scan.js';
+import type { HealthCheckRegistry } from '../cli/commands/scan.js';
+import type { TargetConfig } from '../config/schema.js';
 
 function scanResultWithKeyFinding(): ScanResult {
   return {
@@ -133,6 +136,76 @@ describe('scan output — guidance', () => {
     result.findings[0]!.checkId = 'nothing.matches';
     printScanSummary(result);
     expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain('How to fix it');
+  });
+});
+
+// Regression for the platformsForTarget scoping bug found in Task 11:
+// autodiscovery.ts derives real llm-provider targets as
+// `llm-provider.<provider>` (never the bare 'llm-provider' kind). This drives
+// the real scan.ts wiring (checkTargetHealth) with those realistic kinds,
+// through to the rendered scan summary, to prove platform scoping actually
+// filters out the competing vendor's guide end to end — not just at the
+// platformsForTarget/guidesForFindingTypes unit level.
+describe('scan output — guidance scoping for real llm-provider.<provider> kinds', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, verbose: false, mode: 'human' });
+  });
+
+  function keyInvalidRegistry(): HealthCheckRegistry {
+    return {
+      supportedKinds: () => ['llm-provider.anthropic', 'llm-provider.google'],
+      createForTarget: () => Promise.resolve({
+        agent: {
+          manifest: { name: 'llm-provider', version: '1.0.0', spec: { executionContexts: [] } },
+          assessHealth: () => Promise.resolve({
+            status: 'unhealthy',
+            confidence: 0.9,
+            summary: 'API key is not valid',
+            observedAt: new Date().toISOString(),
+            signals: [{ status: 'critical', detail: '401 authentication_error', source: 'llm_key_valid', checkId: 'llm-provider.key_valid' }],
+          }),
+        },
+        backend: { close: () => Promise.resolve() },
+      } as never),
+    };
+  }
+
+  it('an Anthropic target renders the Anthropic guide but never the OpenAI one', async () => {
+    const target: TargetConfig = { name: 'derived-llm-anthropic', kind: 'llm-provider.anthropic' };
+    const result = await checkTargetHealth(target, keyInvalidRegistry());
+    configure({ mode: 'human', noColor: true });
+    printScanSummary({
+      score: 40,
+      findings: [{ id: 'LLM-001', ...result.finding }],
+      recentChanges: [],
+      scannedAt: '2026-08-05T12:00:00.000Z',
+      durationMs: 1,
+    });
+    const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(text).toContain('Rotate your Anthropic API key');
+    expect(text).not.toContain('OpenAI');
+  });
+
+  it('a Google target renders no guidance at all — never another vendor\'s console', async () => {
+    const target: TargetConfig = { name: 'derived-llm-google', kind: 'llm-provider.google' };
+    const result = await checkTargetHealth(target, keyInvalidRegistry());
+    configure({ mode: 'human', noColor: true });
+    printScanSummary({
+      score: 40,
+      findings: [{ id: 'LLM-002', ...result.finding }],
+      recentChanges: [],
+      scannedAt: '2026-08-05T12:00:00.000Z',
+      durationMs: 1,
+    });
+    const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(text).not.toContain('How to fix it');
   });
 });
 

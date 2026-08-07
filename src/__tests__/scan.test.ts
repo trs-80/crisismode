@@ -210,6 +210,43 @@ describe('checkTargetHealth', () => {
     expect(result.finding.status).toBe('healthy');
   });
 
+  // Regression for the platformsForTarget scoping bug found in Task 11:
+  // autodiscovery.ts derives real llm-provider targets under
+  // `llm-provider.<provider>` kinds (never the bare 'llm-provider' kind), so
+  // checkTargetHealth's call to platformsForTarget(target.kind, target.name)
+  // must scope on the realistic dotted kind, not fall through to "unknown
+  // platform — show everything."
+  function llmKeyInvalidRegistry(): HealthCheckRegistry {
+    return {
+      supportedKinds: () => ['llm-provider.anthropic', 'llm-provider.google'],
+      createForTarget: () => Promise.resolve({
+        agent: {
+          manifest: { name: 'llm-provider', version: '1.0.0', spec: { executionContexts: [] } },
+          assessHealth: () => Promise.resolve({
+            status: 'unhealthy',
+            confidence: 0.9,
+            summary: 'API key is not valid',
+            observedAt: new Date().toISOString(),
+            signals: [{ status: 'critical', detail: '401 authentication_error', source: 'llm_key_valid' }],
+          }),
+        },
+        backend: { close: () => Promise.resolve() },
+      } as never),
+    };
+  }
+
+  it('scopes guidancePlatforms to the target provider for a real llm-provider.<provider> kind', async () => {
+    const target: TargetConfig = { name: 'derived-llm-anthropic', kind: 'llm-provider.anthropic' };
+    const result = await checkTargetHealth(target, llmKeyInvalidRegistry());
+    expect(result.finding.guidancePlatforms).toEqual(['anthropic-console']);
+  });
+
+  it('gives a provider with no guides an empty guidancePlatforms, never "show everything"', async () => {
+    const target: TargetConfig = { name: 'derived-llm-google', kind: 'llm-provider.google' };
+    const result = await checkTargetHealth(target, llmKeyInvalidRegistry());
+    expect(result.finding.guidancePlatforms).toEqual([]);
+  });
+
   it('returns an unknown finding instead of rejecting when supportedKinds() itself throws', async () => {
     // A broken registry implementation must not escape checkTargetHealth and
     // abort the whole Promise.all in runScan — it should degrade to a single
