@@ -6,16 +6,42 @@ import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
 
-export type SimulatorState = 'degraded' | 'recovering' | 'recovered';
+export type SimulatorState =
+  | 'degraded'
+  | 'recovering'
+  | 'recovered'
+  | 'versioning_disabled'
+  | 'versioning_suspended';
+
+const VALID_STATES: SimulatorState[] = [
+  'degraded',
+  'recovering',
+  'recovered',
+  'versioning_disabled',
+  'versioning_suspended',
+];
+
+const LIFECYCLE_RULES: BucketConfig['lifecycleRules'] = [
+  {
+    id: 'archive-old-backups',
+    status: 'Enabled',
+    prefix: 'backups/',
+    transitions: [
+      { days: 30, storageClass: 'STANDARD_IA' },
+      { days: 90, storageClass: 'GLACIER' },
+    ],
+    expiration: { days: 365 },
+  },
+];
 
 export class S3RecoverySimulator implements S3RecoveryBackend {
   private state: SimulatorState = 'degraded';
 
   transition(to: string): void {
-    if (to !== 'degraded' && to !== 'recovering' && to !== 'recovered') {
+    if (!VALID_STATES.includes(to as SimulatorState)) {
       throw new Error(`Invalid S3 simulator state: ${to}`);
     }
-    this.state = to;
+    this.state = to as SimulatorState;
   }
 
   async getBucketConfig(): Promise<BucketConfig> {
@@ -39,18 +65,24 @@ export class S3RecoverySimulator implements S3RecoveryBackend {
           bucket: 'prod-backup-bucket',
           region: 'us-east-1',
           versioningStatus: 'Enabled',
-          lifecycleRules: [
-            {
-              id: 'archive-old-backups',
-              status: 'Enabled',
-              prefix: 'backups/',
-              transitions: [
-                { days: 30, storageClass: 'STANDARD_IA' },
-                { days: 90, storageClass: 'GLACIER' },
-              ],
-              expiration: { days: 365 },
-            },
-          ],
+          lifecycleRules: LIFECYCLE_RULES,
+        };
+      // Isolated scenarios: versioning is off but lifecycle rules are
+      // already configured, so only the versioning signal is critical
+      // (distinct from 'degraded', which fails both signals at once).
+      case 'versioning_disabled':
+        return {
+          bucket: 'prod-backup-bucket',
+          region: 'us-east-1',
+          versioningStatus: 'Disabled',
+          lifecycleRules: LIFECYCLE_RULES,
+        };
+      case 'versioning_suspended':
+        return {
+          bucket: 'prod-backup-bucket',
+          region: 'us-east-1',
+          versioningStatus: 'Suspended',
+          lifecycleRules: LIFECYCLE_RULES,
         };
     }
   }

@@ -607,6 +607,52 @@ let CAPABILITIES: CapabilityDefinition[] = [
     targetKinds: ['aws-rds'],
     manualFallback: 'Run `aws rds create-db-snapshot` or open the RDS console to take a manual snapshot.',
   },
+
+  // ── AWS S3 ──
+  {
+    id: 's3.versioning.read',
+    actionKind: 'read',
+    description: 'Read S3 bucket versioning configuration (GetBucketVersioning).',
+    targetKinds: ['aws-s3'],
+    manualFallback: 'Run `aws s3api get-bucket-versioning` or open the S3 console to inspect versioning status.',
+  },
+  {
+    id: 's3.lifecycle.read',
+    actionKind: 'read',
+    description: 'Read S3 bucket lifecycle configuration (GetBucketLifecycleConfiguration).',
+    targetKinds: ['aws-s3'],
+    manualFallback: 'Run `aws s3api get-bucket-lifecycle-configuration` or open the S3 console to inspect lifecycle rules.',
+  },
+  {
+    id: 's3.versioning.write',
+    actionKind: 'mutate',
+    description: 'Enable S3 bucket versioning (PutBucketVersioning).',
+    targetKinds: ['aws-s3'],
+    manualFallback: 'Run `aws s3api put-bucket-versioning` or open the S3 console to enable versioning.',
+  },
+  {
+    id: 's3.lifecycle.write',
+    actionKind: 'mutate',
+    description: 'Configure S3 bucket lifecycle rules (PutBucketLifecycleConfiguration).',
+    targetKinds: ['aws-s3'],
+    manualFallback: 'Run `aws s3api put-bucket-lifecycle-configuration` or open the S3 console to configure lifecycle rules.',
+  },
+
+  // ── AWS DynamoDB ──
+  {
+    id: 'dynamodb.backup.read',
+    actionKind: 'read',
+    description: 'Read DynamoDB continuous-backups / PITR configuration (DescribeContinuousBackups).',
+    targetKinds: ['aws-dynamodb'],
+    manualFallback: 'Run `aws dynamodb describe-continuous-backups` or open the DynamoDB console to inspect PITR status.',
+  },
+  {
+    id: 'dynamodb.backup.write',
+    actionKind: 'mutate',
+    description: 'Enable DynamoDB point-in-time recovery (UpdateContinuousBackups).',
+    targetKinds: ['aws-dynamodb'],
+    manualFallback: 'Run `aws dynamodb update-continuous-backups` or open the DynamoDB console to enable PITR.',
+  },
 ];
 
 const CAPABILITY_INDEX = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));

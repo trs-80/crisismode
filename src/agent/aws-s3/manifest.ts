@@ -50,6 +50,10 @@ export const awsS3RecoveryManifest: AgentManifest = {
       },
     ],
     failureScenarios: [
+      // The neutral no-actionable-finding scenario plan() emits when
+      // diagnose() reports a healthy bucket — required so validatePlan
+      // accepts the no-op plan for a healthy target.
+      'no_finding',
       'versioning_disabled',
       'versioning_suspended',
       'missing_lifecycle',

@@ -130,6 +130,33 @@ export class AwsS3RecoveryAgent implements RecoveryAgent {
   async plan(context: AgentContext, diagnosis: DiagnosisResult): Promise<RecoveryPlan> {
     const bucket = String(context.trigger.payload.bucket || 'unknown-bucket');
 
+    // Versioning enabled and lifecycle rules configured — nothing to
+    // recover. Return a no-op plan rather than building the full
+    // "enable versioning + configure lifecycle" mutation workflow against a
+    // healthy bucket.
+    if (diagnosis.scenario === 'healthy') {
+      return {
+        ...createPlanEnvelope({
+          planIdSuffix: 'aws-s3',
+          agentName: 'aws-s3-recovery',
+          agentVersion: '1.0.0',
+          scenario: 'no_finding',
+          estimatedDuration: 'PT0S',
+          summary: `No action required — versioning is enabled and lifecycle rules are configured on S3 bucket ${bucket}.`,
+        }),
+        impact: {
+          affectedSystems: [
+            { identifier: bucket, technology: 'aws-s3', role: 'backup-storage', impactType: 'none' },
+          ],
+          affectedServices: [],
+          estimatedUserImpact: 'None — bucket backup configuration is healthy.',
+          dataLossRisk: 'none',
+        },
+        steps: [],
+        rollbackStrategy: { type: 'none', description: 'No actions taken; nothing to roll back.' },
+      };
+    }
+
     const steps: RecoveryStep[] = [
       // Step 1: Capture current bucket config
       {
