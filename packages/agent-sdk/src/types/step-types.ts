@@ -63,6 +63,10 @@ export interface HumanNotificationStep {
     detail: string;
     contextReferences?: string[];
     actionRequired: boolean;
+    /** Ids of RemediationGuides this notification's detail was rendered from. */
+    guideIds?: string[] | undefined;
+    /** Placeholder substitutions those guides were rendered with, so any renderer can reproduce the same text from the registry. */
+    guideVars?: Record<string, string> | undefined;
   };
   channel: string;
 }
