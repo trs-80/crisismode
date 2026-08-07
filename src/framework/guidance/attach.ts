@@ -54,6 +54,17 @@ function resolveGuides(
  * are resolved per-source (finding-level vs. each signal's own guideVars)
  * before the results are merged, deduping by guide id so a checkId shared by
  * the finding and one of its signals doesn't attach twice.
+ *
+ * Signals are collected FIRST, the finding-level checkId last: real scan
+ * output (checkTargetHealth in scan.ts) always derives the finding-level
+ * checkId from a signal (dominantCheckId) but never sets a finding-level
+ * guideVars — only the originating signal carries the real substitutions. If
+ * the finding-level pass ran first, it would resolve that checkId's guide
+ * with vars === undefined (unresolved placeholders) and the seen-set dedupe
+ * would then discard the signal's later, correctly-substituted entry for the
+ * same guide id. Collecting signals first means the substituted version wins
+ * the dedupe; the finding-level pass then only fills in a guide that no
+ * signal already covered.
  */
 export function attachGuidesToScanFinding<T extends ScanFindingLike>(finding: T): WithGuides<T> {
   const scope: GuidanceScope = { platforms: finding.guidancePlatforms };
@@ -67,8 +78,8 @@ export function attachGuidesToScanFinding<T extends ScanFindingLike>(finding: T)
       guides.push(guide);
     }
   };
-  collect(finding.checkId, finding.guideVars);
   for (const signal of finding.signals ?? []) collect(signal.checkId, signal.guideVars);
+  collect(finding.checkId, finding.guideVars);
   return guides.length > 0 ? { ...finding, guides } : finding;
 }
 
