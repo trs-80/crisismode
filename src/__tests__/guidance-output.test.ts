@@ -2,12 +2,13 @@
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { configure, setOutputOptions, printScanSummary, printDiagnosis } from '../cli/output.js';
+import { configure, setOutputOptions, printScanSummary, printDiagnosis, printPlan } from '../cli/output.js';
 import type { ScanResult } from '../cli/output.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import { renderReadinessReport } from '../cli/commands/readiness.js';
 import { attachGuidesByRuleId } from '../framework/guidance/attach.js';
 import type { ReadinessReport } from '../readiness/types.js';
+import type { RecoveryPlan } from '../types/recovery-plan.js';
 
 function scanResultWithKeyFinding(): ScanResult {
   return {
@@ -257,5 +258,102 @@ describe('readiness output — guidance', () => {
     const attached = { ...report, findings: report.findings.map((f) => attachGuidesByRuleId(f)) };
     expect(attached.findings[0]!.guides?.map((g) => g.id)).toEqual(['supabase-pooler-mode', 'neon-pooled-connection']);
     expect(attached.findings[0]!.guides?.[0]?.consoleSteps.length).toBeGreaterThan(1);
+  });
+});
+
+function planWithGuidedSuggestion(): RecoveryPlan {
+  return {
+    apiVersion: 'v0.2.1',
+    kind: 'RecoveryPlan',
+    metadata: {
+      planId: 'plan-aws-rds-control-plane',
+      agentName: 'aws-rds-recovery',
+      agentVersion: '1.0.0',
+      scenario: 'storage_full',
+      createdAt: '2026-08-05T12:00:00.000Z',
+      estimatedDuration: 'PT5M',
+      summary: 'Suggested remediation for RDS instance prod-db-01.',
+      supersedes: null,
+    },
+    impact: {
+      affectedSystems: [],
+      affectedServices: ['database-availability'],
+      estimatedUserImpact: 'No user-facing impact.',
+      dataLossRisk: 'none',
+    },
+    steps: [{
+      stepId: 'step-002',
+      type: 'human_notification',
+      name: 'Increase allocated storage on RDS instance prod-db-01',
+      recipients: [{ role: 'on_call_engineer', urgency: 'high' }],
+      message: {
+        summary: 'Increase allocated storage on RDS instance prod-db-01',
+        detail: 'RDS storage is full on instance prod-db-01.',
+        actionRequired: true,
+        guideIds: ['aws-rds-increase-storage'],
+        guideVars: { instance: 'prod-db-01', 'target-storage-gb': '40' },
+      },
+      channel: 'auto',
+    }],
+    rollbackStrategy: { type: 'none', description: 'No mutations were performed by this plan.' },
+  };
+}
+
+describe('recover output — guidance', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, verbose: false, mode: 'human' });
+    setOutputOptions({ terse: false });
+  });
+
+  it('renders the guide for a suggestion step, resolved with its guideVars', () => {
+    configure({ mode: 'human', noColor: true });
+    printPlan(planWithGuidedSuggestion());
+    const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(text).toContain('How to fix it: Increase allocated storage on RDS instance prod-db-01');
+    expect(text).toContain('Modify → Allocated storage and raise it to 40 GiB');
+    expect(text).not.toContain('<instance>');
+    expect(text).not.toContain('<target-storage-gb>');
+  });
+
+  it('renders from the registry, not from message.detail prose', () => {
+    configure({ mode: 'human', noColor: true });
+    const plan = planWithGuidedSuggestion();
+    const step = plan.steps[0]!;
+    if (step.type === 'human_notification') step.message.detail = '';
+    printPlan(plan);
+    const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(text).toContain('aws rds modify-db-instance');
+  });
+
+  it('collapses to title and URL when terse', () => {
+    configure({ mode: 'human', noColor: true });
+    setOutputOptions({ terse: true });
+    printPlan(planWithGuidedSuggestion());
+    const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
+    expect(text).toContain('How to fix it: Increase allocated storage on RDS instance prod-db-01 — https://console.aws.amazon.com/rds/');
+    expect(text).not.toContain('Modify → Allocated storage and raise it');
+  });
+
+  it('machine mode prints the plan as JSON with guideIds intact and no rendered block', () => {
+    configure({ json: true, noColor: true });
+    printPlan(planWithGuidedSuggestion());
+    const parsed = JSON.parse(String(logSpy.mock.calls[0]![0]));
+    expect(parsed.plan.steps[0].message.guideIds).toEqual(['aws-rds-increase-storage']);
+    expect(logSpy.mock.calls).toHaveLength(1);
+  });
+
+  it('a plan step with no guideIds renders no guidance', () => {
+    configure({ mode: 'human', noColor: true });
+    const plan = planWithGuidedSuggestion();
+    if (plan.steps[0]!.type === 'human_notification') delete plan.steps[0]!.message.guideIds;
+    printPlan(plan);
+    expect(logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n')).not.toContain('How to fix it');
   });
 });
