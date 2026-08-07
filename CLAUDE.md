@@ -22,6 +22,7 @@ CrisisMode is an AI crisis recovery framework with a hub-and-spoke architecture.
 - **ProviderRegistry** (`src/framework/provider-registry.ts`) — resolves which capability providers can handle each step
 - **CapabilityRegistry** (`src/framework/capability-registry.ts`) — global registry of standard recovery capabilities (e.g., `db.query.read`, `db.replica.disconnect`)
 - **OperatorSummary** (`src/framework/operator-summary.ts`) — builds human-readable health and readiness summaries for operators
+- **Remediation guidance** (`src/framework/guidance/`) — static `RemediationGuide` registry (console steps, CLI equivalent, expected outcome, `verifiedOn`) keyed to readiness rule ids and agent `checkId`s; rendered identically by scan, diagnose, readiness, and recover
 - **IncidentReport** (`src/framework/incident-report.ts`) — generates structured incident reports from recovery executions
 - **NetworkProfile** (`src/framework/network-profile.ts`) — network diagnostics and profiling
 - **AI Diagnosis** (`src/framework/ai-diagnosis-universal.ts`) — universal AI-powered diagnosis for any agent via Claude API
@@ -202,6 +203,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/mcp/server.ts` | MCP server — 8 read-only diagnosis tools exposed via `crisismode mcp` |
 | `src/readiness/` | Scale-readiness rule registry + capacity ceilings/weak-link (readiness command + MCP tool) |
 | `src/framework/escalation.ts` | Five-level progressive escalation model |
+| `src/framework/guidance/registry.ts` | Remediation guide registry — console-step guidance keyed to finding types |
 | `src/agent/pg-replication/` | Reference agent implementation (PostgreSQL) |
 | `src/agent/redis/` | Redis memory pressure recovery agent |
 | `src/agent/etcd/` | etcd consensus recovery agent |

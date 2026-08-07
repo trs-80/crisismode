@@ -115,6 +115,30 @@ See the [Your First Agent](docs/guides/your-first-agent.md) tutorial for a step-
   docs(guides): add check plugin tutorial
   ```
 
+### Remediation guides (`src/framework/guidance/`)
+
+Guides are the "open this URL, click this, expect that" instructions CrisisMode
+shows for fixes it must not perform itself (console actions on managed
+platforms). They are static data — one `RemediationGuide` per fix, keyed to the
+finding types it answers.
+
+Rules for editing them:
+
+- **`applicableFindingTypes` must name something the codebase emits** — a
+  registered readiness rule id (`src/readiness/rules/index.ts`) or an agent
+  `checkId` constant. `src/__tests__/guidance-registry.test.ts` fails the build
+  otherwise, which is how a renamed rule gets caught instead of silently
+  orphaning its guidance.
+- **Changing a guide's steps means re-verifying the path.** Open the console,
+  follow your own steps, then set `verifiedOn` to the date you did it. A test
+  fails when any guide's `verifiedOn` is more than 12 months old, so stale
+  paths surface on their own schedule rather than in someone's incident.
+- **No account-specific deep links, no screenshots.** Top-level console URLs
+  and click paths only — they survive UI changes better and work for every
+  reader.
+- **Use `<placeholder>` tokens** (`<instance>`, `<db-port>`) for anything
+  target-specific; callers substitute them with `applyGuideVariables()`.
+
 ## Correlation Rules Are Frozen
 
 `CORRELATION_RULES` in `src/framework/root-cause-synthesis.ts` is a closed set.
