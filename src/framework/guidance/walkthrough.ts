@@ -70,6 +70,17 @@ export function walkthroughFilename(today: string): string {
 }
 
 /**
+ * True only for a syntactically valid ISO date that names a real calendar
+ * day — `2026-02-30` fails even though it matches the format regex. Used at
+ * every boundary where a date can reach a guide source file.
+ */
+export function isValidIsoDate(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
+}
+
+/**
  * Finds which guide source file (under `guidesDir`) declares each of the
  * given guide ids, by scanning file contents for `id: '<id>'`. Shared by the
  * generator (to show a guide's source file) and applyVerdicts (to know which
@@ -167,12 +178,15 @@ export function generateWalkthrough(guides: readonly RemediationGuide[], today: 
     lines.push('');
     lines.push(`## ${info.label} — ${platformGuides.length} guide${platformGuides.length === 1 ? '' : 's'}, ~${minutes} min`);
     lines.push('');
-    if (info.loginHint) {
-      lines.push(`> ${info.loginHint}`);
-      lines.push('');
-    }
+    // One continuous blockquote (separated by bare '>' lines) — a blank
+    // line between consecutive blockquotes trips markdownlint MD028.
+    const quoteLines: string[] = [];
+    if (info.loginHint) quoteLines.push(`> ${info.loginHint}`);
     for (const note of KNOWN_OBSERVATIONS[platform] ?? []) {
-      lines.push(`> **Heads-up:** ${note}`);
+      quoteLines.push(`> **Heads-up:** ${note}`);
+    }
+    if (quoteLines.length > 0) {
+      lines.push(quoteLines.join('\n>\n'));
       lines.push('');
     }
 
@@ -280,7 +294,15 @@ export function parseVerdicts(markdown: string): ParsedVerdicts {
 
     const stampedMatch = /^STAMPED\s+(\d{4}-\d{2}-\d{2})\b/i.exec(strippedLeading);
     if (stampedMatch) {
-      verdicts.push({ guideId, verdict: 'STAMPED', notes: undefined, stampedOn: stampedMatch[1] });
+      const stampedOn = stampedMatch[1]!;
+      if (!isValidIsoDate(stampedOn)) {
+        warnings.push(
+          `STAMPED date "${stampedOn}" on ${guideId} is not a real calendar date — treated as PENDING so it can be re-verified.`,
+        );
+        verdicts.push({ guideId, verdict: 'PENDING', notes });
+        continue;
+      }
+      verdicts.push({ guideId, verdict: 'STAMPED', notes: undefined, stampedOn });
       continue;
     }
 
@@ -301,7 +323,7 @@ export function parseVerdicts(markdown: string): ParsedVerdicts {
 export interface ApplyResult {
   stamped: string[];
   alreadyStamped: { guideId: string; date: string }[];
-  differs: (GuideVerdict & { file: string | undefined })[];
+  differs: (GuideVerdict & { file: string })[];
   blocked: GuideVerdict[];
   pending: string[];
   unknown: string[];
@@ -322,6 +344,10 @@ export function applyVerdicts(
   guidesDir: string,
   guideIds: ReadonlySet<string>,
 ): ApplyResult {
+  if (!isValidIsoDate(date)) {
+    throw new Error(`Refusing to stamp guides with invalid date '${date}' — expected a real YYYY-MM-DD calendar date`);
+  }
+
   const result: ApplyResult = {
     stamped: [],
     alreadyStamped: [],
@@ -356,7 +382,13 @@ export function applyVerdicts(
       continue;
     }
     if (v.verdict === 'DIFFERS') {
-      result.differs.push({ ...v, file: fileMap.get(v.guideId) });
+      const differsFile = fileMap.get(v.guideId);
+      if (!differsFile) {
+        throw new Error(
+          `Guide '${v.guideId}' has verdict DIFFERS but its source file could not be found under ${guidesDir}`,
+        );
+      }
+      result.differs.push({ ...v, file: differsFile });
       continue;
     }
 
