@@ -98,4 +98,11 @@ describe('LlmProviderSimulator', () => {
     sim.transition('healthy');
     expect(await sim.evaluateCheck({ type: 'api_call', statement: 'llm_key_valid', expect: { operator: 'eq', value: 'ok' } })).toBe(true);
   });
+
+  it('fails closed on an unrecognized statement, even when the underlying scenario is healthy', async () => {
+    // Matching the vector-store precedent: a check on a statement neither
+    // backend recognizes is a plan-authoring bug, and must not silently pass.
+    const sim = new LlmProviderSimulator('healthy');
+    expect(await sim.evaluateCheck({ type: 'api_call', statement: 'nonsense_statement', expect: { operator: 'eq', value: 'ok' } })).toBe(false);
+  });
 });
