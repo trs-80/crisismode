@@ -254,3 +254,36 @@ describe('guidance registry — content coverage', () => {
     expect(google).toEqual([]);
   });
 });
+
+describe('guidance freshness', () => {
+  /**
+   * Console paths rot silently. This test is the nudge: when a guide's path
+   * has not been human-verified in 12 months, the build fails and someone
+   * re-walks it. Output shows the date regardless — this is a contributor
+   * policy, not a runtime behavior.
+   */
+  const TWELVE_MONTHS_MS = 365 * 24 * 60 * 60 * 1000;
+
+  it('every guide was verified within the last 12 months', () => {
+    const now = Date.now();
+    for (const guide of REMEDIATION_GUIDES) {
+      const verifiedAt = Date.parse(guide.verifiedOn);
+      const ageDays = Math.floor((now - verifiedAt) / (24 * 60 * 60 * 1000));
+      expect(
+        now - verifiedAt,
+        `guide '${guide.id}' was last verified on ${guide.verifiedOn} (${ageDays} days ago). `
+          + 'Follow the console path, correct the steps if they changed, and update verifiedOn.',
+      ).toBeLessThan(TWELVE_MONTHS_MS);
+    }
+  });
+
+  it('no guide claims a verification date in the future', () => {
+    const now = Date.now();
+    for (const guide of REMEDIATION_GUIDES) {
+      expect(
+        Date.parse(guide.verifiedOn),
+        `guide '${guide.id}' has a verifiedOn in the future (${guide.verifiedOn})`,
+      ).toBeLessThanOrEqual(now + 24 * 60 * 60 * 1000);
+    }
+  });
+});
