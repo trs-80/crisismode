@@ -22,7 +22,7 @@ import { rankWeakLink } from './weak-link.js';
 import { allRules } from './rules/index.js';
 import type {
   ReadinessContext, ReadinessFinding, ReadinessReport, ReadinessRule, ReadinessSources,
-  TableStat, StatementStat, StatementAggregate, RedisLimits,
+  TableStat, StatementStat, StatementAggregate, RedisLimits, PgvectorInventory,
 } from './types.js';
 
 export async function runRules(
@@ -97,6 +97,8 @@ interface ReadinessPgClient {
   queryTableStats(): Promise<TableStat[] | null>;
   queryStatementStats(): Promise<StatementStat[] | null>;
   queryStatementAggregate(): Promise<StatementAggregate | null>;
+  /** Optional: older/leaner clients and test fakes may omit it entirely. */
+  getPgvectorInventory?(): Promise<PgvectorInventory | 'absent' | null>;
   close(): Promise<void>;
 }
 
@@ -208,6 +210,10 @@ export async function connectAndRunReadiness(
     }
     const activeRedisClient = redisClient;
 
+    // Bound once: `activeClient` is captured by the closure below, and the
+    // optional member may be absent entirely under exactOptionalPropertyTypes.
+    const pgvectorProbe = activeClient.getPgvectorInventory?.bind(activeClient);
+
     // Memoized: four connection rules plus computeCeilings all read
     // connectionUsage — one shared pg_stat_activity snapshot per run keeps
     // findings and ceiling evidence consistent and avoids repeat round-trips.
@@ -233,8 +239,18 @@ export async function connectAndRunReadiness(
             },
           }
         : {}),
+      ...(pgvectorProbe ? { getPgvectorInventory: pgvectorProbe } : {}),
     };
-    const findings = await runRules(allRules, sources, ctx);
+
+    // The pgvector inventory is fetched ONCE, before rule evaluation, and put
+    // on the context. `applicable(ctx)` is synchronous and cannot query the
+    // database, and it is the only mechanism that skips a rule *silently* — a
+    // rule returning 'unknown' still renders. A non-pgvector database
+    // therefore produces zero vector-related output. A fresh object is built
+    // rather than mutating the caller's ctx.
+    const pgvector = pgvectorProbe ? await pgvectorProbe() : undefined;
+    const ruleCtx: ReadinessContext = pgvector === undefined ? ctx : { ...ctx, pgvector };
+    const findings = await runRules(allRules, sources, ruleCtx);
 
     try {
       const { ceilings, omitted } = await computeCeilings(sources, ctx);
