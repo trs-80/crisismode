@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { runRules, connectAndRunReadiness, resolveReadinessTargets } from '../readiness/run.js';
 import { buildReport } from '../readiness/report.js';
 import { allRules } from '../readiness/rules/index.js';
-import type { ReadinessRule, ReadinessSources, ReadinessContext } from '../readiness/types.js';
+import type { ReadinessRule, ReadinessSources, ReadinessContext, ReadinessFinding } from '../readiness/types.js';
 import type { TargetConfig } from '../config/schema.js';
 
 const ctx = {
@@ -298,5 +298,71 @@ describe('resolveReadinessTargets', () => {
     };
     const { pgTarget } = resolveReadinessTargets({ config: { targets: [legacy] } as never, source: 'env-fallback' }, [ENV_PG]);
     expect(pgTarget?.name).toBe('env-database-url');
+  });
+});
+
+describe('connectAndRunReadiness pgvector wiring', () => {
+  const VECTOR_RULE_IDS = ['vector-index-missing', 'ivfflat-lists-mismatch'];
+  const vectorFindings = (report: { findings: ReadinessFinding[] }) =>
+    report.findings.filter((f) => VECTOR_RULE_IDS.includes(f.ruleId));
+
+  it('produces zero vector output when the client cannot probe pgvector', async () => {
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => okFakePgClient());
+    expect(vectorFindings(report)).toHaveLength(0);
+  });
+
+  it("produces zero vector output on a database without the extension ('absent')", async () => {
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => ({
+      ...okFakePgClient(),
+      getPgvectorInventory: async () => 'absent' as const,
+    }));
+    expect(vectorFindings(report)).toHaveLength(0);
+  });
+
+  it('reports both vector rules as unknown when the catalog read fails', async () => {
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => ({
+      ...okFakePgClient(),
+      getPgvectorInventory: async () => null,
+    }));
+    const findings = vectorFindings(report);
+    expect(findings).toHaveLength(2);
+    for (const f of findings) {
+      expect(f.status).toBe('unknown');
+      expect(f.reason).toBe('could not read pgvector catalog (connection or permission issue)');
+    }
+    // Unknown never moves the score (honesty contract).
+    expect(report.score).toBe(100);
+  });
+
+  it('flags a large unindexed vector table end to end', async () => {
+    const report = await connectAndRunReadiness(PG_TARGET, ctx, () => ({
+      ...okFakePgClient(),
+      getPgvectorInventory: async () => ({
+        extensionVersion: '0.7.0',
+        tables: [{ schema: 'public', table: 'documents', column: 'embedding', rowEstimate: 100_000 }],
+        indexes: [],
+      }),
+    }));
+    const missing = report.findings.find((f) => f.ruleId === 'vector-index-missing');
+    expect(missing?.status).toBe('at_risk');
+    expect(report.verdict).toBe('at-risk');
+  });
+
+  it('probes the pgvector catalog exactly once per run', async () => {
+    const probe = vi.fn(async () => 'absent' as const);
+    await connectAndRunReadiness(PG_TARGET, ctx, () => ({
+      ...okFakePgClient(),
+      getPgvectorInventory: probe,
+    }));
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mutate the caller-supplied context', async () => {
+    const callerCtx = { ...ctx };
+    await connectAndRunReadiness(PG_TARGET, callerCtx, () => ({
+      ...okFakePgClient(),
+      getPgvectorInventory: async () => 'absent' as const,
+    }));
+    expect(callerCtx.pgvector).toBeUndefined();
   });
 });
