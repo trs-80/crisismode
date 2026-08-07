@@ -96,7 +96,14 @@ export class S3RecoverySimulator implements S3RecoveryBackend {
       case 'get_bucket_config':
         return { config: await this.getBucketConfig() };
       case 'put_bucket_versioning':
-        this.transition('recovering');
+        // The isolated versioning states already have lifecycle rules
+        // configured, so enabling versioning completes their recovery;
+        // transitioning them through 'recovering' would drop the rules.
+        this.transition(
+          this.state === 'versioning_disabled' || this.state === 'versioning_suspended'
+            ? 'recovered'
+            : 'recovering',
+        );
         return { versioningEnabled: true };
       case 'put_bucket_lifecycle':
         this.transition('recovered');
