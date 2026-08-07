@@ -19,6 +19,7 @@ import { derivePlanMaxRiskLevel, getMaxRiskIndex } from './risk.js';
 import { collectExecutionContexts } from './step-walker.js';
 import { makeStepResult } from './step-result.js';
 import type { HookRegistry } from './hooks/registry.js';
+import { isDeclarativeNoOpCheck } from './check-helpers.js';
 
 export type { ExecutionMode } from '../types/common.js';
 
@@ -322,7 +323,7 @@ export class LegacyExecutionEngine {
     }
     if (step.preConditions) {
       for (const pre of step.preConditions) {
-        const passed = await this.backend.evaluateCheck(pre.check);
+        const passed = isDeclarativeNoOpCheck(pre.check) || (await this.backend.evaluateCheck(pre.check));
         this.callbacks.onPreConditionCheck?.(step, passed, pre.description);
         this.recorder.addLogEntry({
           type: 'precondition_check',
@@ -383,7 +384,8 @@ export class LegacyExecutionEngine {
     }
 
     // Phase 6: Success criteria
-    const successPassed = await this.backend.evaluateCheck(step.successCriteria.check);
+    const successPassed = isDeclarativeNoOpCheck(step.successCriteria.check)
+      || (await this.backend.evaluateCheck(step.successCriteria.check));
     this.callbacks.onSuccessCheck?.(step, successPassed, step.successCriteria.description);
     this.recorder.addLogEntry({
       type: 'success_check',
@@ -521,7 +523,8 @@ export class LegacyExecutionEngine {
     startedAt: string,
     startTime: number,
   ): Promise<StepResult> {
-    const conditionMet = await this.backend.evaluateCheck(step.condition.check);
+    const conditionMet = isDeclarativeNoOpCheck(step.condition.check)
+      || (await this.backend.evaluateCheck(step.condition.check));
     this.callbacks.onConditionalEval?.(step, conditionMet);
 
     this.recorder.addLogEntry({

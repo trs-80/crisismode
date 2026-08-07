@@ -19,6 +19,7 @@ import { resolveStepProviders } from './provider-registry.js';
 import { derivePlanMaxRiskLevel } from './risk.js';
 import { makeTimestamp } from './graph-helpers.js';
 import { makeStepResult } from './step-result.js';
+import { isDeclarativeNoOpCheck } from './check-helpers.js';
 
 export type { ExecutionMode } from '../types/common.js';
 
@@ -215,7 +216,7 @@ export function makeSystemActionNode(step: SystemActionStep, ctx: GraphNodeConte
     // Check preconditions
     if (step.preConditions) {
       for (const pre of step.preConditions) {
-        const passed = await ctx.backend.evaluateCheck(pre.check);
+        const passed = isDeclarativeNoOpCheck(pre.check) || (await ctx.backend.evaluateCheck(pre.check));
         logs.push(makeLogEntry('precondition_check', step.stepId,
           `Precondition ${passed ? 'passed' : 'FAILED'}: ${pre.description}`));
         if (!passed) {
@@ -276,7 +277,8 @@ export function makeSystemActionNode(step: SystemActionStep, ctx: GraphNodeConte
     }
 
     // Check success criteria
-    const successPassed = await ctx.backend.evaluateCheck(step.successCriteria.check);
+    const successPassed = isDeclarativeNoOpCheck(step.successCriteria.check)
+      || (await ctx.backend.evaluateCheck(step.successCriteria.check));
     logs.push(makeLogEntry('success_check', step.stepId,
       `Success criteria ${successPassed ? 'passed' : 'FAILED'}: ${step.successCriteria.description}`));
 
@@ -463,7 +465,8 @@ export function makeConditionalNode(
       makeLogEntry('step_start', step.stepId, `Starting step: ${step.name}`),
     ];
 
-    const conditionMet = await ctx.backend.evaluateCheck(step.condition.check);
+    const conditionMet = isDeclarativeNoOpCheck(step.condition.check)
+      || (await ctx.backend.evaluateCheck(step.condition.check));
     logs.push(makeLogEntry('conditional_eval', step.stepId,
       `Condition '${step.condition.description}': ${conditionMet ? 'TRUE' : 'FALSE'}`));
 
