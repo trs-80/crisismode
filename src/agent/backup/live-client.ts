@@ -137,7 +137,15 @@ export class BackupLiveClient implements BackupBackend {
       rtoEstimates: results.map((r) => r.rto).filter((r): r is RtoEstimate => r !== null),
       uncoveredSources: results.map((r) => r.uncovered).filter((s): s is string => s !== null),
     };
-    this.lastVerification = report;
+    // Don't cache a run that verified nothing (e.g. the plan's step-002
+    // diagnosis action calls verifyAll([]) with no configs — `providers` is
+    // then empty by construction, not because anything failed). Caching
+    // that would let a no-op call answer a question it was never asked, and
+    // would silently overwrite a genuine prior result. See evaluateCheck()'s
+    // matching cache-miss check below.
+    if (report.providers.length > 0) {
+      this.lastVerification = report;
+    }
     return report;
   }
 
@@ -318,7 +326,13 @@ export class BackupLiveClient implements BackupBackend {
       // failure to verify.
       try {
         let report = this.lastVerification;
-        if (!report) {
+        // A cached report with zero providers cannot answer this check — it
+        // means the cache was never actually populated by a real
+        // verification (verifyAll() no longer caches that shape; this
+        // guard is defense in depth against the same poisoning regardless
+        // of how a zero-provider report might reach here). Treat it as a
+        // cache miss and fall through to the real verification path.
+        if (!report || report.providers.length === 0) {
           const location = this.config.locations[0];
           if (!location) return compareCheckValue(false, check.expect.operator, check.expect.value);
           const config: BackupProviderConfig = {

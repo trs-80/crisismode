@@ -314,11 +314,6 @@ export class PgSimulator implements PgBackend {
       return compareCheckValue(count, check.expect.operator, check.expect.value);
     }
 
-    if (stmt.includes('replay_lag') && stmt.includes("client_addr = '10.0.1.52'")) {
-      const count = this.state === 'recovered' ? 1 : 0;
-      return compareCheckValue(count, check.expect.operator, check.expect.value);
-    }
-
     if (stmt.includes('pg_is_wal_replay_paused')) {
       const paused = this.replayPaused ? 1 : 0;
       return compareCheckValue(paused, check.expect.operator, check.expect.value);

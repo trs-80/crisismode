@@ -18,8 +18,17 @@ describe('isDeclarativeNoOpCheck', () => {
     expect(isDeclarativeNoOpCheck(mk({ type: 'placeholder' }))).toBe(true);
   });
 
-  it('is true for a statement-less "api_field" check with only operation set', () => {
-    expect(isDeclarativeNoOpCheck(mk({ type: 'api_field', operation: 'get_active_revision' }))).toBe(true);
+  it('is false for a statement-less "api_field" check that still carries an operation — that is a real assertion no backend dispatches, not a no-op (final-review N2)', () => {
+    // e.g. action-templates.ts's get_node_pod_count / replacement_pod_running
+    // success_checks: no statement, but a real operation + expect that a
+    // mutating action_class>=2 template's success criteria depends on.
+    // Treating this as a no-op would make those safety gates decorative.
+    expect(isDeclarativeNoOpCheck(mk({ type: 'api_field', operation: 'get_active_revision' }))).toBe(false);
+    expect(isDeclarativeNoOpCheck(mk({ type: 'api_field', operation: 'get_node_pod_count', expect: { operator: 'eq', value: 0 } }))).toBe(false);
+  });
+
+  it('is true for an "api_field" check with neither statement nor operation', () => {
+    expect(isDeclarativeNoOpCheck(mk({ type: 'api_field' }))).toBe(true);
   });
 
   it('is false when a non-empty statement is present, regardless of type', () => {
