@@ -21,6 +21,7 @@ import {
   applyVerdicts,
   stampChecklistFile,
   walkthroughFilename,
+  isValidIsoDate,
 } from '../src/framework/guidance/walkthrough.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -37,24 +38,31 @@ function todayIso(): string {
   return `${year}-${month}-${day}`;
 }
 
-function parseArgs(argv: readonly string[]): { command: string | undefined; positional: string[]; force: boolean; date: string | undefined } {
+function parseArgs(argv: readonly string[]): { command: string | undefined; positional: string[]; force: boolean; date: string | undefined; dateProvided: boolean } {
   const positional: string[] = [];
   let force = false;
   let date: string | undefined;
+  let dateProvided = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
+    if (a === '--') {
+      // pnpm forwards the literal `--` from `pnpm run guides:walkthrough -- --force`;
+      // treating it as a positional would write a checklist to a file named '--'.
+      continue;
+    }
     if (a === '--force') {
       force = true;
     } else if (a === '--date') {
+      dateProvided = true;
       date = argv[++i];
     } else {
       positional.push(a);
     }
   }
-  return { command: positional[0], positional, force, date };
+  return { command: positional[0], positional, force, date, dateProvided };
 }
 
-const { command, positional, force, date: dateFlag } = parseArgs(process.argv.slice(2));
+const { command, positional, force, date: dateFlag, dateProvided } = parseArgs(process.argv.slice(2));
 const today = todayIso();
 
 if (command === 'generate') {
@@ -79,9 +87,9 @@ if (command === 'generate') {
   }
 
   let date = today;
-  if (dateFlag !== undefined) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFlag)) {
-      console.error(`Invalid --date "${dateFlag}" — expected YYYY-MM-DD.`);
+  if (dateProvided) {
+    if (dateFlag === undefined || !isValidIsoDate(dateFlag)) {
+      console.error(`Invalid --date "${dateFlag ?? '(missing value)'}" — expected a real YYYY-MM-DD calendar date.`);
       console.error('Usage: pnpm run guides:apply <checklist-file> [--date YYYY-MM-DD]');
       process.exit(1);
     }

@@ -137,8 +137,11 @@ Rules for editing them:
   generates a per-platform checklist under `docs/guide-verification/` from the
   live registry; walk the consoles, mark each guide `MATCHES` or `DIFFERS`,
   then `pnpm run guides:apply <checklist>` stamps `verifiedOn` for every
-  `MATCHES` guide and lists the `DIFFERS` ones for text fixes. Partial passes
-  are fine — re-run `apply` on the same file as you go.
+  `MATCHES` guide and lists the `DIFFERS` ones for text fixes. No account on
+  a platform? Mark its guides `BLOCKED` with a one-line reason — they stay
+  unverified on purpose and are reported as a coverage gap needing someone
+  with access. Partial passes are fine — re-run `apply` on the same file as
+  you go.
 - **No account-specific deep links, no screenshots.** Top-level console URLs
   and click paths only — they survive UI changes better and work for every
   reader.

@@ -33,7 +33,7 @@ If a click-path has drifted, the person who finds out is a user in the middle of
 ## Anthropic Console — 3 guides, ~9 min
 
 > Sign in at https://console.anthropic.com with the account your app uses.
-
+>
 > **Heads-up:** Observed 2026-08-07: every console.anthropic.com URL redirects to platform.claude.com. While walking these guides, note whether the guide URLs and step wording should adopt the new domain. A working redirect still counts as DIFFERS — record it once per guide and move on; the fix is a URL edit, not a re-walk.
 
 ### 1. Rotate your Anthropic API key
@@ -262,7 +262,7 @@ Guide id: `supabase-pgvector-index` · last verified 2026-08-05 · defined in `s
 ## Neon Console — 2 guides, ~6 min
 
 > Sign in at https://console.neon.tech (may redirect to neon.com) and open the project your app uses.
-
+>
 > **Heads-up:** Neon guide URLs point at neon.com while the console login hint points at console.neon.tech. Confirm which domain is current for your account, and record DIFFERS on any guide whose URL should change.
 
 ### 1. Switch Neon to the pooled connection endpoint

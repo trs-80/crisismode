@@ -160,6 +160,16 @@ describe('verdict parsing', () => {
     ]);
   });
 
+  it('demotes a STAMPED verdict with an impossible calendar date to PENDING with a warning', () => {
+    const sample = '**Verdict:** STAMPED 2026-02-30 <!-- guide:anthropic-rotate-key -->';
+    const { verdicts, warnings } = parseVerdicts(sample);
+    expect(verdicts).toEqual([
+      { guideId: 'anthropic-rotate-key', verdict: 'PENDING', notes: undefined },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('2026-02-30');
+  });
+
   it('collects multi-line and indented notes until a blank line', () => {
     const sample = [
       '**Verdict:** DIFFERS <!-- guide:anthropic-rate-limits -->',
@@ -249,6 +259,26 @@ describe('applying verdicts', () => {
       { guideId: 'anthropic-rotate-key', verdict: 'BLOCKED', notes: 'no account on this platform' },
     ]);
     expect(result.stamped).toEqual([]);
+  });
+
+  it('refuses to stamp with an impossible calendar date', () => {
+    const dir = tempGuidesDir();
+    expect(() =>
+      applyVerdicts(
+        [{ guideId: 'anthropic-rotate-key', verdict: 'MATCHES', notes: undefined }],
+        '2026-02-30',
+        dir,
+        new Set(REMEDIATION_GUIDES.map((g) => g.id)),
+      ),
+    ).toThrow(/invalid date/);
+  });
+
+  it('fails a DIFFERS verdict whose guide is in no source file, matching MATCHES behavior', () => {
+    const dir = tempGuidesDir();
+    const ids = new Set([...REMEDIATION_GUIDES.map((g) => g.id), 'ghost-guide']);
+    expect(() =>
+      applyVerdicts([{ guideId: 'ghost-guide', verdict: 'DIFFERS', notes: 'saw drift' }], '2026-08-07', dir, ids),
+    ).toThrow(/ghost-guide.*source file/);
   });
 
   it('reports unknown guide ids without touching files', () => {
