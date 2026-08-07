@@ -29,11 +29,28 @@ import type { VectorStoreConnection } from './provider-table.js';
 /**
  * Per-request timeout. Scan races each agent's assessHealth against
  * AGENT_TIMEOUT_MS (2000ms) and a timed-out assessHealth returns a signal-less
- * 'unknown' — losing every checkId. Two sequential Pinecone requests (control
- * plane, then data plane) must fit inside that budget, so this is a ceiling
- * derived from scan's contract, not a tuning preference.
+ * 'unknown' — losing every checkId. This bounds any single request; it does
+ * NOT by itself bound a probe that makes more than one sequential request —
+ * see PINECONE_PROBE_DEADLINE_MS for that.
  */
 export const DEFAULT_TIMEOUT_MS = 1_500;
+
+/**
+ * Total budget for one Pinecone connection's probe, shared across its two
+ * sequential requests (control-plane GET /indexes, then the data-plane
+ * describe_index_stats calls). Each request is independently capped at
+ * DEFAULT_TIMEOUT_MS, so without a shared ceiling a slow-but-successful
+ * control-plane call followed by slow-but-successful data-plane calls could
+ * take up to 2 * DEFAULT_TIMEOUT_MS (~3000ms) — comfortably over scan's
+ * AGENT_TIMEOUT_MS (2000ms), the exact budget DEFAULT_TIMEOUT_MS is derived
+ * from. 1800ms leaves ~200ms of headroom for body parsing and promise
+ * scheduling. Once the deadline is spent, the data-plane calls are skipped
+ * rather than fired with a near-zero timeout that would just abort anyway.
+ */
+export const PINECONE_PROBE_DEADLINE_MS = 1_800;
+
+/** Below this much remaining budget, a data-plane request has no realistic chance to complete — skip it rather than fire one. */
+const MIN_RECORD_COUNT_BUDGET_MS = 50;
 
 export interface VectorStoreLiveConfig {
   connections: VectorStoreConnection[];
@@ -145,11 +162,13 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
     };
   }
 
-  private async request(url: string, headers: Record<string, string>, init?: RequestInit): Promise<Response> {
+  private async request(
+    url: string, headers: Record<string, string>, init?: RequestInit, timeoutMs: number = this.timeoutMs,
+  ): Promise<Response> {
     return fetch(url, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   }
 
@@ -161,7 +180,9 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
       'X-Pinecone-API-Version': '2025-04',
       accept: 'application/json',
     };
-    const start = Date.now();
+    // performance.now() (monotonic) drives the shared-deadline math below —
+    // a wall-clock adjustment mid-probe must not corrupt the budget.
+    const started = performance.now();
     let response: Response;
     try {
       response = await this.request(`${connection.baseUrl}/indexes`, headers);
@@ -171,7 +192,8 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
         checks: this.unreachable('pinecone', err instanceof Error ? err.message : String(err)),
       };
     }
-    const latencyMs = Date.now() - start;
+    const now = performance.now();
+    const latencyMs = Math.round(now - started);
 
     if (response.status === 401 || response.status === 403) {
       return {
@@ -202,13 +224,22 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
       bodyMalformed = true;
     }
 
+    // The control-plane call already spent `now - started` of the shared
+    // deadline; the data-plane calls get whatever remains, capped at the
+    // usual per-request ceiling. Below the floor, skip firing them at all —
+    // recordCount stays null (honest unreported), exactly as it would on a
+    // data-plane failure. index_status never depends on this: `ready` was
+    // already read from the control-plane body parsed above.
+    const recordCountTimeoutMs = Math.min(this.timeoutMs, PINECONE_PROBE_DEADLINE_MS - (now - started));
+    const skipRecordCounts = recordCountTimeoutMs <= MIN_RECORD_COUNT_BUDGET_MS;
+
     const indexes = await Promise.all(
       entries.map(async (entry): Promise<VectorStoreIndexInfo> => ({
         name: typeof entry.name === 'string' ? entry.name : 'unnamed',
         ready: entry.status?.ready === true,
         dimension: asNumber(entry.dimension),
-        recordCount: typeof entry.host === 'string'
-          ? await this.pineconeRecordCount(entry.host, connection.apiKey)
+        recordCount: typeof entry.host === 'string' && !skipRecordCounts
+          ? await this.pineconeRecordCount(entry.host, connection.apiKey, recordCountTimeoutMs)
           : null,
       })),
     );
@@ -229,16 +260,19 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
   }
 
   /**
-   * Record count lives on the data plane, not the control plane. A failure
-   * here leaves the count null (honest unreported) and never downgrades the
-   * index_status check, which is a control-plane fact.
+   * Record count lives on the data plane, not the control plane. A failure —
+   * or running out of the shared probe deadline before this call is even
+   * attempted (see PINECONE_PROBE_DEADLINE_MS) — leaves the count null
+   * (honest unreported) and never downgrades the index_status check, which
+   * is a control-plane fact already known before this call runs.
    */
-  private async pineconeRecordCount(host: string, apiKey: string): Promise<number | null> {
+  private async pineconeRecordCount(host: string, apiKey: string, timeoutMs: number): Promise<number | null> {
     try {
       const response = await this.request(
         `https://${host}/describe_index_stats`,
         { 'Api-Key': apiKey, 'content-type': 'application/json' },
         { method: 'POST', body: '{}' },
+        timeoutMs,
       );
       if (!response.ok) return null;
       const body = (await response.json()) as { totalVectorCount?: unknown };
@@ -348,7 +382,7 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
     const statement = check.statement ?? '';
     const reports = await this.queryVectorStores();
 
-    if (statement.includes('auth_valid')) {
+    if (statement === 'auth_valid') {
       // `Array.prototype.every` is vacuously true on an empty array — a
       // client with zero configured providers must not satisfy `auth_valid`,
       // since nothing was actually verified.
@@ -357,7 +391,7 @@ export class VectorStoreLiveClient implements VectorStoreBackend {
       );
       return compareCheckValue(allValid ? 'pass' : 'fail', check.expect.operator, check.expect.value);
     }
-    if (statement.includes('ready_index_count')) {
+    if (statement === 'ready_index_count') {
       const count = reports.reduce((sum, r) => sum + r.indexes.filter((i) => i.ready).length, 0);
       return compareCheckValue(count, check.expect.operator, check.expect.value);
     }

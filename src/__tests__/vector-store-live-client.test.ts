@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { VectorStoreLiveClient, DEFAULT_TIMEOUT_MS } from '../agent/vector-store/live-client.js';
+import {
+  VectorStoreLiveClient, DEFAULT_TIMEOUT_MS, PINECONE_PROBE_DEADLINE_MS,
+} from '../agent/vector-store/live-client.js';
 import { VECTOR_STORE_CHECK_IDS } from '../agent/vector-store/check-ids.js';
 import type { VectorStoreConnection } from '../agent/vector-store/provider-table.js';
 
@@ -192,13 +194,18 @@ describe('VectorStoreLiveClient — degradation contract', () => {
 });
 
 describe('VectorStoreLiveClient — timeout budget', () => {
-  it('defaults to a timeout that fits inside scan\'s per-agent budget', () => {
+  it('defaults to a per-request timeout under scan\'s per-agent budget', () => {
     // scan races assessHealth against AGENT_TIMEOUT_MS (2000ms). A slower
     // default would let a hanging provider blow that budget, and a timed-out
     // assessHealth returns a signal-less 'unknown' — wiping every checkId PR 5
-    // anchors guidance to. Two sequential requests (Pinecone control plane then
-    // data plane) must still fit, so this is the ceiling, not a preference.
+    // anchors guidance to. This bounds a single request; PINECONE_PROBE_DEADLINE_MS
+    // (below) is what bounds a probe that makes more than one sequential
+    // request, since DEFAULT_TIMEOUT_MS alone does not.
     expect(DEFAULT_TIMEOUT_MS).toBeLessThanOrEqual(1500);
+  });
+
+  it('bounds the whole pinecone probe (control plane + data plane) under scan\'s per-agent budget', () => {
+    expect(PINECONE_PROBE_DEADLINE_MS).toBeLessThan(2000);
   });
 
   it('passes the configured timeout to the request signal', async () => {
@@ -209,6 +216,76 @@ describe('VectorStoreLiveClient — timeout budget', () => {
     vi.stubGlobal('fetch', fetchMock);
     await new VectorStoreLiveClient({ connections: [PINECONE], timeoutMs: 50 }).queryVectorStores();
     expect(fetchMock).toHaveBeenCalled();
+  });
+});
+
+describe('VectorStoreLiveClient — pinecone shared probe deadline', () => {
+  it('skips the data-plane call once the shared deadline is exhausted, leaving recordCount null without downgrading index_status', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({
+      indexes: [{ name: 'documents', dimension: 1536, host: 'documents-abc.svc.pinecone.io', status: { ready: true, state: 'Ready' } }],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Two performance.now() reads happen before the data-plane budget check:
+    // `started` (probe entry) and `now` (right after the control-plane
+    // response resolves). Leaving only 10ms of the 1800ms shared deadline
+    // means the data-plane call must be skipped, not fired with a near-zero
+    // timeout.
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(PINECONE_PROBE_DEADLINE_MS - 10);
+
+    const [report] = await new VectorStoreLiveClient({ connections: [PINECONE] }).queryVectorStores();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const firstCall = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(firstCall[0]).toBe('https://api.pinecone.io/indexes');
+    expect(report!.indexes[0]?.recordCount).toBeNull();
+    expect(statusOf(report!, VECTOR_STORE_CHECK_IDS.indexStatus)).toBe('pass');
+  });
+
+  it('reduces the data-plane timeout to whatever budget remains, rather than the full per-request default', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('describe_index_stats')) return jsonResponse({ totalVectorCount: 7 });
+      return jsonResponse({
+        indexes: [{ name: 'documents', dimension: 1536, host: 'documents-abc.svc.pinecone.io', status: { ready: true, state: 'Ready' } }],
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    // 300ms remains of the shared deadline — comfortably above the skip
+    // floor but well below DEFAULT_TIMEOUT_MS (1500ms).
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(PINECONE_PROBE_DEADLINE_MS - 300);
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+
+    const [report] = await new VectorStoreLiveClient({ connections: [PINECONE] }).queryVectorStores();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(timeoutSpy.mock.calls[0]?.[0]).toBe(DEFAULT_TIMEOUT_MS);
+    expect(timeoutSpy.mock.calls[1]?.[0]).toBe(300);
+    expect(report!.indexes[0]?.recordCount).toBe(7);
+  });
+});
+
+describe('VectorStoreLiveClient — evaluateCheck', () => {
+  it('matches auth_valid by exact statement, not by substring', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ indexes: [] })));
+    const c = client([PINECONE]);
+    expect(await c.evaluateCheck({ type: 'structured_command', statement: 'auth_valid', expect: { operator: 'eq', value: 'pass' } })).toBe(true);
+    // A statement that merely contains 'auth_valid' as a substring must not
+    // match — only the exact statement string does.
+    expect(await c.evaluateCheck({ type: 'structured_command', statement: 'vector-store.auth_valid', expect: { operator: 'eq', value: 'pass' } })).toBe(false);
+  });
+
+  it('matches ready_index_count by exact statement, not by substring', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      indexes: [{ name: 'documents', dimension: 1536, host: 'documents-abc.svc.pinecone.io', status: { ready: true, state: 'Ready' } }],
+    })));
+    const c = client([PINECONE]);
+    expect(await c.evaluateCheck({ type: 'structured_command', statement: 'ready_index_count', expect: { operator: 'eq', value: 1 } })).toBe(true);
+    expect(await c.evaluateCheck({ type: 'structured_command', statement: 'not_ready_index_count', expect: { operator: 'eq', value: 1 } })).toBe(false);
   });
 });
 
