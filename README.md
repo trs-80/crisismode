@@ -302,6 +302,32 @@ crisismode completions bash|zsh|fish  # Generate shell completions
 
 Output modes: `--json` for machine-readable output, plain text auto-detected when piped, colored TTY output by default.
 
+### Pipe output format
+
+When stdout is not a TTY and `--json` isn't set, `crisismode scan` emits plain, tab-separated rows instead of colored output — stable enough to feed to `cut`/`awk`.
+
+A `scan` row has 4 fields:
+
+```
+scan\t<score>\t<scanned_at>\t<duration_ms>
+```
+
+Each `finding` row has 7 fixed fields, so every row has the same column count regardless of whether a finding has a guide:
+
+```
+finding\t<id>\t<service>\t<status>\t<confidence>\t<summary>\t<guide_refs>
+```
+
+| # | Field | Notes |
+|---|---|---|
+| 1 | `finding` | literal row-type marker |
+| 2 | `id` | finding id |
+| 3 | `service` | e.g. `postgresql (prod-db-01)` |
+| 4 | `status` | `healthy` / `recovering` / `unhealthy` / `unknown` |
+| 5 | `confidence` | 0–1 |
+| 6 | `summary` | free text; tab/newline characters are stripped so they can't shift later columns |
+| 7 | `guide_refs` | `guide:<id>[,<id>...]`, empty string when the finding has no matched remediation guide |
+
 ### JSON output format
 
 The `--json` flag emits **JSON lines** (one JSON object per line), not a single JSON document. Each line has a `type` field indicating the data it carries:

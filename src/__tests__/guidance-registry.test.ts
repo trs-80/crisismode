@@ -75,11 +75,20 @@ describe('guidance registry — structure', () => {
   it('every verifiedOn is a parseable ISO date', () => {
     for (const g of REMEDIATION_GUIDES) {
       expect(g.verifiedOn, `guide '${g.id}' has a malformed verifiedOn`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      const parsed = new Date(`${g.verifiedOn}T00:00:00.000Z`);
       expect(
-        Number.isNaN(Date.parse(g.verifiedOn)),
-        `guide '${g.id}' verifiedOn does not parse as a date`,
-      ).toBe(false);
+        parsed.toISOString().slice(0, 10),
+        `guide '${g.id}' verifiedOn is not a real calendar date`,
+      ).toBe(g.verifiedOn);
     }
+  });
+
+  it('rejects a malformed verifiedOn that Date.parse would otherwise normalize (e.g. Feb 30)', () => {
+    const bogus = '2026-02-30';
+    const parsed = new Date(`${bogus}T00:00:00.000Z`);
+    // Date.parse/Date normalizes this into March 2 rather than rejecting it —
+    // this is exactly the false-pass the round-trip check above must catch.
+    expect(parsed.toISOString().slice(0, 10)).not.toBe(bogus);
   });
 
   it('every url is https', () => {
