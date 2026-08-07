@@ -70,9 +70,9 @@ A trimmed real record (run against a stock PostgreSQL 16 with no `pg_stat_statem
 
 The same report is available to AI agents through the MCP server (`crisismode mcp`) as the `crisismode_readiness` tool, annotated `readOnlyHint: true` like every tool on the MCP surface.
 
-## The Six Rules
+## The Eight Rules
 
-Six rules live in `src/readiness/rules/`. Each returns one finding with a status, raw evidence, a plain-English explanation, and a concrete fix.
+Eight rules live in `src/readiness/rules/`. Each returns one finding with a status, raw evidence, a plain-English explanation, and a concrete fix.
 
 | Rule | Threshold (exact) | Statuses | Meaning | Fix guidance (the rule's own words) |
 |---|---|---|---|---|
@@ -82,10 +82,44 @@ Six rules live in `src/readiness/rules/`. Each returns one finding with a status
 | `missing-index` | table rows ≥ 10,000 AND seq scans > max(1, index scans) × 10 → `at_risk` | `ready`, `at_risk`, `unknown` | Without an index every query reads the whole table — fine at 1k rows, an outage at 1M; cost grows with data even if traffic stays flat | "Add an index on the columns these queries filter or join on (check with EXPLAIN)." |
 | `slow-queries` | mean execution ≥ 250ms → `at_risk`; without `pg_stat_statements` → `unknown` | `ready`, `at_risk`, `unknown` | A slow query occupies a connection the whole time; under concurrency slow queries multiply into pool exhaustion and timeouts | "EXPLAIN the listed queries; usually the fix is an index or fetching fewer rows." |
 | `serverless-pooling` | **heuristic** — only applicable when a serverless platform is detected; non-5432 port → `ready` (pooled endpoint likely); direct port 5432 with `max_connections` ≤ 25 → `blocking`, otherwise `at_risk` | `ready`, `at_risk`, `blocking`, `unknown` | Each serverless invocation opens its own connection, so traffic spikes translate directly into connection spikes; the rule infers pooling from the connection port and limit size — its own explanation labels it a heuristic | "Use your provider's pooled connection string (or add pgbouncer) for serverless functions." |
+| `vector-index-missing` | vector column on a table with ≥ 10,000 estimated rows and no `ivfflat`/`hnsw` index on that column → `at_risk`; no pgvector extension → rule skipped entirely | `ready`, `at_risk`, `unknown` | Without an approximate index every similarity search reads and scores every row — instant on a demo table, an outage once real documents arrive | "Create an hnsw index on the vector column — for example CREATE INDEX ON \<table\> USING hnsw (\<column\> vector_cosine_ops). Match the operator class to the distance function your queries actually use, then confirm with EXPLAIN that the index is being used." |
+| `ivfflat-lists-mismatch` | `ivfflat` index on a table with ≥ 10,000 estimated rows whose `lists` is outside `sqrt(rows) / 4 .. sqrt(rows) × 4` → `at_risk`; `hnsw` exempt; `lists` not recorded in the index options → `unknown` | `ready`, `at_risk`, `unknown` | Too few lists and every cluster is huge, so queries stay slow; too many and each cluster is tiny, so recall silently drops | "Recreate the index with lists close to sqrt(rows) … or switch to hnsw, which needs no row-count-dependent tuning." |
 
 Rules that are not applicable to the detected stack are skipped entirely — a non-serverless deployment produces no `serverless-pooling` finding at all, not a `ready` one.
 
 Note the spelling split: finding statuses are underscored (`at_risk`), while the report verdict is hyphenated (`at-risk`). They are different fields with different vocabularies.
+
+### pgvector rules and silent skipping
+
+The two vector rules are the only rules whose applicability depends on live
+database state rather than the discovered stack. Because `applicable(ctx)` is
+synchronous and cannot query anything, the runner
+(`connectAndRunReadiness` in `src/readiness/run.ts`) reads the pgvector catalog
+**once, before any rule runs**, and puts the result on `ReadinessContext.pgvector`.
+The read is strictly read-only: `pg_extension`, then — only when the extension
+is present — vector-typed columns from `pg_attribute`/`pg_class`, row estimates
+from `pg_class.reltuples`, and `ivfflat`/`hnsw` indexes from `pg_index`/`pg_am`.
+
+Three outcomes, three different behaviours:
+
+| `ctx.pgvector` | Meaning | Behaviour |
+|---|---|---|
+| absent member | the client cannot probe pgvector at all | rules not applicable — no finding |
+| `'absent'` | the `vector` extension is confirmed not installed | rules not applicable — **no finding at all**, not a `ready` one |
+| `null` | the catalog read failed | rules run and report `unknown` with the reason `could not read pgvector catalog (connection or permission issue)` |
+| an inventory | the extension is installed | rules evaluate normally |
+
+The `unknown` reason is deliberately generic: the PostgreSQL live client's
+convention is null-on-any-error without classification, so the report does not
+promise precise permission-denied detection it cannot produce.
+
+Two smaller honesty details fall out of the same policy. Row counts come from
+`pg_class.reltuples` and are always labelled "(estimated)"; a table PostgreSQL
+has never analyzed (`reltuples = -1`) is reported as `unknown` with an `ANALYZE`
+instruction rather than being treated as empty. And an `ivfflat` index created
+without an explicit `WITH (lists = ...)` records no value in `pg_class.reloptions`
+— pgvector's built-in default is **not** substituted, so that index is reported
+as `unknown` rather than checked against a number nobody wrote down.
 
 ### Verdict and Score
 
@@ -193,6 +227,8 @@ export const allRules: ReadinessRule[] = [
   missingIndexRule,
   slowQueriesRule,
   serverlessPoolingRule,
+  vectorIndexMissingRule,
+  ivfflatListsMismatchRule,
 ];
 ```
 

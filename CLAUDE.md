@@ -223,6 +223,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/agent/aws-dynamodb/` | AWS DynamoDB PITR verification agent |
 | `src/agent/aws-rds/` | AWS RDS control-plane health, metrics, reachability, and backup agent |
 | `src/agent/iac-drift/` | Terraform drift detection agent (intended vs. observed) |
+| `src/agent/vector-store/` | Managed vector store (Pinecone, Upstash Vector) reachability agent — maturity `simulator_only`: neither provider has been live-validated against a real account; the invalid-key rejection and secret-redaction paths were live-checked against the real Pinecone API, Upstash was exercised only in simulator/mocked tests |
 | `src/config/builtin-agents.ts` | Built-in agent registration |
 | `src/config/agent-registry.ts` | Global agent registry |
 | `src/integrations/` | External integrations (GitHub, Sentry) |
