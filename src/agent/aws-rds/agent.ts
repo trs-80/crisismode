@@ -9,10 +9,13 @@ import type { HealthAssessment, HealthSignal, HealthStatus } from '../../types/h
 import type { RecoveryPlan } from '../../types/recovery-plan.js';
 import type { RecoveryStep } from '../../types/step-types.js';
 import { signalStatus, buildHealthAssessment } from '../../framework/health-helpers.js';
+import { formatGuideForPlan } from '../../framework/guidance/render.js';
+import { applyGuideVariables, getGuideById } from '../../framework/guidance/registry.js';
 import { createPlanEnvelope } from '../../framework/plan-helpers.js';
 import { awsRdsRecoveryManifest } from './manifest.js';
 import { isPermissionMissing } from './backend.js';
 import type { RdsRecoveryBackend } from './backend.js';
+import { checkIdForRdsSource } from './check-ids.js';
 import { RdsRecoverySimulator } from './simulator.js';
 
 const TWO_GIB_BYTES = 2 * 1024 * 1024 * 1024;
@@ -48,6 +51,40 @@ const CONTROL_PLANE_ACTION: Record<ControlPlaneScenario, string> = {
   connection_saturation: 'Reduce connection saturation (connection pooling or a larger instance class) before it blocks new connections.',
   instance_unavailable: 'Investigate why the RDS instance is not available and restore it to the available state.',
 };
+
+/**
+ * The guide placeholder substitutions for one control-plane item, derived
+ * from the same `source` and `data` used to build its signal/finding. Shared
+ * by assessHealth's controlPlaneSignals, diagnose's controlPlaneFindings, and
+ * plan's pushSuggestion call sites so scan, diagnose, and recover render the
+ * exact same resolved values from one computation, not three. Returns
+ * undefined for sources with no guide (checkIdForRdsSource already returned
+ * undefined for those; this mirrors that).
+ */
+function controlPlaneGuideVars(
+  source: string,
+  instance: string,
+  data: Record<string, unknown> | undefined,
+): Record<string, string> | undefined {
+  switch (source) {
+    case 'rds_storage': {
+      const currentGb = typeof data?.allocatedStorageGb === 'number' ? (data.allocatedStorageGb as number) : 20;
+      return { instance, 'target-storage-gb': String(currentGb + 20) };
+    }
+    case 'rds_connection_saturation':
+      return { instance };
+    case 'rds_security_group': {
+      const sgIds = data?.vpcSecurityGroupIds;
+      const sgId = Array.isArray(sgIds) && sgIds.length > 0 ? String(sgIds[0]) : 'sg-unknown';
+      const port = typeof data?.port === 'number' ? (data.port as number) : 5432;
+      return { instance, 'security-group-id': sgId, 'db-port': String(port) };
+    }
+    case 'rds_instance_status':
+      return { instance };
+    default:
+      return undefined;
+  }
+}
 
 export class AwsRdsRecoveryAgent implements RecoveryAgent {
   manifest = awsRdsRecoveryManifest;
@@ -284,13 +321,19 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
         ? 'recovering'
         : 'healthy';
 
-    const controlPlaneSignals: HealthSignal[] = controlPlaneItems.map((item) => ({
-      source: item.source,
-      status: item.isPermissionMissing ? 'unknown' : signalStatus(item.critical, item.warning),
-      detail: item.message,
-      observedAt,
-      entityId: config.instanceId,
-    }));
+    const controlPlaneSignals: HealthSignal[] = controlPlaneItems.map((item) => {
+      const checkId = checkIdForRdsSource(item.source);
+      const guideVars = controlPlaneGuideVars(item.source, config.instanceId, item.data);
+      return {
+        source: item.source,
+        status: item.isPermissionMissing ? 'unknown' : signalStatus(item.critical, item.warning),
+        detail: item.message,
+        observedAt,
+        entityId: config.instanceId,
+        ...(checkId !== undefined ? { checkId } : {}),
+        ...(guideVars !== undefined ? { guideVars } : {}),
+      };
+    });
 
     const signals: HealthSignal[] = [
       {
@@ -418,12 +461,18 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
       ? 0.9
       : config.backupRetentionPeriod === 0 ? 0.98 : 0.90;
 
-    const controlPlaneFindings: DiagnosisFinding[] = controlPlaneItems.map((item) => ({
-      source: item.source,
-      observation: item.message,
-      severity: item.isPermissionMissing ? 'info' : item.critical ? 'critical' : item.warning ? 'warning' : 'info',
-      ...(item.data ? { data: item.data } : {}),
-    }));
+    const controlPlaneFindings: DiagnosisFinding[] = controlPlaneItems.map((item) => {
+      const checkId = checkIdForRdsSource(item.source);
+      const guideVars = controlPlaneGuideVars(item.source, config.instanceId, item.data);
+      return {
+        source: item.source,
+        observation: item.message,
+        severity: item.isPermissionMissing ? 'info' : item.critical ? 'critical' : item.warning ? 'warning' : 'info',
+        ...(item.data ? { data: item.data } : {}),
+        ...(checkId !== undefined ? { checkId } : {}),
+        ...(guideVars !== undefined ? { guideVars } : {}),
+      };
+    });
 
     return {
       status: scenario === 'healthy' ? 'inconclusive' : 'identified',
@@ -820,7 +869,24 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
     ];
 
     let stepSeq = 2;
-    const pushSuggestion = (summary: string, detail: string): void => {
+    /**
+     * Every control-plane suggestion is one guide plus the observation that
+     * triggered it. The console path lives in the guidance registry, not
+     * here — one source of truth, rendered the same way in the plan, in
+     * `scan`, and in `--json`. `guideVars` records the substitutions so any
+     * renderer can rebuild the same text from the registry without parsing
+     * `detail`.
+     */
+    const pushSuggestion = (
+      summary: string,
+      observation: string,
+      guideId: string,
+      vars: Record<string, string>,
+    ): void => {
+      const guide = getGuideById(guideId);
+      const detail = guide
+        ? `${observation}\n${formatGuideForPlan(applyGuideVariables(guide, vars))}`
+        : observation;
       steps.push({
         stepId: `step-${String(stepSeq).padStart(3, '0')}`,
         type: 'human_notification',
@@ -831,6 +897,7 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
           detail,
           contextReferences: ['current_rds_control_plane_state'],
           actionRequired: true,
+          ...(guide ? { guideIds: [guide.id], guideVars: vars } : {}),
         },
         channel: 'auto',
       });
@@ -839,15 +906,11 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
 
     const storageFinding = diagnosis.findings.find((f) => f.source === 'rds_storage');
     if (storageFinding && storageFinding.severity === 'critical') {
-      const currentGb =
-        typeof storageFinding.data?.allocatedStorageGb === 'number'
-          ? (storageFinding.data.allocatedStorageGb as number)
-          : 20;
-      const targetGb = currentGb + 20;
       pushSuggestion(
         `Increase allocated storage on RDS instance ${instance}`,
-        `RDS storage is full on instance ${instance}. Increase allocated storage: RDS console → Databases → ${instance} → Modify → Allocated storage. ` +
-          `CLI equivalent: aws rds modify-db-instance --db-instance-identifier ${instance} --allocated-storage ${targetGb} --apply-immediately.`,
+        `RDS storage is full on instance ${instance}.`,
+        'aws-rds-increase-storage',
+        controlPlaneGuideVars('rds_storage', instance, storageFinding.data)!,
       );
     }
 
@@ -855,23 +918,19 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
     if (saturationFinding && (saturationFinding.severity === 'critical' || saturationFinding.severity === 'warning')) {
       pushSuggestion(
         `Reduce connection saturation on RDS instance ${instance}`,
-        `Database connections on instance ${instance} are approaching the limit. Consider connection pooling (RDS Proxy) or a larger instance class: ` +
-          `RDS console → Databases → ${instance} → Modify → DB instance class. ` +
-          `CLI equivalent: aws rds modify-db-instance --db-instance-identifier ${instance} --db-instance-class <larger-class> --apply-immediately. ` +
-          `Note: applying a class change reboots the instance immediately — schedule during low traffic, or omit --apply-immediately to wait for the next maintenance window.`,
+        `Database connections on instance ${instance} are approaching the limit.`,
+        'aws-rds-connection-saturation',
+        controlPlaneGuideVars('rds_connection_saturation', instance, saturationFinding.data)!,
       );
     }
 
     const sgFinding = diagnosis.findings.find((f) => f.source === 'rds_security_group');
     if (sgFinding && sgFinding.severity === 'critical') {
-      const sgIds = sgFinding.data?.vpcSecurityGroupIds;
-      const sgId = Array.isArray(sgIds) && sgIds.length > 0 ? String(sgIds[0]) : 'sg-unknown';
-      const port = typeof sgFinding.data?.port === 'number' ? (sgFinding.data.port as number) : 5432;
       pushSuggestion(
         `Open RDS security group ingress on instance ${instance}`,
-        `The security group blocks all inbound connections to instance ${instance}. Open the DB port to your app's security group: ` +
-          `EC2 console → Security Groups → ${sgId} → Inbound rules. ` +
-          `CLI equivalent: aws ec2 authorize-security-group-ingress --group-id ${sgId} --protocol tcp --port ${port} --source-group <app-security-group-id>.`,
+        `The security group blocks all inbound connections to instance ${instance}.`,
+        'aws-rds-open-security-group',
+        controlPlaneGuideVars('rds_security_group', instance, sgFinding.data)!,
       );
     }
 
@@ -886,16 +945,11 @@ export class AwsRdsRecoveryAgent implements RecoveryAgent {
         typeof instanceStatusFinding.data?.status === 'string'
           ? (instanceStatusFinding.data.status as string)
           : 'unknown';
-      const guidance =
-        status === 'stopped'
-          ? `Start the instance: RDS console → Databases → ${instance} → Actions → Start. CLI equivalent: aws rds start-db-instance --db-instance-identifier ${instance}.`
-          : /rebooting|maintenance/i.test(status)
-            ? `The instance is currently '${status}' — wait and monitor; no action is needed unless it fails to return to 'available'.`
-            : `Review recent events and contact AWS support if the instance does not return to 'available'.`;
       pushSuggestion(
         `RDS instance ${instance} is not available (status: ${status})`,
-        `RDS instance status is '${status}' on instance ${instance}. Check the status reason and recent events: ` +
-          `RDS console → Databases → ${instance}. CLI equivalent: aws rds describe-db-instances --db-instance-identifier ${instance}. ${guidance}`,
+        `RDS instance status is '${status}' on instance ${instance}.`,
+        'aws-rds-instance-not-available',
+        controlPlaneGuideVars('rds_instance_status', instance, instanceStatusFinding.data)!,
       );
     }
 

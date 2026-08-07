@@ -10,6 +10,7 @@
 
 import type { RemediationGuide } from '../../types/remediation-guide.js';
 import { anthropicGuides } from './guides/anthropic.js';
+import { awsRdsGuides } from './guides/aws-rds.js';
 import { neonGuides } from './guides/neon.js';
 import { openaiGuides } from './guides/openai.js';
 import { supabaseGuides } from './guides/supabase.js';
@@ -19,6 +20,7 @@ export const REMEDIATION_GUIDES: readonly RemediationGuide[] = [
   ...openaiGuides,
   ...supabaseGuides,
   ...neonGuides,
+  ...awsRdsGuides,
 ];
 
 const BY_ID = new Map<string, RemediationGuide>(REMEDIATION_GUIDES.map((g) => [g.id, g]));

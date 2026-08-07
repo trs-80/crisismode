@@ -173,14 +173,41 @@ describe('aws-rds control-plane diagnosis', () => {
     expect(iam[0]!.status).toBe('unknown');
   });
 
-  it('plans stay at suggestion level: no system_action steps from control-plane findings', async () => {
+  it('plans stay at suggestion level and carry the storage guide with its console path', async () => {
     const { agent, context } = makeAgent('storage_full');
     const diagnosis = await agent.diagnose(context);
     const plan = await agent.plan(context, diagnosis);
     expect(plan.steps.some((s) => s.type === 'system_action')).toBe(false);
-    const text = JSON.stringify(plan.steps);
-    expect(text).toContain('RDS console'); // console path present
-    expect(text).toContain('aws rds'); // CLI equivalent present
+
+    const notifications = plan.steps.filter((s) => s.type === 'human_notification');
+    const storage = notifications.find((s) => s.message.guideIds?.includes('aws-rds-increase-storage'));
+    expect(storage, 'storage suggestion must reference the aws-rds-increase-storage guide').toBeDefined();
+
+    const detail = storage!.message.detail;
+    expect(detail).toContain('RDS console'); // console path present
+    expect(detail).toContain('aws rds modify-db-instance'); // CLI equivalent present
+    expect(detail).toContain('prod-db-01'); // placeholders resolved to the real instance
+    expect(detail).not.toContain('<instance>');
+
+    // guideVars lets any renderer rebuild the same text from the registry.
+    expect(storage!.message.guideVars).toMatchObject({ instance: 'prod-db-01' });
+    expect(storage!.message.guideVars?.['target-storage-gb']).toBeDefined();
+  });
+
+  it('control-plane diagnosis findings carry their checkId', async () => {
+    const { agent, context } = makeAgent('storage_full');
+    const diagnosis = await agent.diagnose(context);
+    const storage = diagnosis.findings.find((f) => f.source === 'rds_storage');
+    expect(storage?.checkId).toBe('aws-rds.storage_full');
+    const backup = diagnosis.findings.find((f) => f.source === 'rds_backup_config');
+    expect(backup?.checkId).toBeUndefined();
+  });
+
+  it('control-plane health signals carry their checkId', async () => {
+    const { agent, context } = makeAgent('connection_saturation');
+    const health = await agent.assessHealth(context);
+    const signal = health.signals.find((s) => s.source === 'rds_connection_saturation');
+    expect(signal?.checkId).toBe('aws-rds.connection_saturation');
   });
 
   it('instance_unavailable (e.g. a stopped instance) still yields a suggestion plan, not an empty one', async () => {
@@ -192,8 +219,10 @@ describe('aws-rds control-plane diagnosis', () => {
     expect(plan.steps.some((s) => s.type === 'system_action')).toBe(false);
     const notifications = plan.steps.filter((s) => s.type === 'human_notification');
     expect(notifications.length).toBeGreaterThan(0);
-    const text = JSON.stringify(notifications);
-    expect(text.toLowerCase()).toContain('stopped');
+    const status = notifications.find((s) => s.message.guideIds?.includes('aws-rds-instance-not-available'));
+    expect(status).toBeDefined();
+    expect(status!.message.detail.toLowerCase()).toContain('stopped');
+    expect(status!.message.detail).toContain('aws rds start-db-instance');
   });
 
   it('maintenance_pending surfaces a warning signal mentioning the pending modification', async () => {
