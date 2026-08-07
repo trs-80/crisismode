@@ -43,6 +43,11 @@ import {
   applyGuideVariables,
 } from '../framework/guidance/registry.js';
 import { platformsForTarget } from '../framework/guidance/platforms.js';
+// Every agent's check ids live in its own check-ids.ts as a keyed object.
+import { allRules } from '../readiness/rules/index.js';
+import { AWS_RDS_CHECK_IDS } from '../agent/aws-rds/check-ids.js';
+import { LLM_PROVIDER_CHECK_IDS } from '../agent/llm-provider/check-ids.js';
+import { VECTOR_STORE_CHECK_IDS } from '../agent/vector-store/check-ids.js';
 
 describe('guidance registry — structure', () => {
   it('has no duplicate guide ids', () => {
@@ -285,5 +290,41 @@ describe('guidance freshness', () => {
         `guide '${guide.id}' has a verifiedOn in the future (${guide.verifiedOn})`,
       ).toBeLessThanOrEqual(now + 24 * 60 * 60 * 1000);
     }
+  });
+});
+
+/**
+ * The anchoring contract: a guide's applicableFindingTypes must name something
+ * the codebase actually emits — a registered readiness rule id, or a checkId
+ * constant exported by an agent. Renaming a rule or a check then breaks this
+ * test, instead of silently orphaning its guidance at runtime.
+ */
+describe('guidance anchoring', () => {
+  const knownFindingTypes = new Set<string>([
+    ...allRules.map((rule) => rule.id),
+    ...Object.values(AWS_RDS_CHECK_IDS),
+    ...Object.values(LLM_PROVIDER_CHECK_IDS),
+    ...Object.values(VECTOR_STORE_CHECK_IDS),
+  ]);
+
+  it('every applicableFindingTypes entry resolves to a rule id or a checkId', () => {
+    for (const guide of REMEDIATION_GUIDES) {
+      for (const findingType of guide.applicableFindingTypes) {
+        expect(
+          knownFindingTypes.has(findingType),
+          `guide '${guide.id}' is keyed to '${findingType}', which is neither a registered readiness `
+            + 'rule id nor an exported agent checkId. Either the guide is stale or the rule/check was renamed.',
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('each aws-rds checkId maps back from its diagnosis finding source', async () => {
+    const { checkIdForRdsSource } = await import('../agent/aws-rds/check-ids.js');
+    expect(checkIdForRdsSource('rds_storage')).toBe(AWS_RDS_CHECK_IDS.storageFull);
+    expect(checkIdForRdsSource('rds_connection_saturation')).toBe(AWS_RDS_CHECK_IDS.connectionSaturation);
+    expect(checkIdForRdsSource('rds_security_group')).toBe(AWS_RDS_CHECK_IDS.securityGroup);
+    expect(checkIdForRdsSource('rds_instance_status')).toBe(AWS_RDS_CHECK_IDS.instanceStatus);
+    expect(checkIdForRdsSource('rds_backup_config')).toBeUndefined();
   });
 });
