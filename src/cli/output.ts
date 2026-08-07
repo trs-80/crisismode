@@ -96,6 +96,16 @@ function pipeOut(line: string): void {
   console.log(line);
 }
 
+/**
+ * Strip tab and newline characters from a value bound for a pipe-mode field.
+ * Pipe rows are tab-separated with a fixed column count (see printScanSummary
+ * below); a raw tab or newline inside a free-text field like `summary` would
+ * silently add columns or lines and corrupt the row for cut/awk consumers.
+ */
+function sanitizePipeField(value: string): string {
+  return value.replace(/[\t\n\r]+/g, ' ');
+}
+
 // ── Banner ──
 
 export function printBanner(): void {
@@ -543,9 +553,12 @@ export function printScanSummary(result: ScanResult): void {
     // Tab-separated: score, scanned_at, duration_ms
     pipeOut(`scan\t${result.score}\t${result.scannedAt}\t${result.durationMs}`);
     for (const f of result.findings) {
-      // Always emit the guide column, empty when there is none, so every
-      // finding row has the same field count for cut/awk consumers.
-      pipeOut(`finding\t${f.id}\t${f.service}\t${f.status}\t${f.confidence}\t${f.summary}\t${guideReference(f.guides ?? [])}`);
+      // 7 fixed columns: finding, id, service, status, confidence, summary,
+      // guide:<id>[,guide:<id>...] (empty when there is none) — see the
+      // "Pipe output format" section in README.md. summary is sanitized
+      // because it's a free-text field that could otherwise smuggle in a
+      // tab/newline and shift every column after it.
+      pipeOut(`finding\t${f.id}\t${f.service}\t${f.status}\t${f.confidence}\t${sanitizePipeField(f.summary)}\t${guideReference(f.guides ?? [])}`);
     }
     return;
   }

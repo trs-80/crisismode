@@ -6,6 +6,7 @@ import type { AgentManifest } from '../types/manifest.js';
 import type { RecoveryStep } from '../types/step-types.js';
 import { isKnownCapability } from './capability-registry.js';
 import type { ExecutionBackend } from './backend.js';
+import { getGuideById } from './guidance/registry.js';
 import {
   flattenProviderResolutions,
   resolveStepProviders,
@@ -128,6 +129,31 @@ function checkHumanNotification(plan: RecoveryPlan): ValidationCheck {
     message: passed
       ? 'Plan includes human notification'
       : 'Plan has elevated+ steps but no human notification',
+  };
+}
+
+/**
+ * Every `guideIds` entry on a human-notification step must resolve to a
+ * registered remediation guide. This is a build-time honesty check, distinct
+ * from guidesForStep()'s render-time behavior of silently skipping unknown
+ * ids for graceful degradation — a plan that references a guide id the
+ * registry has never heard of is malformed, not merely missing optional
+ * content, and should fail validation before it ever reaches a renderer.
+ */
+function checkGuideIds(plan: RecoveryPlan): ValidationCheck {
+  const unresolved: string[] = [];
+  walkSteps(plan.steps, (step) => {
+    if (step.type !== 'human_notification') return;
+    for (const guideId of step.message.guideIds ?? []) {
+      if (!getGuideById(guideId)) unresolved.push(`${step.stepId}:${guideId}`);
+    }
+  });
+  return {
+    name: 'Human notification guide ids resolve',
+    passed: unresolved.length === 0,
+    message: unresolved.length === 0
+      ? 'All human-notification guideIds resolve to a registered guide'
+      : `Unknown guide ids: ${unresolved.join(', ')}`,
   };
 }
 
@@ -276,6 +302,7 @@ export function validatePlan(
     checkUniqueStepIds(plan),
     checkStatePreservation(plan),
     checkHumanNotification(plan),
+    checkGuideIds(plan),
     checkRollbackStrategy(plan),
     checkBlastRadiusComponents(systemActions),
     checkNoNestedConditionals(plan),

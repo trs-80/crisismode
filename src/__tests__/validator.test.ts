@@ -204,6 +204,54 @@ describe('validatePlan', () => {
     expect(result.checks.find((c) => c.name === 'Human notification for elevated+ plans')?.passed).toBe(false);
   });
 
+  it('passes when a human-notification step has no guideIds', () => {
+    const result = validatePlan(makePlan(), manifest);
+    expect(result.checks.find((c) => c.name === 'Human notification guide ids resolve')?.passed).toBe(true);
+  });
+
+  it('passes when a human-notification step references a real registered guide', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'human_notification',
+        name: 'Notify',
+        recipients: [{ role: 'on_call_dba', urgency: 'high' }],
+        message: {
+          summary: 'Test',
+          detail: 'Test',
+          actionRequired: false,
+          guideIds: ['anthropic-rotate-key'],
+        },
+        channel: 'auto',
+      },
+    ];
+    const result = validatePlan(makePlan({}, steps), manifest);
+    expect(result.checks.find((c) => c.name === 'Human notification guide ids resolve')?.passed).toBe(true);
+  });
+
+  it('fails when a human-notification step references an unknown guide id', () => {
+    const steps: RecoveryStep[] = [
+      {
+        stepId: 'step-001',
+        type: 'human_notification',
+        name: 'Notify',
+        recipients: [{ role: 'on_call_dba', urgency: 'high' }],
+        message: {
+          summary: 'Test',
+          detail: 'Test',
+          actionRequired: false,
+          guideIds: ['no-such-guide'],
+        },
+        channel: 'auto',
+      },
+    ];
+    const result = validatePlan(makePlan({}, steps), manifest);
+    const check = result.checks.find((c) => c.name === 'Human notification guide ids resolve');
+    expect(check?.passed).toBe(false);
+    expect(check?.message).toContain('no-such-guide');
+    expect(result.valid).toBe(false);
+  });
+
   it('fails when rollback strategy is missing', () => {
     const plan = makePlan();
     (plan as unknown as Record<string, unknown>).rollbackStrategy = undefined;

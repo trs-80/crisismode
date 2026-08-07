@@ -87,6 +87,18 @@ describe('scan output — guidance', () => {
     expect(fields[6]).toBe('');
   });
 
+  it('pipe mode strips tabs and newlines from summary so the row keeps its column count', () => {
+    configure({ mode: 'pipe', noColor: true });
+    const result = scanResultWithKeyFinding();
+    result.findings[0]!.summary = 'Anthropic API key\tis not valid\nretry after rotation';
+    printScanSummary(result);
+    const lines = logSpy.mock.calls.map((c: unknown[]) => String(c[0]));
+    const findingLine = lines.find((l: string) => l.startsWith('finding\t'))!;
+    const fields = findingLine.split('\t');
+    expect(fields).toHaveLength(7);
+    expect(fields[5]).toBe('Anthropic API key is not valid retry after rotation');
+  });
+
   it('machine mode emits full guide objects under guides', () => {
     configure({ json: true, noColor: true });
     printScanSummary(scanResultWithKeyFinding());
