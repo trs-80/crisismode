@@ -83,3 +83,50 @@ describe('BackupLiveClient lastVerification cache — not poisoned by an empty v
     expect(await client.evaluateCheck(allVerificationsPassedCheck())).toBe(true);
   });
 });
+
+describe('BackupLiveClient lastVerification cache — bound to the configs that produced it (CodeRabbit finding B)', () => {
+  // A healthy report cached for one set of locations must not answer a
+  // check configured for a DIFFERENT set of locations. Without binding the
+  // cache to the configs it verified, a verifyAll() call against unrelated
+  // directories (e.g. FileSystemProvider.verify()'s single-item calls, or
+  // any other caller) could satisfy all_verifications_passed for a client
+  // whose own configured locations were never actually verified.
+  let dirA: string;
+  let dirB: string;
+
+  beforeEach(async () => {
+    dirA = await mkdtemp(join(tmpdir(), 'backup-live-cache-a-'));
+    dirB = await mkdtemp(join(tmpdir(), 'backup-live-cache-b-'));
+    // dirA has a healthy backup; dirB is empty (undetected -> unhealthy).
+    await writeFile(join(dirA, 'backup-2026-01-01.sql.gz'), gzipSync(Buffer.from('SELECT 1;')));
+  });
+
+  afterEach(async () => {
+    await rm(dirA, { recursive: true, force: true });
+    await rm(dirB, { recursive: true, force: true });
+  });
+
+  it("does not reuse directory A's cached healthy report for a client configured for directory B", async () => {
+    // Client is configured for B, but something verifies A directly first
+    // (e.g. a different consumer of this same BackupLiveClient instance)
+    // and caches a healthy result.
+    const client = new BackupLiveClient({ locations: [dirB] });
+    const healthyReportForA = await client.verifyAll([
+      { kind: 'file_directory', locations: [dirA], source: 'default' },
+    ]);
+    expect(
+      healthyReportForA.providers.length > 0 &&
+        healthyReportForA.providers.every((p) => p.detected && p.verifications.every((v) => v.passed)),
+    ).toBe(true);
+
+    // The check answers for THIS client's configured location (B, which has
+    // no backups) and must not reuse A's cached healthy report.
+    expect(await client.evaluateCheck(allVerificationsPassedCheck())).toBe(false);
+  });
+
+  it("still reuses the cache when it genuinely covers this client's configured location", async () => {
+    const client = new BackupLiveClient({ locations: [dirA] });
+    await client.verifyAll([{ kind: 'file_directory', locations: [dirA], source: 'default' }]);
+    expect(await client.evaluateCheck(allVerificationsPassedCheck())).toBe(true);
+  });
+});
