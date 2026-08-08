@@ -14,7 +14,7 @@ import type { PluginMaturity } from '../types/plugin.js';
 import type { SiteConfig } from '../config/schema.js';
 
 /** The kinds whose agents have actually been run against real infrastructure. */
-const LIVE_VALIDATED_KINDS = ['backup', 'disk', 'dns', 'kubernetes', 'llm-provider.anthropic', 'llm-provider.openai', 'postgresql', 'tls'];
+const LIVE_VALIDATED_KINDS = ['backup', 'disk', 'dns', 'kubernetes', 'llm-provider.anthropic', 'llm-provider.openai', 'postgresql', 'service-status', 'tls'];
 
 const ALL_PLUGIN_MATURITIES: PluginMaturity[] = [
   'experimental',

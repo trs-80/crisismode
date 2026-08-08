@@ -24,7 +24,7 @@ export const serviceStatusManifest: AgentManifest = {
     plugin: {
       id: 'service-status.domain-pack',
       kind: 'domain_pack',
-      maturity: 'simulator_only',
+      maturity: 'live_validated',
       compatibilityMode: RECOVERY_AGENT_COMPATIBILITY_MODE,
     },
   },
