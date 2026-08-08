@@ -12,7 +12,6 @@ describe('service-status catalog', () => {
     expect(resolveCatalogEntry('github')?.id).toBe('github');
     expect(resolveCatalogEntry('GitHub')?.id).toBe('github');
     expect(resolveCatalogEntry('flyio')?.id).toBe('fly');
-    expect(resolveCatalogEntry('pscale')?.id).toBe('planetscale');
     expect(resolveCatalogEntry('api.myvendor.com')).toBeUndefined();
   });
 

@@ -2,8 +2,12 @@
 // Copyright 2026 Aaron Johnson
 
 /**
- * Candidate URLs are verified against the live endpoints in Task 9; entries that fail
- * live validation are corrected or removed there — do not add entries without live verification.
+ * Every entry below has passed Task 9 live validation: its `statusUrl` fetch
+ * returns a body `parseStatuspageSummary` can classify, and its `probeHost`
+ * is DNS-resolvable (`src/__tests__/service-status-live.test.ts`, run with
+ * CRISISMODE_LIVE_TESTS=1). Do not add an entry without running that suite
+ * against it first — three of the original 15 candidates looked correct but
+ * turned out to be non-Statuspage-v2 endpoints; see the removal note below.
  */
 
 import type { CatalogEntry, ServiceTarget } from './types.js';
@@ -12,10 +16,29 @@ import type { CatalogEntry, ServiceTarget } from './types.js';
 export const CATALOG_ALIASES: Record<string, string> = {
   flyio: 'fly',
   'fly.io': 'fly',
-  pscale: 'planetscale',
 };
 
-/** Curated catalog of well-known services with known probe hosts and status endpoints. */
+/**
+ * Curated catalog of well-known services with known probe hosts and status
+ * endpoints. Three candidates from the original 15 were removed after Task 9
+ * live validation — their `statusUrl` fetches succeed, but the body is not a
+ * Statuspage-v2 summary, so `parseStatuspageSummary` can never classify it:
+ *
+ * - `neon`: neonstatus.com is hosted on status.io (a different vendor, whose
+ *   API is pageId/RSS-based, not `/api/v2/summary.json`). Confirmed
+ *   `/api/v2/summary.json` 404s; no Statuspage-format endpoint exists there.
+ * - `resend`: resend-status.com is hosted on incident.io (confirmed via its
+ *   CSP header and page footer), whose `/api/v2/summary.json` omits the
+ *   `incidents` key entirely when there are no active incidents instead of
+ *   returning `[]`, so it never parses as Statuspage v2.
+ * - `planetscale`: www.planetscalestatus.com is also hosted on incident.io,
+ *   same schema mismatch as `resend`.
+ *
+ * All three of these were flagged in advance as likely to fail (task-9-brief),
+ * and did. Re-adding any of them requires either a genuinely Statuspage-v2
+ * endpoint for that provider, or a second `statusFormat` this catalog and
+ * `checker.ts` don't support today.
+ */
 export const SERVICE_CATALOG: readonly CatalogEntry[] = [
   {
     id: 'github',
@@ -58,14 +81,6 @@ export const SERVICE_CATALOG: readonly CatalogEntry[] = [
     statusFormat: 'statuspage_v2',
   },
   {
-    id: 'neon',
-    label: 'Neon',
-    probeHost: 'console.neon.tech',
-    probePort: 443,
-    statusUrl: 'https://neonstatus.com/api/v2/summary.json',
-    statusFormat: 'statuspage_v2',
-  },
-  {
     id: 'cloudflare',
     label: 'Cloudflare',
     probeHost: 'api.cloudflare.com',
@@ -98,14 +113,6 @@ export const SERVICE_CATALOG: readonly CatalogEntry[] = [
     statusFormat: 'statuspage_v2',
   },
   {
-    id: 'resend',
-    label: 'Resend',
-    probeHost: 'api.resend.com',
-    probePort: 443,
-    statusUrl: 'https://resend-status.com/api/v2/summary.json',
-    statusFormat: 'statuspage_v2',
-  },
-  {
     id: 'render',
     label: 'Render',
     probeHost: 'api.render.com',
@@ -119,14 +126,6 @@ export const SERVICE_CATALOG: readonly CatalogEntry[] = [
     probeHost: 'api.fly.io',
     probePort: 443,
     statusUrl: 'https://status.flyio.net/api/v2/summary.json',
-    statusFormat: 'statuspage_v2',
-  },
-  {
-    id: 'planetscale',
-    label: 'PlanetScale',
-    probeHost: 'api.planetscale.com',
-    probePort: 443,
-    statusUrl: 'https://www.planetscalestatus.com/api/v2/summary.json',
     statusFormat: 'statuspage_v2',
   },
   {
