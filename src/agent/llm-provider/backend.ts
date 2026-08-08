@@ -11,6 +11,7 @@
  */
 
 import type { ExecutionBackend } from '../../framework/backend.js';
+import type { StatusIncident } from '../../framework/service-status/types.js';
 import type { LlmProviderId } from './provider-table.js';
 
 // Stable check ids carried on every signal and finding this agent emits.
@@ -70,11 +71,7 @@ export interface ModelCheck {
   detail: string;
 }
 
-export interface ProviderIncident {
-  title: string;
-  impact: string;
-  url?: string;
-}
+export type ProviderIncident = StatusIncident;
 
 export interface ProviderStatusReport {
   provider: LlmProviderId;
