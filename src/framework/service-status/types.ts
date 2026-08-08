@@ -39,6 +39,16 @@ export type ServiceVerdict =
   | 'unreachable_probe_only'
   | 'offline_skipped';
 
+/** A service in the curated catalog, with known probe host and status endpoint. */
+export interface CatalogEntry {
+  id: string;
+  label: string;
+  probeHost: string;
+  probePort: number;
+  statusUrl: string;
+  statusFormat: 'statuspage_v2';
+}
+
 export interface ServiceStatusReport {
   /** Catalog id, or the raw domain for unknown services. */
   id: string;
