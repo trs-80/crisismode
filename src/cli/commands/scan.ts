@@ -13,7 +13,7 @@
 
 import { assembleContext } from '../../framework/context.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
-import { loadConfigWithDetection, ConfigNotFoundError } from '../../config/loader.js';
+import { loadConfigWithDetection, ConfigNotFoundError, ConfigValidationError } from '../../config/loader.js';
 import { discoverStack, printOnboardingMessage, type StackProfile } from '../autodiscovery.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
@@ -702,9 +702,9 @@ function loadConfigWithDetectionSafe(configPath?: string) {
   try {
     return loadConfigWithDetection(configPath !== undefined ? { configPath } : {});
   } catch (err) {
-    // An explicitly named config file that doesn't exist is a user error,
-    // not a cue to silently scan something else.
-    if (err instanceof ConfigNotFoundError) throw err;
+    // A config file that doesn't exist, or one that exists but is invalid,
+    // is a user error, not a cue to silently scan something else.
+    if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
     return { config: null, source: 'none' as const };
   }
 }

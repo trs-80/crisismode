@@ -18,6 +18,7 @@ vi.mock('../config/loader.js', async (importOriginal) => {
   const actual = await importOriginal<typeof LoaderModule>();
   return {
     ConfigNotFoundError: actual.ConfigNotFoundError,
+    ConfigValidationError: actual.ConfigValidationError,
     loadConfig: vi.fn(),
     parseCliFlags: vi.fn(),
   };
@@ -266,6 +267,30 @@ describe('runWatch', () => {
 
     await expect(runWatch({ maxCycles: 1, intervalMs: 10 })).rejects.toThrow(ConfigNotFoundError);
     expect(vi.mocked(detectServices)).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Round 2 fix (Task 6 review, re-review Medium 1): a config that was
+   * found and rejected — e.g. a `services:` entry colliding with a
+   * `targets:` name — used to be swallowed by `loadConfigWithLocalTargets`'s
+   * catch, printing the false "No configuration found, scanning
+   * localhost..." message. This drives the real command surface
+   * (`runWatch`, not `loadConfig` directly) to prove the collision error
+   * now reaches the caller instead.
+   */
+  it('propagates a config validation error (e.g. a services/targets name collision) instead of falling back to detection', async () => {
+    const { ConfigValidationError } = await import('../config/loader.js');
+    vi.mocked(loadConfig).mockImplementation(() => {
+      throw new ConfigValidationError(
+        'Config error: services entry "github" resolves to the name "github", which collides with ' +
+        'targets[] entry "github" (kind: redis).',
+      );
+    });
+
+    await expect(runWatch({ maxCycles: 1, intervalMs: 10 })).rejects.toThrow(ConfigValidationError);
+    await expect(runWatch({ maxCycles: 1, intervalMs: 10 })).rejects.toThrow(/collides/);
+    expect(vi.mocked(detectServices)).not.toHaveBeenCalled();
+    expect(vi.mocked(printInfo)).not.toHaveBeenCalledWith(expect.stringContaining('No configuration found'));
   });
 
   it('runs with local agents when config fails and no services detected', async () => {

@@ -15,28 +15,24 @@ import { lookup } from 'node:dns/promises';
 import { probeTcpBounded } from '../triage-probes.js';
 import { defaultOfflineGate, type OfflineGate } from '../offline-gate.js';
 import { parseStatuspageSummary } from './statuspage.js';
-import { resolveCatalogEntry } from './catalog.js';
-import type { CatalogEntry } from './types.js';
+import { resolveCatalogEntry, resolveTarget } from './catalog.js';
 import type {
+  CatalogEntry,
   ProbeOutcome,
   ServiceStatusReport,
+  ServiceTarget,
   ServiceVerdict,
   StatusAssessment,
   StatusIncident,
 } from './types.js';
 
-export interface ServiceTarget {
-  id: string;
-  host?: string;
-  port?: number;
-  /**
-   * Pre-resolved catalog entry, bypassing `resolveCatalogEntry(id)`. Set by
-   * `resolveTarget()` on a catalog hit (skipping a redundant second lookup)
-   * and by callers with a status source that isn't in `SERVICE_CATALOG`
-   * (e.g. `crisismode down`'s llm-provider routing).
-   */
-  entry?: CatalogEntry;
-}
+// Re-exported for existing callers (down.ts, agent/service-status/*) that
+// already need this module's heavier runtime graph. Callers that only need
+// name resolution — the config loader, cli/service-targets.ts — import
+// straight from catalog.ts instead, so they don't pull in node:dns/promises
+// and triage just to resolve a string.
+export { resolveTarget };
+export type { ServiceTarget };
 
 export interface CheckerDeps {
   fetchImpl?: typeof fetch;
@@ -70,23 +66,6 @@ const MIN_PROBE_REMAINING_MS = 50;
  * that would have to lie about what verdict "not checked" collapses to.
  */
 type CheckedStatusAssessment = Exclude<StatusAssessment, 'not_checked'>;
-
-/**
- * Resolve a raw config entry (catalog id/alias, or an explicit host) into a
- * ServiceTarget. String input checks the catalog first; a miss is treated as
- * a raw domain to probe (port 443, no status source). Object input is never
- * catalog-checked — it is an explicit host/port pair.
- */
-export function resolveTarget(
-  input: string | { host: string; port?: number },
-): ServiceTarget & { entry?: CatalogEntry } {
-  if (typeof input === 'string') {
-    const entry = resolveCatalogEntry(input);
-    if (entry) return { id: entry.id, entry };
-    return { id: input, host: input, port: 443 };
-  }
-  return { id: input.host, host: input.host, port: input.port ?? 443 };
-}
 
 /**
  * The 9-row verdict table (spec's honesty contract) plus the OfflineGate's

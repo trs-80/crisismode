@@ -11,8 +11,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { SiteConfig } from './schema.js';
-import { resolveCatalogEntry, SERVICE_CATALOG } from '../framework/service-status/catalog.js';
-import { resolveTarget } from '../framework/service-status/checker.js';
+import { resolveCatalogEntry, resolveTarget, SERVICE_CATALOG } from '../framework/service-status/catalog.js';
 
 export interface LoadConfigOptions {
   configPath?: string;
@@ -51,6 +50,25 @@ export class ConfigNotFoundError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ConfigNotFoundError';
+  }
+}
+
+/**
+ * A config file exists and was parsed, but its content is invalid (bad
+ * apiVersion/kind, a malformed target, a `services:` entry that collides
+ * with a `targets:` name, ...). Sibling of `ConfigNotFoundError` for the
+ * same reason: callers with detection fallbacks must NOT swallow this
+ * either. A config that was found and rejected is a materially different
+ * situation from no config existing at all — "No configuration found,
+ * scanning localhost..." is a false thing to print when a file was found
+ * and its content was the problem. Every validation throw inside
+ * `loadConfigFile` (and the functions it calls) uses this class so a single
+ * `instanceof` check at each swallow site catches all of them.
+ */
+export class ConfigValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigValidationError';
   }
 }
 
@@ -94,13 +112,13 @@ function loadConfigFile(filePath: string): SiteConfig {
   const parsed: unknown = parseYaml(raw);
 
   if (!parsed || typeof parsed !== 'object') {
-    throw new Error(`Invalid config file: ${filePath} — expected a YAML object`);
+    throw new ConfigValidationError(`Invalid config file: ${filePath} — expected a YAML object`);
   }
 
   const config = parsed as Record<string, unknown>;
 
   if (config.apiVersion !== 'crisismode/v1') {
-    throw new Error(
+    throw new ConfigValidationError(
       `Unsupported apiVersion: ${String(config.apiVersion)} — expected crisismode/v1.\n` +
       `  Suggestion: Set apiVersion to "crisismode/v1" in your config file.\n` +
       `  Run "pnpm run init" to generate a valid template.`,
@@ -108,7 +126,7 @@ function loadConfigFile(filePath: string): SiteConfig {
   }
 
   if (config.kind !== 'SiteConfig') {
-    throw new Error(
+    throw new ConfigValidationError(
       `Unsupported kind: ${String(config.kind)} — expected SiteConfig.\n` +
       `  Suggestion: Set kind to "SiteConfig" in your config file.`,
     );
@@ -118,7 +136,7 @@ function loadConfigFile(filePath: string): SiteConfig {
   const hasServices = Array.isArray(config.services) && config.services.length > 0;
 
   if (!hasTargets && !hasServices) {
-    throw new Error(
+    throw new ConfigValidationError(
       'Config must define at least one target or service. ' +
       'Add a `targets:` block or a `services:` list.\n' +
       '  Suggestion: Add a target block. Example:\n' +
@@ -157,7 +175,7 @@ function loadConfigFile(filePath: string): SiteConfig {
 
 function validateNetwork(network: unknown): void {
   if (typeof network !== 'object' || network === null || Array.isArray(network)) {
-    throw new Error(
+    throw new ConfigValidationError(
       'config error: network must be a mapping (e.g. network:\n  egressMbps: 100)',
     );
   }
@@ -165,7 +183,7 @@ function validateNetwork(network: unknown): void {
   const { egressMbps } = network as Record<string, unknown>;
   if (egressMbps !== undefined) {
     if (typeof egressMbps !== 'number' || !Number.isFinite(egressMbps) || egressMbps <= 0) {
-      throw new Error(
+      throw new ConfigValidationError(
         'network.egressMbps must be a finite number greater than 0.\n' +
         '  Example: network: { egressMbps: 100 }',
       );
@@ -181,8 +199,8 @@ function validServiceHint(): string {
   return `Valid catalog ids include: ${sample}.`;
 }
 
-function serviceEntryError(entry: unknown): Error {
-  return new Error(
+function serviceEntryError(entry: unknown): ConfigValidationError {
+  return new ConfigValidationError(
     `Invalid services entry: ${JSON.stringify(entry)}.\n` +
     '  Each entry must be a catalog id/alias, a bare domain (no scheme, path, or spaces), ' +
     'or { host, port } with a valid host and port 1-65535.\n' +
@@ -192,7 +210,7 @@ function serviceEntryError(entry: unknown): Error {
 
 function validateServices(services: unknown): void {
   if (!Array.isArray(services)) {
-    throw new Error(
+    throw new ConfigValidationError(
       `config error: services must be a list.\n  ${validServiceHint()}`,
     );
   }
@@ -243,7 +261,7 @@ function validateNoServiceTargetCollision(targets: Record<string, unknown>[], se
     const resolved = resolveTarget(entry as string | { host: string; port?: number });
     const colliding = targetsByName.get(resolved.id);
     if (colliding) {
-      throw new Error(
+      throw new ConfigValidationError(
         `Config error: services entry ${JSON.stringify(entry)} resolves to the name "${resolved.id}", ` +
         `which collides with targets[] entry "${String(colliding.name)}" (kind: ${String(colliding.kind)}).\n` +
         '  A services: entry is synthesized into its own service-status target using the same name — ' +
@@ -257,13 +275,13 @@ function validateNoServiceTargetCollision(targets: Record<string, unknown>[], se
 
 function validateTarget(target: Record<string, unknown>): void {
   if (!target.name || typeof target.name !== 'string') {
-    throw new Error(
+    throw new ConfigValidationError(
       'Each target must have a "name" string.\n' +
       '  Example: name: my-postgres',
     );
   }
   if (!target.kind || typeof target.kind !== 'string') {
-    throw new Error(
+    throw new ConfigValidationError(
       `Target "${target.name}" must have a "kind" string (e.g. "postgresql", "redis").\n` +
       `  Supported kinds are determined by registered agents.`,
     );
@@ -273,7 +291,7 @@ function validateTarget(target: Record<string, unknown>): void {
   if (isAwsKind) {
     const aws = target.aws as Record<string, unknown> | undefined;
     if (!aws || typeof aws.region !== 'string') {
-      throw new Error(
+      throw new ConfigValidationError(
         `Target "${target.name}" (kind: ${String(target.kind)}) requires an "aws" block with at least "region".\n` +
         `  Example: aws: { region: us-east-1, bucket: my-bucket }`,
       );
@@ -281,7 +299,7 @@ function validateTarget(target: Record<string, unknown>): void {
   } else {
     const primary = target.primary as Record<string, unknown> | undefined;
     if (!primary || typeof primary.host !== 'string' || typeof primary.port !== 'number') {
-      throw new Error(
+      throw new ConfigValidationError(
         `Target "${target.name}" must have a primary with host (string) and port (number).\n` +
         `  Example: primary: { host: localhost, port: 5432 }`,
       );
@@ -290,7 +308,7 @@ function validateTarget(target: Record<string, unknown>): void {
 
   // Validate version format if provided
   if (target.version !== undefined && typeof target.version !== 'string') {
-    throw new Error(
+    throw new ConfigValidationError(
       `Target "${target.name}" version must be a string (e.g. "16.2", "7.0.0").\n` +
       `  Tip: Quote the version in YAML to prevent it being parsed as a number.`,
     );
@@ -354,7 +372,11 @@ export function loadConfigWithDetection(options?: LoadConfigOptions): {
     const result = loadConfig(options);
     return result;
   } catch (err) {
-    if (err instanceof ConfigNotFoundError) throw err;
+    // A config file that doesn't exist, or one that exists but is invalid,
+    // is a user error — not a cue to silently fall back to auto-detection.
+    // "No configuration found" would be false in the second case: a file
+    // was found, and its content was the problem.
+    if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
     return { config: null, source: 'none' };
   }
 }

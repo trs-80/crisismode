@@ -22,7 +22,7 @@ import {
   type ServiceTarget,
 } from '../../framework/service-status/checker.js';
 import { getProviderSpec, type LlmProviderSpec } from '../../agent/llm-provider/provider-table.js';
-import { loadConfigWithDetection, ConfigNotFoundError } from '../../config/loader.js';
+import { loadConfigWithDetection, ConfigNotFoundError, ConfigValidationError } from '../../config/loader.js';
 import { getOutputMode, jsonOut, outputOptions, printBanner } from '../output.js';
 import { healthStatusColor } from '../status-presentation.js';
 import type { ServiceConfigEntry } from '../../config/schema.js';
@@ -271,9 +271,11 @@ export async function runDownCommand(args: readonly string[], deps: RunDownComma
       const { config } = loadConfigFn(deps.configPath !== undefined ? { configPath: deps.configPath } : {});
       configured = config?.services ?? [];
     } catch (err) {
-      // An explicitly named config file that doesn't exist is a user error —
-      // propagate it (mirrors resolveTriageTargets in triage.ts).
-      if (err instanceof ConfigNotFoundError) throw err;
+      // A config file that doesn't exist, or one that exists but is
+      // invalid, is a user error — propagate it rather than falling through
+      // to "no services configured" (mirrors resolveTriageTargets in
+      // triage.ts for the not-found case).
+      if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
     }
     if (configured.length === 0) {
       printDownUsage();

@@ -16,7 +16,7 @@
  * fallback would otherwise silently stamp a bogus host.
  */
 
-import { resolveTarget } from '../framework/service-status/checker.js';
+import { resolveTarget } from '../framework/service-status/catalog.js';
 import type { SiteConfig, TargetConfig } from '../config/schema.js';
 
 export function serviceTargetsFromConfig(config: SiteConfig): TargetConfig[] {

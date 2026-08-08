@@ -57,6 +57,27 @@ export interface CatalogEntry {
   statusFormat: 'statuspage_v2';
 }
 
+/**
+ * A raw config entry (catalog id/alias, or an explicit host) resolved into
+ * something `checkService`/`checkServices` (checker.ts) can check. Lives
+ * here rather than in checker.ts so `resolveTarget()` (catalog.ts) can
+ * return it without importing checker.ts's runtime dependencies
+ * (node:dns/promises, triage) — every command loads the config layer at
+ * startup, and those deps have no business being on that path.
+ */
+export interface ServiceTarget {
+  id: string;
+  host?: string;
+  port?: number;
+  /**
+   * Pre-resolved catalog entry, bypassing `resolveCatalogEntry(id)`. Set by
+   * `resolveTarget()` on a catalog hit (skipping a redundant second lookup)
+   * and by callers with a status source that isn't in `SERVICE_CATALOG`
+   * (e.g. `crisismode down`'s llm-provider routing).
+   */
+  entry?: CatalogEntry;
+}
+
 export interface ServiceStatusReport {
   /** Catalog id, or the raw domain for unknown services. */
   id: string;

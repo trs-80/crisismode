@@ -11,7 +11,7 @@
  * so callers pick only the pieces that are a byte-identical fit.
  */
 
-import { loadConfig, ConfigNotFoundError } from '../config/loader.js';
+import { loadConfig, ConfigNotFoundError, ConfigValidationError } from '../config/loader.js';
 import type { LoadConfigResult } from '../config/loader.js';
 import { AgentRegistry } from '../config/agent-registry.js';
 import type { AgentInstance } from '../config/agent-registry.js';
@@ -68,9 +68,9 @@ export async function loadConfigWithLocalTargets(
     config = result.config;
     source = formatConfigSource(result);
   } catch (err) {
-    // An explicitly named config file that doesn't exist is a user error,
-    // not a cue to silently diagnose something else.
-    if (err instanceof ConfigNotFoundError) throw err;
+    // A config file that doesn't exist, or one that exists but is invalid,
+    // is a user error, not a cue to silently diagnose something else.
+    if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
     printInfo('No configuration found, scanning localhost...');
     const services = await detectServices();
     printDetection(services);

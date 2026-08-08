@@ -11,6 +11,7 @@ import {
   loadConfigWithDetection,
   parseCliFlags,
   ConfigNotFoundError,
+  ConfigValidationError,
 } from '../config/loader.js';
 import { resolveCredentials } from '../config/credentials.js';
 import { resolveTargets } from '../config/resolve.js';
@@ -79,6 +80,11 @@ describe('Config loader', () => {
     expect(() => loadConfig({ configPath: filePath })).toThrow('Unsupported apiVersion');
   });
 
+  it('every loadConfigFile validation throw is a ConfigValidationError, not a generic Error', () => {
+    const filePath = writeYamlConfig(tmpDir, { ...validConfig, apiVersion: 'wrong/v2' });
+    expect(() => loadConfig({ configPath: filePath })).toThrow(ConfigValidationError);
+  });
+
   it('rejects config with no targets', () => {
     const filePath = writeYamlConfig(tmpDir, { ...validConfig, targets: [] });
     expect(() => loadConfig({ configPath: filePath })).toThrow('at least one target');
@@ -114,11 +120,20 @@ describe('Config loader', () => {
     );
   });
 
-  it('loadConfigWithDetection still returns none for an invalid config file', () => {
+  /**
+   * Round 2 fix: `loadConfigWithDetection` used to swallow ANY non-
+   * ConfigNotFoundError exception and silently return `{config: null,
+   * source: 'none'}` — including a genuine validation failure. A config file
+   * that was found and rejected is not "no configuration found"; every
+   * command layered on top of `loadConfigWithDetection` (scan, down, watch,
+   * triage) would otherwise print a false "no config" / "auto-detecting"
+   * message for a config that does exist and was thrown away for being
+   * invalid. `loadConfigWithDetection` now rethrows `ConfigValidationError`
+   * exactly like it already rethrows `ConfigNotFoundError`.
+   */
+  it('loadConfigWithDetection rethrows ConfigValidationError instead of returning none', () => {
     const filePath = writeYamlConfig(tmpDir, { ...validConfig, apiVersion: 'wrong/v2' });
-    const result = loadConfigWithDetection({ configPath: filePath });
-    expect(result.config).toBeNull();
-    expect(result.source).toBe('none');
+    expect(() => loadConfigWithDetection({ configPath: filePath })).toThrow(ConfigValidationError);
   });
 
   it('falls back to legacy env vars when no config file exists', () => {
