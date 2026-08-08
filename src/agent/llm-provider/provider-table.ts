@@ -157,6 +157,23 @@ export function getProviderSpec(id: string): LlmProviderSpec | undefined {
 }
 
 /**
+ * Provider ids whose status endpoint this table already owns (spec's
+ * single-owner rule: exactly one component checks a given provider's status
+ * page). Derived from the same `statusFormat === 'statuspage_v2'` filter
+ * `crisismode down`'s `statuspageProviderSpec` (src/cli/commands/down.ts)
+ * uses to route `down anthropic`/`down openai` through this table instead of
+ * raw-domain DNS. `config/loader.ts`'s `validateServices` imports this list
+ * (not hardcoded strings) to reject the same ids in `services:` — a
+ * `services:` entry has no equivalent routing, so it would otherwise
+ * DNS-probe the literal hostname "anthropic" and disagree with `down` about
+ * whether the provider is healthy. A static array literal, not a function
+ * call, so importing it stays cheap for loader.ts's light startup path.
+ */
+export const STATUSPAGE_PROVIDER_IDS: LlmProviderId[] = LLM_PROVIDERS
+  .filter((p) => p.statusUrl !== undefined && p.statusFormat === 'statuspage_v2')
+  .map((p) => p.id);
+
+/**
  * Is this key configured? The single definition, used here and by
  * autodiscovery's provider detection (src/cli/autodiscovery.ts).
  *

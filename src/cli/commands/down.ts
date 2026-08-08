@@ -22,7 +22,8 @@ import {
   type ServiceTarget,
 } from '../../framework/service-status/checker.js';
 import { getProviderSpec, type LlmProviderSpec } from '../../agent/llm-provider/provider-table.js';
-import { loadConfigWithDetection, ConfigNotFoundError, ConfigValidationError } from '../../config/loader.js';
+import { resolveCatalogEntry } from '../../framework/service-status/catalog.js';
+import { loadConfigWithDetection, ConfigNotFoundError, ConfigValidationError, HOSTNAME_PATTERN } from '../../config/loader.js';
 import { getOutputMode, jsonOut, outputOptions, printBanner } from '../output.js';
 import { healthStatusColor } from '../status-presentation.js';
 import type { ServiceConfigEntry } from '../../config/schema.js';
@@ -198,6 +199,22 @@ export function parseDownArgs(args: readonly string[]): ParsedDownArgs | { unkno
 }
 
 /**
+ * Medium 4: a positional that resolves to neither a catalog id/alias nor a
+ * statuspage-capable llm-provider id is treated as a raw domain and handed
+ * straight to DNS — so a URL (`http://api.foo.com/path`) used to DNS-fail
+ * into a "may be your network" reachability line instead of the spec'd
+ * usage error (spec line 118: "2 usage errors (unknown flag, invalid
+ * domain)"). The config path already enforces `HOSTNAME_PATTERN` at load
+ * time via loader.ts's `validateServices`; this is the ad-hoc-arg
+ * equivalent, checked before any network call.
+ */
+function isValidAdHocServiceId(id: string): boolean {
+  if (statuspageProviderSpec(id) !== undefined) return true;
+  if (resolveCatalogEntry(id) !== undefined) return true;
+  return HOSTNAME_PATTERN.test(id);
+}
+
+/**
  * `down anthropic` / `down openai`: Task 2's catalog deliberately excludes
  * these ids (spec line 66's "exactly one owner per provider's status
  * endpoint" — the llm-provider agent already owns them), so falling through
@@ -263,6 +280,16 @@ export async function runDownCommand(args: readonly string[], deps: RunDownComma
 
   let entries: readonly ServiceConfigEntry[];
   if (parsed.serviceIds.length > 0) {
+    const badArg = parsed.serviceIds.find((id) => !isValidAdHocServiceId(id));
+    if (badArg !== undefined) {
+      console.error(
+        `crisismode down: invalid service argument '${badArg}' — expected a catalog id/alias or a bare domain ` +
+        '(no scheme, path, or spaces).',
+      );
+      console.error('Usage: crisismode down [<service>...] [--config <path>] [--json] [--terse] [--no-color] [--verbose]');
+      process.exitCode = 2;
+      return 2;
+    }
     entries = parsed.serviceIds;
   } else {
     const loadConfigFn = deps.loadConfig ?? loadConfigWithDetection;

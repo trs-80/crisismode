@@ -356,7 +356,7 @@ crisismode recover --target my-db --json | jq 'select(.type == "plan") | .plan.s
 
 Exit codes: `0` nothing checked looks like a problem, `1` at least one service does, `2` the command itself was called wrong (an unrecognized flag — the only CrisisMode command that does this).
 
-Check specific services ad hoc — catalog ids (`stripe`, `github`, `vercel`, `netlify`, `supabase`, `cloudflare`, `npm`, `twilio`, `sendgrid`, `render`, `fly`, `upstash`), aliases (`flyio` → `fly`), raw domains (reachability only, no known status page), or `anthropic`/`openai` (routed through the LLM Provider agent's own status source):
+Check specific services ad hoc — catalog ids (`stripe`, `github`, `vercel`, `netlify`, `supabase`, `cloudflare`, `npm`, `twilio`, `sendgrid`, `render`, `fly`, `upstash`), aliases (`flyio` → `fly`), raw domains (reachability only, no known status page), or `anthropic`/`openai` (routed through the LLM Provider agent's own status source — `down`-only; see below):
 
 ```bash
 crisismode down stripe github
@@ -381,7 +381,7 @@ services:
   - example.com
 ```
 
-Each `services:` entry is a catalog id/alias, a raw domain (reachability-only — no known status page, so a `down` verdict there means "can't reach it," not "provider incident"), or `{ host, port }` for a non-default port.
+Each `services:` entry is a catalog id/alias, a raw domain (reachability-only — no known status page, so a `down` verdict there means "can't reach it," not "provider incident"), or `{ host, port }` for a non-default port. `anthropic`/`openai` are rejected here (config validation error) — they're covered automatically by the LLM Provider agent whenever the corresponding API key is set, and are only meant for the ad-hoc `crisismode down anthropic` form above. Listing them in `services:` would make `scan`/`watch` DNS-probe the literal hostname instead of routing through the provider's real status source.
 
 ## Evidence Bundles
 

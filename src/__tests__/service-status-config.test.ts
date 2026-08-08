@@ -99,6 +99,26 @@ describe('services config', () => {
       expect(() => loadConfig({ configPath: filePath })).toThrow(/github/);
     });
 
+    it('rejects "anthropic" — owned by the llm-provider agent, not a services: candidate', () => {
+      // Major 2: services: [anthropic] used to fall through to raw-domain
+      // handling and DNS-probe the literal hostname "anthropic", giving scan
+      // and `down anthropic` opposite answers about the same provider.
+      const filePath = writeYamlConfig(tmpDir, { ...validConfig, services: ['anthropic'] });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/llm-provider|API key/);
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/crisismode down anthropic/);
+    });
+
+    it('rejects "openai" the same way, case-insensitively', () => {
+      const filePath = writeYamlConfig(tmpDir, { ...validConfig, services: ['OpenAI'] });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/llm-provider|API key/);
+    });
+
+    it('leaves an unrelated catalog id like "github" unaffected', () => {
+      const filePath = writeYamlConfig(tmpDir, { ...validConfig, services: ['github'] });
+      const result = loadConfig({ configPath: filePath });
+      expect(result.config.services).toEqual(['github']);
+    });
+
     it('rejects long form missing host', () => {
       const filePath = writeYamlConfig(tmpDir, {
         ...validConfig,
