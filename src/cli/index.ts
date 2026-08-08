@@ -32,6 +32,7 @@ const HELP = `
     crisismode recover [options]            Full recovery flow (dry-run default)
     crisismode status                       Quick health probe
     crisismode triage                       Is it me, my network, or them? (exit 1 when local/network/mixed)
+    crisismode down [<service>...]          Is <service> down, or is it just me? (exit 0/1/2; bare form checks configured services)
     crisismode readiness                    Scale-readiness report (read-only, will-it-break-under-load)
     crisismode init [path]                  Generate crisismode.yaml
     crisismode init --agent <name>          Scaffold a check plugin
@@ -186,6 +187,16 @@ async function main(): Promise<void> {
     case 'triage': {
       const { runTriageCommand } = await import('./commands/triage.js');
       await runTriageCommand({ configPath: values.config as string | undefined });
+      break;
+    }
+
+    case 'down': {
+      const { runDownCommand } = await import('./commands/down.js');
+      // restArgs (not `positionals`) — `down` validates its own flags against
+      // the raw, unparsed args, since the global parseArgs({ strict: false })
+      // above silently accepts any unrecognized flag rather than throwing.
+      const code = await runDownCommand(restArgs, { configPath: values.config as string | undefined });
+      process.exitCode = code;
       break;
     }
 
