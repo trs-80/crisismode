@@ -272,12 +272,19 @@ describe('verdictDetail', () => {
     expect(detail).toContain('degradation');
   });
 
-  it('incident_reported + a failed probe keeps the existing incident wording (not the degraded wording)', () => {
-    const detail = verdictDetail({
-      verdict: 'confirmed_incident', label: 'Stripe', incidents: [], source: 'catalog', statusAssessment: 'incident_reported',
-    });
-    expect(detail).toContain('down for everyone');
-    expect(detail).toContain('confirmed an incident');
+  it('incident_reported + a failed probe keeps the existing incident wording (not the degraded wording)', async () => {
+    // Through the real checkService so the failed probe actually participates
+    // (verdictDetail itself never sees the probe).
+    const fetchImpl = vi.fn(async () => jsonResponse(MAJOR_WITH_INCIDENT));
+    const probeImpl = vi.fn(async (): Promise<ProbeOutcome> => 'connect_failed');
+    const offlineGate: OfflineGate = async () => null;
+
+    const report = await checkService({ id: 'github' }, { fetchImpl, probeImpl, offlineGate });
+
+    expect(report.verdict).toBe('confirmed_incident');
+    expect(report.statusAssessment).toBe('incident_reported');
+    expect(report.detail).toContain('down for everyone');
+    expect(report.detail).toContain('confirmed an incident');
   });
 });
 
