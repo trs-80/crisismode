@@ -258,6 +258,23 @@ describe('runDownCommand', () => {
     expect(typeof parsed.detail).toBe('string');
   });
 
+  it('--json with multiple services emits one parseable JSON object per line', async () => {
+    configure({ json: true, noColor: true });
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => logs.push(a.map(String).join(' ')));
+    const fetchImpl = fakeFetch(statuspageBody('none'));
+    const probeImpl = fakeProbe('reachable');
+    await runDownCommand(['github', 'stripe'], { fetchImpl, probeImpl, offlineGate: async () => null });
+    spy.mockRestore();
+    expect(logs).toHaveLength(2);
+    const parsed = logs.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(parsed.map((p) => p.id).sort()).toEqual(['github', 'stripe']);
+    for (const p of parsed) {
+      expect(p).toMatchObject({ verdict: 'healthy', statusAssessment: 'operational', probe: 'reachable' });
+      expect(typeof p.detail).toBe('string');
+    }
+  });
+
   it('pipe mode: tab-separated id/verdict/statusAssessment/probe/detail, no ANSI', async () => {
     configure({ json: false, noColor: true, mode: 'pipe' });
     const logs: string[] = [];

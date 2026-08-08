@@ -29,6 +29,13 @@ export interface ServiceTarget {
   id: string;
   host?: string;
   port?: number;
+  /**
+   * Pre-resolved catalog entry, bypassing `resolveCatalogEntry(id)`. For
+   * callers with a status source that isn't in `SERVICE_CATALOG` (e.g.
+   * `crisismode down`'s llm-provider routing) — never set by
+   * `resolveTarget()` or any existing caller, so this is purely additive.
+   */
+  entry?: CatalogEntry;
 }
 
 export interface CheckerDeps {
@@ -192,7 +199,7 @@ export async function checkService(
   const statusTimeoutMs = deps.statusTimeoutMs ?? DEFAULT_STATUS_TIMEOUT_MS;
   const probeTimeoutMs = deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
 
-  const entry = resolveCatalogEntry(target.id);
+  const entry = target.entry ?? resolveCatalogEntry(target.id);
   const host = entry?.probeHost ?? target.host ?? target.id;
   const port = entry?.probePort ?? target.port ?? 443;
   const label = entry?.label ?? target.id;
