@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { SiteConfig } from './schema.js';
 import { resolveCatalogEntry, resolveTarget, SERVICE_CATALOG } from '../framework/service-status/catalog.js';
+import { STATUSPAGE_PROVIDER_IDS } from '../agent/llm-provider/provider-table.js';
 
 export interface LoadConfigOptions {
   configPath?: string;
@@ -191,8 +192,13 @@ function validateNetwork(network: unknown): void {
   }
 }
 
-/** A bare hostname/domain: no scheme, no path, no whitespace. */
-const HOSTNAME_PATTERN = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i;
+/**
+ * A bare hostname/domain: no scheme, no path, no whitespace. Exported so
+ * `crisismode down`'s ad-hoc argument parsing (src/cli/commands/down.ts) can
+ * apply the same rule to a raw positional before handing it to DNS — the
+ * config path already rejects these at load time via `validateServices`.
+ */
+export const HOSTNAME_PATTERN = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i;
 
 function validServiceHint(): string {
   const sample = SERVICE_CATALOG.slice(0, 5).map((e) => e.id).join(', ');
@@ -208,6 +214,26 @@ function serviceEntryError(entry: unknown): ConfigValidationError {
   );
 }
 
+/**
+ * `services: [anthropic]` (or `openai`) would DNS-probe the literal hostname
+ * "anthropic" — the service-status catalog deliberately excludes these ids
+ * (spec's single-owner rule: the llm-provider agent already owns their
+ * status endpoints via its own env-key detection). Letting the entry through
+ * here produces the exact divergence `down anthropic` avoids by routing
+ * through `STATUSPAGE_PROVIDER_IDS`'s table instead: `scan` would emit a
+ * false unhealthy finding for a provider it never contacted, while `down`
+ * reports it healthy from the real status page. Rejected at config load so
+ * the two surfaces can't disagree.
+ */
+function llmProviderServiceEntryError(id: string): ConfigValidationError {
+  return new ConfigValidationError(
+    `Invalid services entry: ${JSON.stringify(id)}.\n` +
+    `  "${id}" is covered automatically by the llm-provider agent when its API key is set — ` +
+    `it must not also be listed in services:.\n` +
+    `  Use \`crisismode down ${id}\` for an ad-hoc check instead.`,
+  );
+}
+
 function validateServices(services: unknown): void {
   if (!Array.isArray(services)) {
     throw new ConfigValidationError(
@@ -217,6 +243,10 @@ function validateServices(services: unknown): void {
 
   for (const entry of services) {
     if (typeof entry === 'string') {
+      const lower = entry.toLowerCase();
+      if ((STATUSPAGE_PROVIDER_IDS as string[]).includes(lower)) {
+        throw llmProviderServiceEntryError(lower);
+      }
       if (resolveCatalogEntry(entry) === undefined && !HOSTNAME_PATTERN.test(entry)) {
         throw serviceEntryError(entry);
       }

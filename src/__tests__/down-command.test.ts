@@ -273,6 +273,46 @@ describe('runDownCommand', () => {
     expect(code).toBe(2);
   });
 
+  /**
+   * Medium 4: a malformed ad-hoc positional (URL, path, spaces) used to fall
+   * through to raw-domain DNS handling and exit 1 with a misleading "may be
+   * your network" reachability line — a usage error reported as a
+   * reachability failure. The config path already rejects these at load
+   * time (service-status-config.test.ts); this is the ad-hoc-arg
+   * equivalent, checked before any network call.
+   */
+  it('exits 2 on a malformed ad-hoc service argument, naming the bad arg, without ever probing DNS', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchImpl = vi.fn();
+    const probeImpl = vi.fn();
+    const code = await runDownCommand(
+      ['http://api.foo.com/path'],
+      { fetchImpl: fetchImpl as unknown as typeof fetch, probeImpl },
+    );
+    const errOut = errSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    errSpy.mockRestore();
+    expect(code).toBe(2);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(probeImpl).not.toHaveBeenCalled();
+    expect(errOut).toContain('http://api.foo.com/path');
+  });
+
+  it('exits 2 on an ad-hoc argument containing a space', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runDownCommand(['has space']);
+    errSpy.mockRestore();
+    expect(code).toBe(2);
+  });
+
+  it('a valid raw domain and a catalog id are unaffected by the ad-hoc validation', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const fetchImpl = fakeFetch(statuspageBody('none'));
+    const probeImpl = fakeProbe('reachable');
+    const code = await runDownCommand(['example.com', 'github'], { fetchImpl, probeImpl, offlineGate: async () => null });
+    spy.mockRestore();
+    expect(code).toBe(0);
+  });
+
   it('--json emits one parseable JSON object per service with id/verdict/statusAssessment/probe/detail', async () => {
     configure({ json: true, noColor: true });
     const logs: string[] = [];
