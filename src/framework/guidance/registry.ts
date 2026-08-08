@@ -13,6 +13,7 @@ import { anthropicGuides } from './guides/anthropic.js';
 import { awsRdsGuides } from './guides/aws-rds.js';
 import { neonGuides } from './guides/neon.js';
 import { openaiGuides } from './guides/openai.js';
+import { serviceStatusGuides } from './guides/service-status.js';
 import { supabaseGuides } from './guides/supabase.js';
 
 export const REMEDIATION_GUIDES: readonly RemediationGuide[] = [
@@ -21,6 +22,7 @@ export const REMEDIATION_GUIDES: readonly RemediationGuide[] = [
   ...supabaseGuides,
   ...neonGuides,
   ...awsRdsGuides,
+  ...serviceStatusGuides,
 ];
 
 const BY_ID = new Map<string, RemediationGuide>(REMEDIATION_GUIDES.map((g) => [g.id, g]));

@@ -48,6 +48,7 @@ import { allRules } from '../readiness/rules/index.js';
 import { AWS_RDS_CHECK_IDS } from '../agent/aws-rds/check-ids.js';
 import { LLM_PROVIDER_CHECK_IDS } from '../agent/llm-provider/check-ids.js';
 import { VECTOR_STORE_CHECK_IDS } from '../agent/vector-store/check-ids.js';
+import { SERVICE_STATUS_CHECK_IDS } from '../agent/service-status/check-ids.js';
 
 describe('guidance registry — structure', () => {
   it('has no duplicate guide ids', () => {
@@ -160,6 +161,10 @@ describe('platformsForTarget', () => {
 
   it('leaves the platform unknown for a plain postgres target', () => {
     expect(platformsForTarget('postgresql', 'primary')).toBeUndefined();
+  });
+
+  it('leaves the platform unknown for a service-status target — the fall-through, not a special case', () => {
+    expect(platformsForTarget('service-status', 'stripe')).toBeUndefined();
   });
 
   it('still recognizes the bare "llm-provider" kind as a defensive fallback', () => {
@@ -345,6 +350,7 @@ describe('guidance anchoring', () => {
     ...Object.values(AWS_RDS_CHECK_IDS),
     ...Object.values(LLM_PROVIDER_CHECK_IDS),
     ...Object.values(VECTOR_STORE_CHECK_IDS),
+    ...Object.values(SERVICE_STATUS_CHECK_IDS),
   ]);
 
   it('every applicableFindingTypes entry resolves to a rule id or a checkId', () => {
