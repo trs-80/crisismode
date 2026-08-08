@@ -45,6 +45,10 @@ export const PLATFORM_INFO: Record<string, { label: string; loginHint: string }>
     label: 'AWS Console (RDS)',
     loginHint: 'Sign in at https://console.aws.amazon.com and switch to the region your resources live in.',
   },
+  'status-page': {
+    label: 'Third-party status pages',
+    loginHint: 'No login required — these steps walk a public status page, not an account-specific console.',
+  },
 };
 
 /**
