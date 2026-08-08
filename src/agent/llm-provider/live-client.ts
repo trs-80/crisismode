@@ -19,6 +19,7 @@
 import type { CheckExpression, Command } from '../../types/common.js';
 import type { CapabilityProviderDescriptor } from '../../types/plugin.js';
 import { compareCheckValue } from '../../framework/check-helpers.js';
+import { parseStatuspageIncidents } from '../../framework/service-status/statuspage.js';
 import {
   fingerprintKey,
   getProviderSpec,
@@ -188,21 +189,6 @@ export function extractModelIds(body: unknown, shape: 'data_id' | 'models_name')
     .map((entry) => (typeof entry === 'object' && entry !== null ? (entry as { name?: unknown }).name : undefined))
     .filter((name): name is string => typeof name === 'string')
     .map((name) => name.replace(/^models\//, ''));
-}
-
-/** Statuspage v2 summary: unresolved entries in `incidents[]`. */
-function parseStatuspageIncidents(body: unknown): ProviderIncident[] | null {
-  if (typeof body !== 'object' || body === null) return null;
-  const incidents = (body as { incidents?: unknown }).incidents;
-  if (!Array.isArray(incidents)) return null;
-  return incidents
-    .filter((raw): raw is Record<string, unknown> => typeof raw === 'object' && raw !== null)
-    .filter((raw) => raw.status !== 'resolved' && raw.status !== 'postmortem')
-    .map((raw) => ({
-      title: typeof raw.name === 'string' ? raw.name : 'unnamed incident',
-      impact: typeof raw.impact === 'string' ? raw.impact : 'unknown',
-      ...(typeof raw.shortlink === 'string' ? { url: raw.shortlink } : {}),
-    }));
 }
 
 /** Google Cloud incidents.json: entries without an `end` timestamp are ongoing. */
