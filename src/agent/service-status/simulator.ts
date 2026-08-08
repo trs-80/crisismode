@@ -10,9 +10,9 @@ import type {
 import type { ServiceStatusBackend } from './backend.js';
 import { isUnreachableVerdict, worstVerdict } from './verdict-rank.js';
 
-export type ServiceStatusScenario = 'healthy' | 'incident' | 'degraded' | 'down_for_you' | 'status_unavailable';
+export type SimulatorState = 'healthy' | 'incident' | 'degraded' | 'down_for_you' | 'status_unavailable';
 
-const SCENARIOS: ServiceStatusScenario[] = ['healthy', 'incident', 'degraded', 'down_for_you', 'status_unavailable'];
+const SCENARIOS: SimulatorState[] = ['healthy', 'incident', 'degraded', 'down_for_you', 'status_unavailable'];
 
 /** Simulated label, per the spec — never mistaken for a real live-checked report. */
 const LABEL = 'Stripe (simulated)';
@@ -32,7 +32,7 @@ interface Fixture {
  * matching the checker's honesty distinction between "they say it's fine but
  * we can't reach them" and "we can't tell whose problem this is".
  */
-const FIXTURES: Record<ServiceStatusScenario, Fixture> = {
+const FIXTURES: Record<SimulatorState, Fixture> = {
   healthy: {
     statusAssessment: 'operational',
     incidents: [],
@@ -66,9 +66,9 @@ const FIXTURES: Record<ServiceStatusScenario, Fixture> = {
 };
 
 export class ServiceStatusSimulator implements ServiceStatusBackend {
-  private scenario: ServiceStatusScenario = 'healthy';
+  private scenario: SimulatorState = 'healthy';
 
-  getScenario(): ServiceStatusScenario {
+  getScenario(): SimulatorState {
     return this.scenario;
   }
 
@@ -78,12 +78,12 @@ export class ServiceStatusSimulator implements ServiceStatusBackend {
    * scenario throws instead of silently passing a test for the wrong reason.
    */
   transition(to: string): void {
-    if (!SCENARIOS.includes(to as ServiceStatusScenario)) {
+    if (!SCENARIOS.includes(to as SimulatorState)) {
       throw new Error(
         `Invalid service-status simulator scenario: ${to} (expected one of ${SCENARIOS.join(', ')})`,
       );
     }
-    this.scenario = to as ServiceStatusScenario;
+    this.scenario = to as SimulatorState;
   }
 
   async queryServices(): Promise<ServiceStatusReport[]> {

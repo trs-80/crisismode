@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { SiteConfig } from './schema.js';
 import { resolveCatalogEntry, SERVICE_CATALOG } from '../framework/service-status/catalog.js';
+import { resolveTarget } from '../framework/service-status/checker.js';
 
 export interface LoadConfigOptions {
   configPath?: string;
@@ -145,6 +146,10 @@ function loadConfigFile(filePath: string): SiteConfig {
     validateServices(config.services);
   }
 
+  if (hasTargets && hasServices) {
+    validateNoServiceTargetCollision(config.targets as Record<string, unknown>[], config.services as unknown[]);
+  }
+
   config.targets = config.targets ?? [];
 
   return config as unknown as SiteConfig;
@@ -214,6 +219,39 @@ function validateServices(services: unknown): void {
     }
 
     throw serviceEntryError(entry);
+  }
+}
+
+/**
+ * `serviceTargetsFromConfig` (src/cli/service-targets.ts) synthesizes each
+ * `services:` entry into a `service-status` target named after its resolved
+ * id, then scan/watch append it to `config.targets` alongside the
+ * user-declared ones. `AgentRegistry.createForTarget` resolves by name and
+ * returns the *first* match — a `services:` id that collides with an
+ * existing `targets:` name would silently run that other target's agent
+ * under the service-status label (the checked service is never contacted,
+ * and a coincidentally-healthy result reads as a false "service is up").
+ * Caught here, at config load, rather than left to be discovered live.
+ */
+function validateNoServiceTargetCollision(targets: Record<string, unknown>[], services: unknown[]): void {
+  const targetsByName = new Map<string, Record<string, unknown>>();
+  for (const target of targets) {
+    if (typeof target.name === 'string') targetsByName.set(target.name, target);
+  }
+
+  for (const entry of services) {
+    const resolved = resolveTarget(entry as string | { host: string; port?: number });
+    const colliding = targetsByName.get(resolved.id);
+    if (colliding) {
+      throw new Error(
+        `Config error: services entry ${JSON.stringify(entry)} resolves to the name "${resolved.id}", ` +
+        `which collides with targets[] entry "${String(colliding.name)}" (kind: ${String(colliding.kind)}).\n` +
+        '  A services: entry is synthesized into its own service-status target using the same name — ' +
+        'two targets sharing a name means only the first-listed one ever runs, and the other silently ' +
+        'wears its label.\n' +
+        '  Suggestion: rename the targets[] entry, or change the services[] id/alias/domain.',
+      );
+    }
   }
 }
 

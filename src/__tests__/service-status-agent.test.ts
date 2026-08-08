@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ServiceStatusAgent } from '../agent/service-status/agent.js';
 import { ServiceStatusSimulator } from '../agent/service-status/simulator.js';
-import type { ServiceStatusScenario } from '../agent/service-status/simulator.js';
+import type { SimulatorState } from '../agent/service-status/simulator.js';
 import { serviceStatusManifest } from '../agent/service-status/manifest.js';
 import { serviceStatusRegistration } from '../agent/service-status/registration.js';
 import { SERVICE_STATUS_CHECK_IDS } from '../agent/service-status/check-ids.js';
@@ -29,7 +29,7 @@ function context(): AgentContext {
 }
 
 /** Default gate returns null — "triage saw nothing", so the checks run. */
-function agentWith(scenario: ServiceStatusScenario, gate: OfflineGate = async () => null): ServiceStatusAgent {
+function agentWith(scenario: SimulatorState, gate: OfflineGate = async () => null): ServiceStatusAgent {
   const backend = new ServiceStatusSimulator();
   backend.transition(scenario);
   return new ServiceStatusAgent(backend, gate);

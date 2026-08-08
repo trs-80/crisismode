@@ -53,6 +53,16 @@ const VERDICT_ICON: Record<ServiceVerdict, string> = {
 /**
  * Exhaustive: maps each verdict to the closest HealthStatus so this command
  * reuses status-presentation.ts's color map instead of inventing its own.
+ *
+ * A second exhaustive `Record<ServiceVerdict, HealthStatus>` exists at
+ * `src/agent/service-status/verdict-rank.ts` (`HEALTH_STATUS_BY_VERDICT`),
+ * for the service-status agent's `assessHealth()`. The two intentionally
+ * diverge on one row — `healthy_unverified` reads `'healthy'` here (this
+ * command's exit code and color; Task 5's brief wants a green line for
+ * "reachable but unverified") but `'recovering'` there (Task 6's brief pins
+ * that a status page that couldn't be checked keeps the agent's health
+ * assessment shy of a clean bill). Keep the two in sync deliberately, not by
+ * accident, if you touch either.
  */
 const VERDICT_HEALTH_STATUS: Record<ServiceVerdict, HealthStatus> = {
   confirmed_incident: 'unhealthy',
@@ -72,6 +82,14 @@ const VERDICT_HEALTH_STATUS: Record<ServiceVerdict, HealthStatus> = {
  * because this machine looks offline is not evidence that the service is
  * down. `healthy*` verdicts never count. Everything else is a reason a
  * script watching this exit code should care.
+ *
+ * A narrower classifier, `isUnreachableVerdict` (`src/agent/service-status/
+ * verdict-rank.ts`), answers a different question — "did this machine fail
+ * to reach the service" — and is a strict subset of this one (it excludes
+ * `confirmed_incident`/`degraded_upstream`, which are failures this command
+ * cares about but the agent's reachability count does not). Kept separate on
+ * purpose: collapsing them would blur "is this worth telling a script" and
+ * "is this a reachability problem specifically."
  */
 function isFailureVerdict(verdict: ServiceVerdict): boolean {
   switch (verdict) {

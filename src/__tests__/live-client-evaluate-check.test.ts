@@ -791,6 +791,22 @@ describe('ServiceStatusLiveClient evaluateCheck', () => {
     const client = await makeClient({ queryServices: vi.fn().mockResolvedValue([report('healthy')]) });
     expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
   });
+
+  /**
+   * Regression (Task 6 review Finding 2): worstVerdict used to rank
+   * offline_skipped below healthy, so a report set that was entirely
+   * offline_skipped still evaluated as the 'healthy' seed — a
+   * `service_verdict eq healthy` precondition/success-criteria check would
+   * read TRUE while offline, a fail-open in a method whose unknown-statement
+   * default is deliberately fail-closed. There is no agent-level OfflineGate
+   * in front of this backend method (that gate lives in the agent, one layer
+   * up), so the worst-verdict ranking itself has to carry the honesty here.
+   */
+  it('service_verdict eq healthy is false when every report is offline_skipped (no fail-open while offline)', async () => {
+    const client = await makeClient({ queryServices: vi.fn().mockResolvedValue([report('offline_skipped')]) });
+    expect(await client.evaluateCheck(check('service_verdict', 'eq', 'healthy'))).toBe(false);
+    expect(await client.evaluateCheck(check('service_verdict', 'eq', 'offline_skipped'))).toBe(true);
+  });
 });
 
 // ── IaC Drift Live Client ──
