@@ -42,8 +42,19 @@ describe('serviceStatusManifest', () => {
     expect(serviceStatusManifest.spec.riskProfile.serviceDisruptionPossible).toBe(false);
   });
 
+  /**
+   * `live_validated`, not the default-pessimistic `simulator_only`: all 12
+   * shipped catalog entries were checked against their real statusUrl and
+   * probeHost on 2026-08-08 (src/__tests__/service-status-live.test.ts, run
+   * with CRISISMODE_LIVE_TESTS=1) and passed 24/24. The 3 candidates that
+   * could not be live-verified (neon, resend, planetscale — see
+   * catalog.ts's header comment) were removed rather than shipped
+   * unverified, per the spec's honesty rule 4
+   * (docs/superpowers/specs/2026-08-08-service-status-design.md:145) — that
+   * removal is what earns the label, not a reason to withhold it.
+   */
   it('declares a maturity value (visibility contract)', () => {
-    expect(serviceStatusManifest.metadata.plugin.maturity).toBe('simulator_only');
+    expect(serviceStatusManifest.metadata.plugin.maturity).toBe('live_validated');
   });
 
   it('declares exactly one, read-only execution context with no capabilities', () => {
