@@ -32,6 +32,7 @@ import { awsDynamoDbRecoveryRegistration } from '../agent/aws-dynamodb/registrat
 import { awsRdsRecoveryRegistration } from '../agent/aws-rds/registration.js';
 import { iacDriftRegistration } from '../agent/iac-drift/registration.js';
 import { vectorStoreRegistration } from '../agent/vector-store/registration.js';
+import { serviceStatusRegistration } from '../agent/service-status/registration.js';
 
 export const builtinAgents: AgentRegistration[] = [
   // Infrastructure agents
@@ -60,4 +61,5 @@ export const builtinAgents: AgentRegistration[] = [
   queueBacklogRegistration,
   configDriftRegistration,
   vectorStoreRegistration,
+  serviceStatusRegistration,
 ];

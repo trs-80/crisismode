@@ -17,6 +17,7 @@ import { TlsSimulator } from '../agent/tls/simulator.js';
 import { DiskSimulator } from '../agent/disk/simulator.js';
 import { DnsSimulator } from '../agent/dns/simulator.js';
 import { IacDriftSimulator } from '../agent/iac-drift/simulator.js';
+import { ServiceStatusSimulator } from '../agent/service-status/simulator.js';
 
 // ---------------------------------------------------------------------------
 // evaluateCheck() dispatch coverage for the simulators whose per-agent test
@@ -621,6 +622,31 @@ describe('IacDriftSimulator.evaluateCheck()', () => {
 
   it('unknown statement fails closed', async () => {
     const sim = new IacDriftSimulator();
+    expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
+  });
+});
+
+describe('ServiceStatusSimulator.evaluateCheck()', () => {
+  it('service_verdict (string-fallback, worst verdict of the single configured service)', async () => {
+    const sim = new ServiceStatusSimulator();
+    sim.transition('incident');
+    expect(await sim.evaluateCheck(mk('service_verdict', 'eq', 'confirmed_incident'))).toBe(true);
+    expect(await sim.evaluateCheck(mk('service_verdict', 'eq', 'healthy'))).toBe(false);
+  });
+
+  it('unreachable_service_count counts down_for_you/unreachable_* verdicts', async () => {
+    const reachable = new ServiceStatusSimulator();
+    reachable.transition('healthy');
+    expect(await reachable.evaluateCheck(mk('unreachable_service_count', 'eq', 0))).toBe(true);
+
+    const unreachable = new ServiceStatusSimulator();
+    unreachable.transition('down_for_you');
+    expect(await unreachable.evaluateCheck(mk('unreachable_service_count', 'eq', 1))).toBe(true);
+    expect(await unreachable.evaluateCheck(mk('unreachable_service_count', 'eq', 0))).toBe(false);
+  });
+
+  it('unknown statement fails closed', async () => {
+    const sim = new ServiceStatusSimulator();
     expect(await sim.evaluateCheck(mk('nope', 'eq', 1))).toBe(false);
   });
 });
