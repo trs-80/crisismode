@@ -14,8 +14,28 @@
 import type { HealthStatus } from '../../types/health.js';
 import type { ServiceStatusReport, ServiceVerdict } from '../../framework/service-status/types.js';
 
-/** Worst-first rank. Higher = worse. */
+/**
+ * Worst-first rank. Higher = worse.
+ *
+ * `offline_skipped` ranks above every other verdict, including
+ * `confirmed_incident` — it means neither fact was actually checked, which
+ * is a worse epistemic position than any checked-and-bad result. Ranking it
+ * below `healthy` (as an earlier version of this file did) would make an
+ * all-skipped report set win `worstVerdict`'s `'healthy'` seed and come out
+ * looking clean; ranking it worst instead makes that seed lose to the real
+ * (unknown) verdict, and every downstream consumer already degrades this
+ * correctly: `HEALTH_STATUS_BY_VERDICT` maps it to `'unknown'`,
+ * `SCENARIO_BY_VERDICT` maps it to `null`, and `buildHealthAssessment` falls
+ * back to an honest `Status: unknown` summary with no recommended actions
+ * for a status key it has no healthy/recovering/unhealthy copy for. In
+ * practice the agent's own `OfflineGate` short-circuits before the backend
+ * is ever called while offline, so no report reaching `worstVerdict` today
+ * carries this verdict — but `ServiceStatusLiveClient.evaluateCheck` has no
+ * such gate in front of it, so this ranking is what keeps a
+ * `service_verdict eq healthy` precondition from reading TRUE while offline.
+ */
 const VERDICT_RANK: Record<ServiceVerdict, number> = {
+  offline_skipped: 6,
   confirmed_incident: 5,
   degraded_upstream: 4,
   down_for_you: 3,
@@ -24,12 +44,6 @@ const VERDICT_RANK: Record<ServiceVerdict, number> = {
   healthy_unverified: 1,
   healthy: 0,
   healthy_probe_only: 0,
-  // Never actually the worst in practice: the agent's OfflineGate
-  // short-circuit (agent.ts) returns before the backend is ever called while
-  // offline, so no report reaching this function can carry this verdict.
-  // Ranked below 'healthy' defensively rather than omitted, so the map stays
-  // exhaustive against the ServiceVerdict union.
-  offline_skipped: -1,
 };
 
 /** The worst (highest-ranked) verdict across every report. `healthy` when `reports` is empty. */
@@ -41,7 +55,13 @@ export function worstVerdict(reports: readonly ServiceStatusReport[]): ServiceVe
   return worst;
 }
 
-/** Verdicts where this machine could not reach the service, whether or not the provider confirmed an incident. */
+/**
+ * Verdicts where this machine could not reach the service, whether or not
+ * the provider confirmed an incident. A strict subset of `down.ts`'s
+ * `isFailureVerdict` (excludes `confirmed_incident`/`degraded_upstream` —
+ * this agent's `unreachable_service_count` counts reachability failures
+ * specifically, not every reason `crisismode down` would exit 1).
+ */
 export function isUnreachableVerdict(verdict: ServiceVerdict): boolean {
   return verdict === 'down_for_you' || verdict === 'unreachable_unverified' || verdict === 'unreachable_probe_only';
 }
@@ -53,6 +73,15 @@ export function isUnreachableVerdict(verdict: ServiceVerdict): boolean {
  * `healthy_probe_only` groups with healthy (reachable is all that was ever
  * checkable — there is no status source to be uncertain about);
  * `unreachable_probe_only` groups with the unreachable family.
+ *
+ * A second exhaustive `Record<ServiceVerdict, HealthStatus>` exists at
+ * `src/cli/commands/down.ts` (`VERDICT_HEALTH_STATUS`), for that command's
+ * exit code and display color. The two intentionally diverge on one row —
+ * `healthy_unverified` reads `'healthy'` there (Task 5's brief wants a green
+ * line for "reachable but unverified") but `'recovering'` here (Task 6's
+ * brief pins that an unverifiable status page keeps this agent's health
+ * assessment shy of a clean bill). Keep the two in sync deliberately, not by
+ * accident, if you touch either.
  */
 export const HEALTH_STATUS_BY_VERDICT: Record<ServiceVerdict, HealthStatus> = {
   healthy: 'healthy',
@@ -63,7 +92,10 @@ export const HEALTH_STATUS_BY_VERDICT: Record<ServiceVerdict, HealthStatus> = {
   down_for_you: 'unhealthy',
   unreachable_unverified: 'unhealthy',
   unreachable_probe_only: 'unhealthy',
-  // Never reached — see the comment on VERDICT_RANK.
+  // Honest fallback for the all-skipped case worstVerdict can now surface —
+  // see the comment on VERDICT_RANK. Not reached via the agent's own
+  // assessHealth/diagnose (its OfflineGate short-circuits first), but this
+  // map is also the honesty backstop if that ever changes.
   offline_skipped: 'unknown',
 };
 

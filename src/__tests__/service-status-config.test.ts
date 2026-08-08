@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { stringify } from 'yaml';
 import { loadConfig } from '../config/loader.js';
+import { serviceTargetsFromConfig } from '../cli/service-targets.js';
 import type { SiteConfig } from '../config/schema.js';
 
 const validConfig: SiteConfig = {
@@ -151,6 +152,90 @@ describe('services config', () => {
       });
       expect(() => loadConfig({ configPath: filePath })).toThrow(/targets/);
       expect(() => loadConfig({ configPath: filePath })).toThrow(/services/);
+    });
+  });
+
+  describe('targets/services name collision', () => {
+    /**
+     * serviceTargetsFromConfig (src/cli/service-targets.ts) synthesizes each
+     * services: entry into a target named after its resolved id.
+     * AgentRegistry.createForTarget resolves by name and returns the FIRST
+     * match — an uncaught collision means the other target's agent silently
+     * runs under the service-status label. Reviewer repro shape from the
+     * Task 6 review (task-6-review.md Finding 1): a `redis`-kind target
+     * named "github" plus a `services: [github]` entry.
+     */
+    it('rejects a services entry whose resolved id collides with a targets[] name, naming both entries', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        targets: [
+          { name: 'github', kind: 'redis', primary: { host: 'localhost', port: 6379 } },
+        ],
+        services: ['github'],
+      });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/github/);
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/redis/);
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/collides/);
+    });
+
+    it('rejects a services alias whose resolved canonical id collides with a targets[] name', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        targets: [
+          { name: 'fly', kind: 'kubernetes', primary: { host: 'localhost', port: 6443 } },
+        ],
+        // 'flyio' resolves to the canonical catalog id 'fly' — the collision
+        // must be caught on the resolved id, not the raw string.
+        services: ['flyio'],
+      });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/fly/);
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/collides/);
+    });
+
+    it('rejects a services {host, port} entry whose host collides with a targets[] name', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        targets: [
+          { name: 'api.myvendor.example', kind: 'dns', primary: { host: 'localhost', port: 53 } },
+        ],
+        services: [{ host: 'api.myvendor.example' }],
+      });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/collides/);
+    });
+
+    it('does not throw and yields both a non-colliding target and a service entry (integration-shaped)', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        targets: [
+          { name: 'my-redis', kind: 'redis', primary: { host: 'localhost', port: 6379 } },
+        ],
+        services: ['github'],
+      });
+
+      const result = loadConfig({ configPath: filePath });
+
+      expect(result.config.targets).toEqual([
+        { name: 'my-redis', kind: 'redis', primary: { host: 'localhost', port: 6379 } },
+      ]);
+      expect(result.config.services).toEqual(['github']);
+
+      // End-to-end through the actual synthesis path scan/watch use: the
+      // loaded config, unmodified, still produces a service-status target
+      // alongside the declared redis target once merged.
+      const serviceTargets = serviceTargetsFromConfig(result.config);
+      expect(serviceTargets).toEqual([
+        { name: 'github', kind: 'service-status', primary: { host: 'api.github.com', port: 443 } },
+      ]);
+      const merged = [...result.config.targets, ...serviceTargets];
+      expect(merged.map((t) => t.name)).toEqual(['my-redis', 'github']);
     });
   });
 });

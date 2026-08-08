@@ -4,13 +4,13 @@
 import { describe, it, expect } from 'vitest';
 import { ServiceStatusAgent } from '../agent/service-status/agent.js';
 import { ServiceStatusSimulator } from '../agent/service-status/simulator.js';
-import type { ServiceStatusScenario } from '../agent/service-status/simulator.js';
+import type { SimulatorState } from '../agent/service-status/simulator.js';
 import { serviceStatusManifest } from '../agent/service-status/manifest.js';
 import { assembleContext } from '../framework/context.js';
 import { validatePlan } from '../framework/validator.js';
 import type { AgentContext } from '../types/agent-context.js';
 
-function setup(state: ServiceStatusScenario) {
+function setup(state: SimulatorState) {
   const backend = new ServiceStatusSimulator();
   backend.transition(state);
   const agent = new ServiceStatusAgent(backend);
@@ -30,7 +30,7 @@ function setup(state: ServiceStatusScenario) {
  * provider, so it has nothing to suggest beyond notifying a human.
  */
 describe('ServiceStatusAgent.plan — real validatePlan per simulator scenario', () => {
-  const cases: Array<{ state: ServiceStatusScenario; scenario: string }> = [
+  const cases: Array<{ state: SimulatorState; scenario: string }> = [
     { state: 'incident', scenario: 'dependency_incident' },
     { state: 'degraded', scenario: 'dependency_degraded' },
     { state: 'down_for_you', scenario: 'dependency_unreachable' },
