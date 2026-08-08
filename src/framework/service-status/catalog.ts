@@ -6,7 +6,7 @@
  * live validation are corrected or removed there — do not add entries without live verification.
  */
 
-import type { CatalogEntry } from './types.js';
+import type { CatalogEntry, ServiceTarget } from './types.js';
 
 /** Map of known aliases to canonical ids. */
 export const CATALOG_ALIASES: Record<string, string> = {
@@ -156,4 +156,27 @@ export function resolveCatalogEntry(
 
   // Check direct id match
   return SERVICE_CATALOG.find((e) => e.id === normalized);
+}
+
+/**
+ * Resolve a raw config entry (catalog id/alias, or an explicit host) into a
+ * ServiceTarget. String input checks the catalog first; a miss is treated as
+ * a raw domain to probe (port 443, no status source). Object input is never
+ * catalog-checked — it is an explicit host/port pair.
+ *
+ * Lives here (pure, dependency-free) rather than in checker.ts so callers
+ * that only need to resolve a name — the config loader, and the scan/watch
+ * target synthesis — don't have to pull in checker.ts's runtime graph
+ * (node:dns/promises, triage) just to reach this function. checker.ts
+ * re-exports it for existing callers that already need the heavier module.
+ */
+export function resolveTarget(
+  input: string | { host: string; port?: number },
+): ServiceTarget {
+  if (typeof input === 'string') {
+    const entry = resolveCatalogEntry(input);
+    if (entry) return { id: entry.id, entry };
+    return { id: input, host: input, port: 443 };
+  }
+  return { id: input.host, host: input.host, port: input.port ?? 443 };
 }

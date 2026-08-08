@@ -13,6 +13,7 @@ import {
 } from '../cli/commands/down.js';
 import { configure, setOutputOptions } from '../cli/output.js';
 import { getProviderSpec } from '../agent/llm-provider/provider-table.js';
+import { ConfigValidationError } from '../config/loader.js';
 import type { CheckerDeps } from '../framework/service-status/checker.js';
 import type { ProbeOutcome, ServiceStatusReport, ServiceVerdict } from '../framework/service-status/types.js';
 
@@ -197,6 +198,34 @@ describe('runDownCommand', () => {
     expect(out).toContain('crisismode down <service>');
     expect(out).toContain('services:');
     expect(code).toBe(0);
+  });
+
+  /**
+   * Round 2 fix (Task 6 review, re-review Medium 1): `runDownCommand` used
+   * to swallow anything except `ConfigNotFoundError` from `loadConfig` and
+   * fall through to "No services configured to check" (exit 0) — including
+   * a genuine validation failure such as a services:/targets: name
+   * collision. Drives the real `runDownCommand` command surface (the
+   * injectable `loadConfig` seam `RunDownCommandDeps` already exists for)
+   * to prove the error now propagates instead.
+   */
+  it('propagates a ConfigValidationError instead of printing "no services configured"', async () => {
+    configure({ json: false, noColor: true, mode: 'human' });
+    const logs: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => logs.push(a.map(String).join(' ')));
+    const loadConfig = (() => {
+      throw new ConfigValidationError(
+        'Config error: services entry "github" resolves to the name "github", which collides with ' +
+        'targets[] entry "github" (kind: redis).',
+      );
+    }) as never;
+
+    await expect(runDownCommand([], { loadConfig })).rejects.toThrow(ConfigValidationError);
+    await expect(runDownCommand([], { loadConfig })).rejects.toThrow(/collides/);
+
+    spy.mockRestore();
+    const out = logs.join('\n');
+    expect(out).not.toContain('No services configured');
   });
 
   it('bare down with configured services: checks exactly those', async () => {
