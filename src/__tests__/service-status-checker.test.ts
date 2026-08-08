@@ -231,16 +231,84 @@ describe('checkServices concurrency', () => {
 describe('verdictDetail', () => {
   it('reachability-only wording is always present for probe-only verdicts', () => {
     expect(
-      verdictDetail({ verdict: 'healthy_probe_only', label: 'api.foo.com', incidents: [], source: 'domain' }),
+      verdictDetail({
+        verdict: 'healthy_probe_only', label: 'api.foo.com', incidents: [], source: 'domain', statusAssessment: 'no_status_source',
+      }),
     ).toContain('reachability only');
     expect(
-      verdictDetail({ verdict: 'unreachable_probe_only', label: 'api.foo.com', incidents: [], source: 'domain' }),
+      verdictDetail({
+        verdict: 'unreachable_probe_only', label: 'api.foo.com', incidents: [], source: 'domain', statusAssessment: 'no_status_source',
+      }),
     ).toContain('reachability only');
   });
 
   it('down_for_you hedges toward the user side', () => {
     expect(
-      verdictDetail({ verdict: 'down_for_you', label: 'GitHub', incidents: [], source: 'catalog' }),
+      verdictDetail({
+        verdict: 'down_for_you', label: 'GitHub', incidents: [], source: 'catalog', statusAssessment: 'operational',
+      }),
     ).toContain('likely your network, DNS, or config');
+  });
+
+  it('confirmed_incident from an actual incident_reported keeps the "confirmed an incident" / "down for everyone" wording', () => {
+    const detail = verdictDetail({
+      verdict: 'confirmed_incident', label: 'Stripe', incidents: [], source: 'catalog', statusAssessment: 'incident_reported',
+    });
+    expect(detail).toContain('down for everyone');
+    expect(detail).toContain('confirmed an incident');
+  });
+
+  it('confirmed_incident reached via degraded_reported + failed probe does NOT claim a confirmed incident or "down for everyone"', () => {
+    // Critical 1: combineVerdict maps degraded_reported + a failed probe to
+    // the same 'confirmed_incident' verdict as an actual incident_reported
+    // row, but zero incidents were ever confirmed on this path and one
+    // machine's failed probe is not "everyone". Branching on
+    // statusAssessment must keep this row honest.
+    const detail = verdictDetail({
+      verdict: 'confirmed_incident', label: 'Stripe', incidents: [], source: 'catalog', statusAssessment: 'degraded_reported',
+    });
+    expect(detail).not.toContain('confirmed an incident');
+    expect(detail).not.toContain('down for everyone');
+    expect(detail).toContain('degradation');
+  });
+
+  it('incident_reported + a failed probe keeps the existing incident wording (not the degraded wording)', () => {
+    const detail = verdictDetail({
+      verdict: 'confirmed_incident', label: 'Stripe', incidents: [], source: 'catalog', statusAssessment: 'incident_reported',
+    });
+    expect(detail).toContain('down for everyone');
+    expect(detail).toContain('confirmed an incident');
+  });
+});
+
+describe('fetchStatus via checkService — untested classification paths (ledger #3)', () => {
+  it('a non-2xx status response classifies as status_unavailable', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({}, false));
+    const probeImpl = vi.fn(async (): Promise<ProbeOutcome> => 'reachable');
+    const offlineGate: OfflineGate = async () => null;
+
+    const report = await checkService(
+      { id: 'github' },
+      { fetchImpl, probeImpl, offlineGate },
+    );
+
+    expect(report.statusAssessment).toBe('status_unavailable');
+    expect(report.detail).not.toContain('down for everyone');
+  });
+
+  it('a 2xx response with an unparseable body classifies as status_unavailable', async () => {
+    // parseStatuspageSummary returns null on a body that doesn't match the
+    // Statuspage v2 shape — a 200 response is not itself evidence of health.
+    const fetchImpl = vi.fn(async () => jsonResponse({ this: 'is not a statuspage body' }));
+    const probeImpl = vi.fn(async (): Promise<ProbeOutcome> => 'reachable');
+    const offlineGate: OfflineGate = async () => null;
+
+    const report = await checkService(
+      { id: 'github' },
+      { fetchImpl, probeImpl, offlineGate },
+    );
+
+    expect(report.statusAssessment).toBe('status_unavailable');
+    expect(report.detail).not.toContain('down for everyone');
   });
 });

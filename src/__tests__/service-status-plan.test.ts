@@ -76,7 +76,7 @@ describe('ServiceStatusAgent.plan — real validatePlan per simulator scenario',
     }
   });
 
-  it('never sets message.guideIds on the notification step — Task 8 has not registered the guide yet', async () => {
+  it('never sets message.guideIds on the notification step — anchoring is by finding type, not step guideIds', async () => {
     for (const state of ['incident', 'degraded', 'down_for_you', 'status_unavailable'] as const) {
       const { agent, context } = setup(state);
       const diagnosis = await agent.diagnose(context);

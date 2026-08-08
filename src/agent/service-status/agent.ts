@@ -178,9 +178,14 @@ export class ServiceStatusAgent implements RecoveryAgent {
       signals,
       confidence: 0.9,
       summary: {
+        // Single-service case routes through the report's own detail
+        // (verdictDetail's output) rather than a hand-written "X is
+        // healthy." — a raw domain's healthy detail carries the
+        // "reachability only" qualifier honesty rule 2 requires, which a
+        // hardcoded string would silently drop.
         healthy: reports.length > 1
           ? `All ${reports.length} configured third-party services are healthy.`
-          : `${worstReport.label} is healthy.`,
+          : worstReport.detail,
         recovering: worstReport.detail,
         unhealthy: worstReport.detail,
       },

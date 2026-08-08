@@ -46,8 +46,17 @@ const FIXTURES: Record<SimulatorState, Fixture> = {
     verdict: 'confirmed_incident',
   },
   degraded: {
+    // parser-consistent: degraded never carries unresolved incidents.
+    // `parseStatuspageSummary` (statuspage.ts) returns 'degraded_reported'
+    // only when `incidents.length === 0` — any unresolved incident
+    // short-circuits to 'incident_reported' instead. This fixture used to
+    // carry a populated `incidents` array, a shape the real checker can
+    // never produce; that unrepresentable fixture made the degraded+
+    // unreachable wording bug (verdictDetail claiming a "confirmed
+    // incident" that doesn't exist) look defensible in demo output and is
+    // the reason it survived ten task reviews.
     statusAssessment: 'degraded_reported',
-    incidents: [{ title: 'Degraded performance on the payments API', impact: 'minor' }],
+    incidents: [],
     probe: 'reachable',
     verdict: 'degraded_upstream',
   },
@@ -99,7 +108,13 @@ export class ServiceStatusSimulator implements ServiceStatusBackend {
       incidents: fixture.incidents,
       probe: fixture.probe,
       verdict: fixture.verdict,
-      detail: verdictDetail({ verdict: fixture.verdict, label: LABEL, incidents: fixture.incidents, source }),
+      detail: verdictDetail({
+        verdict: fixture.verdict,
+        label: LABEL,
+        incidents: fixture.incidents,
+        source,
+        statusAssessment: fixture.statusAssessment,
+      }),
       checkedAt: new Date().toISOString(),
       durationMs: 1,
     };
