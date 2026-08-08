@@ -1,0 +1,262 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 CrisisMode Contributors
+
+/**
+ * Two-fact service-status checker: what the provider's own status page says,
+ * and whether this machine can reach the provider — kept separate all the
+ * way to `checkService`'s return value, then combined into one plain-language
+ * verdict by `combineVerdict`/`verdictDetail`. Never conflate the two facts
+ * earlier than that: a status-page failure is not evidence of an outage, and
+ * an unreachable probe on an otherwise-operational provider is evidence about
+ * this machine, not about the provider.
+ */
+
+import { lookup } from 'node:dns/promises';
+import { probeTcpBounded } from '../triage-probes.js';
+import { defaultOfflineGate, type OfflineGate } from '../offline-gate.js';
+import { parseStatuspageSummary } from './statuspage.js';
+import { resolveCatalogEntry } from './catalog.js';
+import type { CatalogEntry } from './types.js';
+import type {
+  ProbeOutcome,
+  ServiceStatusReport,
+  ServiceVerdict,
+  StatusAssessment,
+  StatusIncident,
+} from './types.js';
+
+export interface ServiceTarget {
+  id: string;
+  host?: string;
+  port?: number;
+}
+
+export interface CheckerDeps {
+  fetchImpl?: typeof fetch;
+  probeImpl?: (host: string, port: number, timeoutMs: number) => Promise<ProbeOutcome>;
+  offlineGate?: OfflineGate;
+  /** Default 1500ms — status-page fetch deadline. */
+  statusTimeoutMs?: number;
+  /**
+   * Default 1500ms — a TOTAL deadline across dns.lookup() + the TCP connect,
+   * not 1500ms each (1500+1500 would blow scan's 2000ms per-agent budget).
+   */
+  probeTimeoutMs?: number;
+}
+
+/** Services checked at once per `checkServices` call. */
+export const CHECK_CONCURRENCY = 5;
+
+const DEFAULT_STATUS_TIMEOUT_MS = 1500;
+const DEFAULT_PROBE_TIMEOUT_MS = 1500;
+
+/** Floor for the TCP-connect phase once dns.lookup() has eaten into the total budget. */
+const MIN_PROBE_REMAINING_MS = 50;
+
+/**
+ * Resolve a raw config entry (catalog id/alias, or an explicit host) into a
+ * ServiceTarget. String input checks the catalog first; a miss is treated as
+ * a raw domain to probe (port 443, no status source). Object input is never
+ * catalog-checked — it is an explicit host/port pair.
+ */
+export function resolveTarget(
+  input: string | { host: string; port?: number },
+): ServiceTarget & { entry?: CatalogEntry } {
+  if (typeof input === 'string') {
+    const entry = resolveCatalogEntry(input);
+    if (entry) return { id: entry.id, entry };
+    return { id: input, host: input, port: 443 };
+  }
+  return { id: input.host, host: input.host, port: input.port ?? 443 };
+}
+
+/**
+ * The 9-row verdict table (spec's honesty contract) plus the OfflineGate's
+ * distinct `offline_skipped` state, which bypasses this function entirely
+ * (see `checkService`). `probe !== 'reachable'` is treated uniformly as
+ * "failed" — `dns_failed` and `connect_failed` carry the same verdict weight
+ * everywhere in the table.
+ */
+export function combineVerdict(status: StatusAssessment, probe: ProbeOutcome): ServiceVerdict {
+  const failed = probe !== 'reachable';
+  switch (status) {
+    case 'incident_reported':
+      return 'confirmed_incident';
+    case 'degraded_reported':
+      return failed ? 'confirmed_incident' : 'degraded_upstream';
+    case 'operational':
+      return failed ? 'down_for_you' : 'healthy';
+    case 'status_unavailable':
+      return failed ? 'unreachable_unverified' : 'healthy_unverified';
+    case 'no_status_source':
+      return failed ? 'unreachable_probe_only' : 'healthy_probe_only';
+  }
+}
+
+/**
+ * Plain-language wording for each verdict, written once so `crisismode down`
+ * and the service-status agent never re-invent it. Honesty rules baked in:
+ * `status_unavailable`-derived verdicts never say "down for everyone" or
+ * otherwise assert an outage, `down_for_you` hedges toward the user's own
+ * network rather than asserting certainty, and every probe-only verdict
+ * (raw domain, no catalog entry) is labeled "reachability only".
+ */
+export function verdictDetail(
+  report: Pick<ServiceStatusReport, 'verdict' | 'label' | 'incidents' | 'source'>,
+): string {
+  const { verdict, label } = report;
+  switch (verdict) {
+    case 'confirmed_incident':
+      return `${label} is down for everyone — they've confirmed an incident.`;
+    case 'degraded_upstream':
+      return `${label} is degraded on their side.`;
+    case 'healthy':
+      return `${label} is healthy and reachable.`;
+    case 'down_for_you':
+      return `${label} says all clear, but this machine can't reach them — likely your network, DNS, or config.`;
+    case 'healthy_unverified':
+      return `${label} is reachable; their status page couldn't be checked.`;
+    case 'unreachable_unverified':
+      return `Can't reach ${label} or its status page — can't tell whose problem it is.`;
+    case 'healthy_probe_only':
+      return `${label} is reachable; no known status page — reachability only.`;
+    case 'unreachable_probe_only':
+      return `Can't reach ${label}; no known status page — reachability only, so this may be your network.`;
+    case 'offline_skipped':
+      return `Skipped — this machine or its network looks offline, so ${label} is not being blamed.`;
+  }
+}
+
+/** DNS resolve, then a bounded TCP+TLS connect — the single socket-probe implementation, shared with network-profile.ts and triage. */
+async function defaultProbe(host: string, port: number, timeoutMs: number): Promise<ProbeOutcome> {
+  const start = performance.now();
+  try {
+    await lookup(host);
+  } catch {
+    return 'dns_failed';
+  }
+  const elapsed = performance.now() - start;
+  const remainingMs = Math.max(MIN_PROBE_REMAINING_MS, timeoutMs - elapsed);
+  const result = await probeTcpBounded(host, port, host, remainingMs);
+  return result.reachable ? 'reachable' : 'connect_failed';
+}
+
+/** Fetches and classifies the status page. No catalog entry -> `no_status_source` without ever calling fetchImpl. */
+async function fetchStatus(
+  entry: CatalogEntry | undefined,
+  fetchImpl: typeof fetch,
+  statusTimeoutMs: number,
+): Promise<{ assessment: StatusAssessment; incidents: StatusIncident[] }> {
+  if (!entry) return { assessment: 'no_status_source', incidents: [] };
+  try {
+    const response = await fetchImpl(entry.statusUrl, {
+      signal: AbortSignal.timeout(statusTimeoutMs),
+      headers: { accept: 'application/json' },
+    });
+    if (!response.ok) return { assessment: 'status_unavailable', incidents: [] };
+    const body: unknown = await response.json();
+    const parsed = parseStatuspageSummary(body);
+    if (!parsed) return { assessment: 'status_unavailable', incidents: [] };
+    return { assessment: parsed.assessment, incidents: parsed.incidents };
+  } catch {
+    return { assessment: 'status_unavailable', incidents: [] };
+  }
+}
+
+/**
+ * Check one service: OfflineGate first (short-circuits everything, per the
+ * spec's honesty rule 3), then the status fetch and the reachability probe
+ * run together via `Promise.allSettled` — neither can throw out of this
+ * function, and a rejection on either side degrades to the same "couldn't
+ * tell" assessment the fetch/probe would themselves report on failure.
+ */
+export async function checkService(
+  target: ServiceTarget,
+  deps: CheckerDeps = {},
+): Promise<ServiceStatusReport> {
+  const start = performance.now();
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const probeImpl = deps.probeImpl ?? defaultProbe;
+  const offlineGate = deps.offlineGate ?? defaultOfflineGate;
+  const statusTimeoutMs = deps.statusTimeoutMs ?? DEFAULT_STATUS_TIMEOUT_MS;
+  const probeTimeoutMs = deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+
+  const entry = resolveCatalogEntry(target.id);
+  const host = entry?.probeHost ?? target.host ?? target.id;
+  const port = entry?.probePort ?? target.port ?? 443;
+  const label = entry?.label ?? target.id;
+  const source: 'catalog' | 'domain' = entry ? 'catalog' : 'domain';
+
+  const offline = await offlineGate();
+  if (offline) {
+    return finishReport({
+      id: target.id,
+      label,
+      source,
+      host,
+      port,
+      // Neither fact was checked; 'status_unavailable' is the closest of the
+      // five existing StatusAssessment values to "unknown, and deliberately
+      // so" — the verdict is what actually carries the offline meaning.
+      statusAssessment: 'status_unavailable',
+      incidents: [],
+      probe: 'skipped',
+      verdict: 'offline_skipped',
+      start,
+    });
+  }
+
+  const [statusSettled, probeSettled] = await Promise.allSettled([
+    fetchStatus(entry, fetchImpl, statusTimeoutMs),
+    probeImpl(host, port, probeTimeoutMs),
+  ]);
+
+  const statusAssessment: StatusAssessment =
+    statusSettled.status === 'fulfilled' ? statusSettled.value.assessment : 'status_unavailable';
+  const incidents: StatusIncident[] = statusSettled.status === 'fulfilled' ? statusSettled.value.incidents : [];
+  const probe: ProbeOutcome = probeSettled.status === 'fulfilled' ? probeSettled.value : 'connect_failed';
+  const verdict = combineVerdict(statusAssessment, probe);
+
+  return finishReport({ id: target.id, label, source, host, port, statusAssessment, incidents, probe, verdict, start });
+}
+
+function finishReport(args: {
+  id: string;
+  label: string;
+  source: 'catalog' | 'domain';
+  host: string;
+  port: number;
+  statusAssessment: StatusAssessment;
+  incidents: StatusIncident[];
+  probe: ProbeOutcome | 'skipped';
+  verdict: ServiceVerdict;
+  start: number;
+}): ServiceStatusReport {
+  const { start, ...rest } = args;
+  return {
+    ...rest,
+    detail: verdictDetail({ verdict: rest.verdict, label: rest.label, incidents: rest.incidents, source: rest.source }),
+    checkedAt: new Date().toISOString(),
+    durationMs: Math.round(performance.now() - start),
+  };
+}
+
+/**
+ * Check every target through a small worker pool bounded by
+ * CHECK_CONCURRENCY, preserving input order in the result.
+ */
+export async function checkServices(
+  targets: ServiceTarget[],
+  deps: CheckerDeps = {},
+): Promise<ServiceStatusReport[]> {
+  const results: ServiceStatusReport[] = new Array(targets.length);
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < targets.length) {
+      const index = next++;
+      results[index] = await checkService(targets[index]!, deps);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, targets.length) }, worker));
+  return results;
+}
