@@ -120,6 +120,14 @@ export interface TargetConfig {
   llm?: LlmTargetOptions;
 }
 
+// ── Service status config ──
+
+/**
+ * A third-party dependency to check status for: a catalog id/alias, a raw domain,
+ * or the long form with an explicit port.
+ */
+export type ServiceConfigEntry = string | { host: string; port?: number };
+
 // ── Site config ──
 
 export interface SiteConfig {
@@ -152,6 +160,9 @@ export interface SiteConfig {
   } | undefined;
 
   targets: TargetConfig[];
+
+  /** Third-party dependencies to check status for (catalog ids, aliases, domains, or {host, port}). */
+  services?: ServiceConfigEntry[];
 }
 
 // ── Resolved targets (credentials hydrated to actual values) ──

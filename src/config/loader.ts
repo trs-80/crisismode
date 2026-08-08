@@ -11,6 +11,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { SiteConfig } from './schema.js';
+import { resolveCatalogEntry, SERVICE_CATALOG } from '../framework/service-status/catalog.js';
 
 export interface LoadConfigOptions {
   configPath?: string;
@@ -112,23 +113,36 @@ function loadConfigFile(filePath: string): SiteConfig {
     );
   }
 
-  if (!Array.isArray(config.targets) || config.targets.length === 0) {
+  const hasTargets = Array.isArray(config.targets) && config.targets.length > 0;
+  const hasServices = Array.isArray(config.services) && config.services.length > 0;
+
+  if (!hasTargets && !hasServices) {
     throw new Error(
-      'Config must define at least one target.\n' +
+      'Config must define at least one target or service. ' +
+      'Add a `targets:` block or a `services:` list.\n' +
       '  Suggestion: Add a target block. Example:\n' +
       '    targets:\n' +
       '      - name: my-postgres\n' +
       '        kind: postgresql\n' +
-      '        primary: { host: localhost, port: 5432 }',
+      '        primary: { host: localhost, port: 5432 }\n' +
+      '  Or a services list. Example:\n' +
+      '    services:\n' +
+      '      - github',
     );
   }
 
-  for (const target of config.targets as Record<string, unknown>[]) {
-    validateTarget(target);
+  if (hasTargets) {
+    for (const target of config.targets as Record<string, unknown>[]) {
+      validateTarget(target);
+    }
   }
 
   if (config.network !== undefined) {
     validateNetwork(config.network);
+  }
+
+  if (config.services !== undefined) {
+    validateServices(config.services);
   }
 
   return config as unknown as SiteConfig;
@@ -149,6 +163,55 @@ function validateNetwork(network: unknown): void {
         '  Example: network: { egressMbps: 100 }',
       );
     }
+  }
+}
+
+/** A bare hostname/domain: no scheme, no path, no whitespace. */
+const HOSTNAME_PATTERN = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/i;
+
+function validServiceHint(): string {
+  const sample = SERVICE_CATALOG.slice(0, 5).map((e) => e.id).join(', ');
+  return `Valid catalog ids include: ${sample}.`;
+}
+
+function serviceEntryError(entry: unknown): Error {
+  return new Error(
+    `Invalid services entry: ${JSON.stringify(entry)}.\n` +
+    '  Each entry must be a catalog id/alias, a bare domain (no scheme, path, or spaces), ' +
+    'or { host, port } with a valid host and port 1-65535.\n' +
+    `  ${validServiceHint()}`,
+  );
+}
+
+function validateServices(services: unknown): void {
+  if (!Array.isArray(services)) {
+    throw new Error(
+      `config error: services must be a list.\n  ${validServiceHint()}`,
+    );
+  }
+
+  for (const entry of services) {
+    if (typeof entry === 'string') {
+      if (resolveCatalogEntry(entry) === undefined && !HOSTNAME_PATTERN.test(entry)) {
+        throw serviceEntryError(entry);
+      }
+      continue;
+    }
+
+    if (typeof entry === 'object' && entry !== null && !Array.isArray(entry)) {
+      const { host, port } = entry as Record<string, unknown>;
+      if (typeof host !== 'string' || host.length === 0 || !HOSTNAME_PATTERN.test(host)) {
+        throw serviceEntryError(entry);
+      }
+      if (port !== undefined) {
+        if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+          throw serviceEntryError(entry);
+        }
+      }
+      continue;
+    }
+
+    throw serviceEntryError(entry);
   }
 }
 
