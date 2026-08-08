@@ -97,14 +97,24 @@ export function combineVerdict(status: CheckedStatusAssessment, probe: ProbeOutc
  * otherwise assert an outage, `down_for_you` hedges toward the user's own
  * network rather than asserting certainty, and every probe-only verdict
  * (raw domain, no catalog entry) is labeled "reachability only".
+ *
+ * `confirmed_incident` is reached by two different table rows
+ * (`combineVerdict`): `incident_reported` always, and `degraded_reported` +
+ * a failed probe. Only the first is an actual provider-confirmed incident —
+ * the second is a provider reporting *degraded* performance plus one
+ * machine's failed probe, which is neither "confirmed" nor "everyone".
+ * Branch on `statusAssessment` so the wording never claims more than the
+ * two source facts actually support.
  */
 export function verdictDetail(
-  report: Pick<ServiceStatusReport, 'verdict' | 'label' | 'incidents' | 'source'>,
+  report: Pick<ServiceStatusReport, 'verdict' | 'label' | 'incidents' | 'source' | 'statusAssessment'>,
 ): string {
-  const { verdict, label } = report;
+  const { verdict, label, statusAssessment } = report;
   switch (verdict) {
     case 'confirmed_incident':
-      return `${label} is down for everyone — they've confirmed an incident.`;
+      return statusAssessment === 'degraded_reported'
+        ? `${label}'s status page reports degradation and this machine can't reach them — likely a problem on their side.`
+        : `${label} is down for everyone — they've confirmed an incident.`;
     case 'degraded_upstream':
       return `${label} is degraded on their side.`;
     case 'healthy':
@@ -233,7 +243,13 @@ function finishReport(args: {
   const { start, ...rest } = args;
   return {
     ...rest,
-    detail: verdictDetail({ verdict: rest.verdict, label: rest.label, incidents: rest.incidents, source: rest.source }),
+    detail: verdictDetail({
+      verdict: rest.verdict,
+      label: rest.label,
+      incidents: rest.incidents,
+      source: rest.source,
+      statusAssessment: rest.statusAssessment,
+    }),
     checkedAt: new Date().toISOString(),
     durationMs: Math.round(performance.now() - start),
   };
