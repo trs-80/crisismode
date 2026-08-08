@@ -17,27 +17,16 @@
 import chalk from 'chalk';
 import {
   checkServices,
-  combineVerdict,
   resolveTarget,
-  verdictDetail,
   type CheckerDeps,
   type ServiceTarget,
 } from '../../framework/service-status/checker.js';
-import { parseStatuspageSummary } from '../../framework/service-status/statuspage.js';
-import { probeTcpBounded } from '../../framework/triage-probes.js';
-import { defaultOfflineGate } from '../../framework/offline-gate.js';
 import { getProviderSpec, type LlmProviderSpec } from '../../agent/llm-provider/provider-table.js';
 import { loadConfigWithDetection, ConfigNotFoundError } from '../../config/loader.js';
 import { getOutputMode, jsonOut, outputOptions, printBanner } from '../output.js';
 import { healthStatusColor } from '../status-presentation.js';
 import type { ServiceConfigEntry } from '../../config/schema.js';
-import type {
-  ProbeOutcome,
-  ServiceStatusReport,
-  ServiceVerdict,
-  StatusAssessment,
-  StatusIncident,
-} from '../../framework/service-status/types.js';
+import type { ServiceStatusReport, ServiceVerdict } from '../../framework/service-status/types.js';
 import type { HealthStatus } from '../../types/health.js';
 
 /**
@@ -191,119 +180,30 @@ export function parseDownArgs(args: readonly string[]): ParsedDownArgs | { unkno
 }
 
 /**
- * `not_checked` only exists on the offline-gate short-circuit path — see
- * checker.ts's identically-named local type for the reasoning. Duplicated
- * here (not exported from checker.ts) because it's purely a parameter-type
- * narrowing, not shared behavior.
- */
-type CheckedAssessment = Exclude<StatusAssessment, 'not_checked'>;
-
-/** DNS resolve, then a bounded TCP+TLS connect — mirrors checker.ts's private defaultProbe. */
-async function defaultProviderProbe(host: string, port: number, timeoutMs: number): Promise<ProbeOutcome> {
-  const { lookup } = await import('node:dns/promises');
-  const start = performance.now();
-  try {
-    await lookup(host);
-  } catch {
-    return 'dns_failed';
-  }
-  const elapsed = performance.now() - start;
-  const remainingMs = Math.max(50, timeoutMs - elapsed);
-  const result = await probeTcpBounded(host, port, host, remainingMs);
-  return result.reachable ? 'reachable' : 'connect_failed';
-}
-
-async function fetchProviderStatus(
-  spec: LlmProviderSpec,
-  fetchImpl: typeof fetch,
-  statusTimeoutMs: number,
-): Promise<{ assessment: CheckedAssessment; incidents: StatusIncident[] }> {
-  try {
-    const response = await fetchImpl(spec.statusUrl!, {
-      signal: AbortSignal.timeout(statusTimeoutMs),
-      headers: { accept: 'application/json' },
-    });
-    if (!response.ok) return { assessment: 'status_unavailable', incidents: [] };
-    const body: unknown = await response.json();
-    const parsed = parseStatuspageSummary(body);
-    if (!parsed) return { assessment: 'status_unavailable', incidents: [] };
-    return { assessment: parsed.assessment, incidents: parsed.incidents };
-  } catch {
-    return { assessment: 'status_unavailable', incidents: [] };
-  }
-}
-
-/**
  * `down anthropic` / `down openai`: Task 2's catalog deliberately excludes
  * these ids (spec line 66's "exactly one owner per provider's status
  * endpoint" — the llm-provider agent already owns them), so falling through
  * to raw-domain handling would DNS-fail on a host literally named
- * "anthropic". This resolves the id through llm-provider's provider table
- * instead and reuses the Task 1 Statuspage parser against that provider's
- * own `statusUrl`, mirroring checker.ts's checkService for everything except
- * where the catalog entry comes from.
+ * "anthropic". This builds the `ServiceTarget` checker.ts's own
+ * `checkService` needs, with a synthetic `entry` carrying the provider's
+ * `apiHost`/`statusUrl` — `target.entry ?? resolveCatalogEntry(target.id)`
+ * (checker.ts) uses it in place of a `SERVICE_CATALOG` lookup, so the real
+ * `checkService`/`checkServices` run unmodified; no orchestration logic is
+ * reimplemented here.
  */
-async function checkProviderService(spec: LlmProviderSpec, deps: CheckerDeps): Promise<ServiceStatusReport> {
-  const start = performance.now();
-  const fetchImpl = deps.fetchImpl ?? fetch;
-  const probeImpl = deps.probeImpl ?? defaultProviderProbe;
-  const offlineGate = deps.offlineGate ?? defaultOfflineGate;
-  const statusTimeoutMs = deps.statusTimeoutMs ?? DOWN_TIMEOUT_MS;
-  const probeTimeoutMs = deps.probeTimeoutMs ?? DOWN_TIMEOUT_MS;
-
-  const host = spec.apiHost;
-  const port = 443;
-  const label = spec.label;
-
-  const offline = await offlineGate();
-  if (offline) {
-    return finishProviderReport({
-      id: spec.id,
-      label,
-      host,
-      port,
-      statusAssessment: 'not_checked',
-      incidents: [],
-      probe: 'skipped',
-      verdict: 'offline_skipped',
-      start,
-    });
-  }
-
-  const [statusSettled, probeSettled] = await Promise.allSettled([
-    fetchProviderStatus(spec, fetchImpl, statusTimeoutMs),
-    probeImpl(host, port, probeTimeoutMs),
-  ]);
-
-  const statusAssessment: CheckedAssessment =
-    statusSettled.status === 'fulfilled' ? statusSettled.value.assessment : 'status_unavailable';
-  const incidents: StatusIncident[] = statusSettled.status === 'fulfilled' ? statusSettled.value.incidents : [];
-  const probe: ProbeOutcome = probeSettled.status === 'fulfilled' ? probeSettled.value : 'connect_failed';
-  const verdict = combineVerdict(statusAssessment, probe);
-
-  return finishProviderReport({ id: spec.id, label, host, port, statusAssessment, incidents, probe, verdict, start });
-}
-
-function finishProviderReport(args: {
-  id: string;
-  label: string;
-  host: string;
-  port: number;
-  statusAssessment: StatusAssessment;
-  incidents: StatusIncident[];
-  probe: ProbeOutcome | 'skipped';
-  verdict: ServiceVerdict;
-  start: number;
-}): ServiceStatusReport {
-  const { start, ...rest } = args;
+function providerAsTarget(spec: LlmProviderSpec): ServiceTarget {
   return {
-    ...rest,
-    // Has a known status source, same as a curated catalog entry — just
-    // sourced from llm-provider's table instead of service-status/catalog.ts.
-    source: 'catalog',
-    detail: verdictDetail({ verdict: rest.verdict, label: rest.label, incidents: rest.incidents, source: 'catalog' }),
-    checkedAt: new Date().toISOString(),
-    durationMs: Math.round(performance.now() - start),
+    id: spec.id,
+    host: spec.apiHost,
+    port: 443,
+    entry: {
+      id: spec.id,
+      label: spec.label,
+      probeHost: spec.apiHost,
+      probePort: 443,
+      statusUrl: spec.statusUrl!,
+      statusFormat: 'statuspage_v2',
+    },
   };
 }
 
@@ -314,38 +214,17 @@ function statuspageProviderSpec(id: string): LlmProviderSpec | undefined {
 }
 
 /**
- * Checks every entry, routing llm-provider ids (anthropic, openai) through
- * `checkProviderService` and everything else through the Task 3 checker's
- * own concurrency-bounded `checkServices`, then reassembles both groups in
- * the caller's original order.
+ * Resolves every entry — llm-provider ids (anthropic, openai) to a synthetic
+ * `entry`, everything else via the Task 3 checker's own `resolveTarget` —
+ * then checks all of them in one `checkServices` call, so there is exactly
+ * one concurrency-bounded check path regardless of where a target came from.
  */
 async function checkAllServices(entries: readonly ServiceConfigEntry[], deps: CheckerDeps): Promise<ServiceStatusReport[]> {
-  const results: ServiceStatusReport[] = new Array(entries.length);
-  const catalogTargets: Array<{ index: number; target: ServiceTarget }> = [];
-  const providerChecks: Array<{ index: number; spec: LlmProviderSpec }> = [];
-
-  entries.forEach((entry, index) => {
+  const targets: ServiceTarget[] = entries.map((entry) => {
     const spec = typeof entry === 'string' ? statuspageProviderSpec(entry) : undefined;
-    if (spec) {
-      providerChecks.push({ index, spec });
-    } else {
-      catalogTargets.push({ index, target: resolveTarget(entry) });
-    }
+    return spec ? providerAsTarget(spec) : resolveTarget(entry);
   });
-
-  if (catalogTargets.length > 0) {
-    const reports = await checkServices(catalogTargets.map((t) => t.target), deps);
-    catalogTargets.forEach((t, i) => {
-      results[t.index] = reports[i]!;
-    });
-  }
-
-  const providerReports = await Promise.all(providerChecks.map((p) => checkProviderService(p.spec, deps)));
-  providerChecks.forEach((p, i) => {
-    results[p.index] = providerReports[i]!;
-  });
-
-  return results;
+  return checkServices(targets, deps);
 }
 
 export interface RunDownCommandDeps extends CheckerDeps {
