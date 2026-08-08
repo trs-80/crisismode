@@ -37,6 +37,22 @@ vi.mock('../framework/check-discovery.js', () => ({
 
 import { runScan } from '../cli/commands/scan.js';
 import { ConfigValidationError } from '../config/loader.js';
+import type { TriageReport } from '../framework/triage.js';
+
+// Injected into runScan so its step-0 triage never runs real DNS/gateway/
+// portal probes — without this the suite spent ~4.8s per run in live
+// network calls and flaked against vitest's 5s default timeout.
+const HEALTHY_TRIAGE: TriageReport = {
+  verdict: 'healthy',
+  explanation: 'test fixture',
+  nextStep: 'none',
+  observerContext: 'laptop',
+  observerContextEvidence: 'test fixture',
+  escalationLevel: 2,
+  checkedAt: '2026-08-08T12:00:00.000Z',
+  durationMs: 1,
+  layers: [{ layer: 'interfaces', status: 'pass', detail: 'en0', durationMs: 1 }],
+};
 
 // The reviewer's exact repro shape from the Task 6 review (Finding 1): a
 // redis-kind target and a services: entry that both resolve to the same
@@ -74,8 +90,11 @@ const NON_COLLIDING_CONFIG_YAML = [
   '  - name: my-redis',
   '    kind: redis',
   '    primary:',
-  '      host: simulator',
-  '      port: 6379',
+  // 127.0.0.1:1 refuses instantly (vs. an unresolvable hostname, which made
+  // the redis agent burn its full connect timeout and this suite flake
+  // against vitest's 5s default).
+  '      host: 127.0.0.1',
+  '      port: 1',
   'services:',
   '  - svc.test.invalid',
   '',
@@ -102,15 +121,18 @@ describe('runScan — services/targets name collision surfaces to the caller', (
     const configPath = join(tmpDir, 'crisismode.yaml');
     writeFileSync(configPath, COLLIDING_CONFIG_YAML, 'utf-8');
 
-    await expect(runScan({ configPath })).rejects.toThrow(ConfigValidationError);
-    await expect(runScan({ configPath })).rejects.toThrow(/collides/);
+    await expect(runScan({ configPath, triageReport: HEALTHY_TRIAGE })).rejects.toThrow(ConfigValidationError);
+    await expect(runScan({ configPath, triageReport: HEALTHY_TRIAGE })).rejects.toThrow(/collides/);
   });
 
-  it('a non-colliding mixed config still scans both the target and the service (no false rejection)', async () => {
+  // ~4s is structural, not network flake: the dead redis target burns scan's
+  // 2s per-agent cap in both the health and diagnose stages. Bounded, so an
+  // explicit timeout (not the 5s default it used to flake against) is the fix.
+  it('a non-colliding mixed config still scans both the target and the service (no false rejection)', { timeout: 15_000 }, async () => {
     const configPath = join(tmpDir, 'crisismode.yaml');
     writeFileSync(configPath, NON_COLLIDING_CONFIG_YAML, 'utf-8');
 
-    const result = await runScan({ configPath, category: ['redis', 'service-status'] });
+    const result = await runScan({ configPath, category: ['redis', 'service-status'], triageReport: HEALTHY_TRIAGE });
 
     const services = result.findings.map((f) => f.service);
     expect(services.some((s) => s.includes('redis') && s.includes('my-redis'))).toBe(true);
