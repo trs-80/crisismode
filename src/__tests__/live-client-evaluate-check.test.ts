@@ -746,6 +746,53 @@ describe('DnsLiveClient evaluateCheck', () => {
   });
 });
 
+// ── Service Status Live Client ──
+
+describe('ServiceStatusLiveClient evaluateCheck', () => {
+  async function makeClient(overrides: Record<string, unknown>) {
+    const { ServiceStatusLiveClient } = await import('../agent/service-status/live-client.js');
+    const client = Object.create(ServiceStatusLiveClient.prototype) as InstanceType<typeof ServiceStatusLiveClient>;
+    inject(client, overrides);
+    return client;
+  }
+
+  function report(verdict: string) {
+    return {
+      id: 'stripe',
+      label: 'Stripe',
+      source: 'catalog',
+      host: 'api.stripe.com',
+      port: 443,
+      statusAssessment: 'operational',
+      incidents: [],
+      probe: 'reachable',
+      verdict,
+      detail: 'stub',
+      checkedAt: new Date().toISOString(),
+      durationMs: 1,
+    };
+  }
+
+  it('service_verdict compares the worst verdict across reports (string-fallback)', async () => {
+    const client = await makeClient({ queryServices: vi.fn().mockResolvedValue([report('confirmed_incident')]) });
+    expect(await client.evaluateCheck(check('service_verdict', 'eq', 'confirmed_incident'))).toBe(true);
+    expect(await client.evaluateCheck(check('service_verdict', 'eq', 'healthy'))).toBe(false);
+  });
+
+  it('unreachable_service_count counts down_for_you/unreachable_* verdicts', async () => {
+    const client = await makeClient({
+      queryServices: vi.fn().mockResolvedValue([report('down_for_you'), report('healthy')]),
+    });
+    expect(await client.evaluateCheck(check('unreachable_service_count', 'eq', 1))).toBe(true);
+    expect(await client.evaluateCheck(check('unreachable_service_count', 'eq', 0))).toBe(false);
+  });
+
+  it('returns false for unknown statement (fail-closed)', async () => {
+    const client = await makeClient({ queryServices: vi.fn().mockResolvedValue([report('healthy')]) });
+    expect(await client.evaluateCheck(check('nope', 'eq', 1))).toBe(false);
+  });
+});
+
 // ── IaC Drift Live Client ──
 
 describe('IacDriftLiveClient evaluateCheck', () => {

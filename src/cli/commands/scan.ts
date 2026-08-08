@@ -30,6 +30,7 @@ import { buildVisibilityReport, type VisibilityEntry } from '../visibility.js';
 import type { AgentMaturity } from '../../framework/agent-maturity.js';
 import { mergeLocalTargets, unconfiguredAgentHints } from '../local-agents.js';
 import { buildConfigFromDetection } from '../runtime.js';
+import { serviceTargetsFromConfig, serviceStatusWatchingDetail } from '../service-targets.js';
 import { synthesizeByRules } from '../../framework/root-cause-synthesis.js';
 import type { AgentEvidence } from '../../framework/root-cause-synthesis.js';
 import { healthToSignals } from '../../framework/health-to-signals.js';
@@ -83,6 +84,7 @@ const KIND_PREFIX: Record<string, string> = {
   'aws-dynamodb': 'DYNAMO',
   'aws-rds': 'RDS',
   'iac-drift': 'IAC',
+  'service-status': 'SVC',
   plugin: 'PLUG',
 };
 
@@ -328,6 +330,14 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
     config = { ...config, targets: mergeLocalTargets(config.targets) };
   }
 
+  // Add service-status targets derived from config.services (Task 6) — the
+  // same synthesis loadConfigWithLocalTargets uses for watch, so scan and
+  // watch see identical third-party-dependency targets.
+  const serviceTargets = serviceTargetsFromConfig(config);
+  if (serviceTargets.length > 0) {
+    config = { ...config, targets: [...config.targets, ...serviceTargets] };
+  }
+
   // Merge derived targets from connection string env vars
   if (stackProfile.derivedTargets.length > 0) {
     const existingKinds = new Set(config.targets.map((t) => t.kind));
@@ -503,8 +513,28 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   // What CrisisMode can see, what it found but can't check, and what's invisible by design.
   const ranKinds = watchedKinds(agentResults);
+  // buildVisibilityReport has no per-target granularity (one watching entry
+  // per agent *kind*), so every configured service would otherwise collapse
+  // into a bare 'service-status' line with no indication of which services
+  // are covered. This threads one enumerated detail string through the same
+  // derivedTarget/derivedNote lookup `visibility.ts` already uses for
+  // env-derived targets, without extending buildVisibilityReport itself.
+  const configuredServices = config.services ?? [];
+  const visibilityProfile = configuredServices.length > 0
+    ? {
+        ...stackProfile,
+        derivedTargets: [
+          ...stackProfile.derivedTargets,
+          { name: 'service-status-configured', kind: 'service-status' },
+        ],
+        derivedNotes: {
+          ...stackProfile.derivedNotes,
+          'service-status-configured': serviceStatusWatchingDetail(config),
+        },
+      }
+    : stackProfile;
   result.visibility = buildVisibilityReport(
-    stackProfile,
+    visibilityProfile,
     ranKinds,
     configSource,
     [

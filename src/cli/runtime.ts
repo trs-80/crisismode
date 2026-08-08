@@ -18,6 +18,7 @@ import type { AgentInstance } from '../config/agent-registry.js';
 import type { SiteConfig } from '../config/schema.js';
 import { detectServices } from './detect.js';
 import { mergeLocalTargets } from './local-agents.js';
+import { serviceTargetsFromConfig } from './service-targets.js';
 import { printInfo, printDetection } from './output.js';
 
 /**
@@ -81,6 +82,14 @@ export async function loadConfigWithLocalTargets(
 
   // Inject local health agents (DNS, disk) so they work without explicit config
   config = { ...config, targets: mergeLocalTargets(config.targets) };
+
+  // Add service-status targets derived from config.services (Task 6) — the
+  // same synthesis runScan uses for scan, so watch sees identical
+  // third-party-dependency targets.
+  const serviceTargets = serviceTargetsFromConfig(config);
+  if (serviceTargets.length > 0) {
+    config = { ...config, targets: [...config.targets, ...serviceTargets] };
+  }
 
   printInfo(`Config: ${source}`);
   console.log('');

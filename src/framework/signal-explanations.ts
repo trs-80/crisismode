@@ -113,6 +113,11 @@ const EXPLANATIONS: Array<{ match: RegExp } & SignalExplanation> = [
     learnMoreUrl: 'https://www.pinecone.io/learn/vector-database/',
   },
   {
+    match: /^service_status_page|^service_reachability/,
+    explanation: 'A third-party dependency your app calls out to (Stripe, GitHub, a CDN, ...), checked as two separate facts: whether the provider itself reports a problem, and whether this machine can reach it. A status-page hiccup is not evidence of an outage, and being unreachable from here is not evidence the provider is down.',
+    learnMoreUrl: 'https://www.atlassian.com/software/statuspage',
+  },
+  {
     match: /backup|snapshot|pitr|restore/,
     explanation: 'Backups and point-in-time recovery are the last line of defense against data loss. A misconfigured or stale backup means recovery may be impossible when needed.',
     learnMoreUrl: 'https://docs.aws.amazon.com/aws-backup/latest/devguide/whatisbackup.html',
