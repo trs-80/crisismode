@@ -8,17 +8,25 @@ export interface StatusIncident {
   url?: string;
 }
 
-/** What the provider's own status source reports. NEVER conflated with reachability. */
+/**
+ * What the provider's own status source reports. NEVER conflated with
+ * reachability. `not_checked` is distinct from `status_unavailable`: the
+ * latter means a fetch was attempted and failed (their status page is
+ * flaky), the former means no fetch was attempted at all (OfflineGate
+ * short-circuited before either fact was gathered) — machine-readable
+ * consumers (`crisismode down --json`) need to tell those apart.
+ */
 export type StatusAssessment =
   | 'incident_reported'
   | 'degraded_reported'
   | 'operational'
   | 'status_unavailable'
-  | 'no_status_source';
+  | 'no_status_source'
+  | 'not_checked';
 
 /** Parsed Statuspage-v2 summary. */
 export interface StatusPageAssessment {
-  assessment: Exclude<StatusAssessment, 'status_unavailable' | 'no_status_source'>;
+  assessment: Exclude<StatusAssessment, 'status_unavailable' | 'no_status_source' | 'not_checked'>;
   incidents: StatusIncident[];
   /** Statuspage overall indicator ('none' | 'minor' | 'major' | 'critical'), or 'unknown'. */
   indicator: string;

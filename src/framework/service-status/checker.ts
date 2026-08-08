@@ -54,6 +54,17 @@ const DEFAULT_PROBE_TIMEOUT_MS = 1500;
 const MIN_PROBE_REMAINING_MS = 50;
 
 /**
+ * `not_checked` only ever exists on the OfflineGate short-circuit path in
+ * `checkService`, which returns before `combineVerdict` is called at all —
+ * neither `fetchStatus` nor anything else that feeds `combineVerdict` can
+ * produce it. Excluding it from `combineVerdict`'s parameter type (rather
+ * than adding a row for it) makes that impossible-by-construction: passing
+ * `not_checked` to `combineVerdict` is a compile error, not a runtime row
+ * that would have to lie about what verdict "not checked" collapses to.
+ */
+type CheckedStatusAssessment = Exclude<StatusAssessment, 'not_checked'>;
+
+/**
  * Resolve a raw config entry (catalog id/alias, or an explicit host) into a
  * ServiceTarget. String input checks the catalog first; a miss is treated as
  * a raw domain to probe (port 443, no status source). Object input is never
@@ -77,7 +88,7 @@ export function resolveTarget(
  * "failed" — `dns_failed` and `connect_failed` carry the same verdict weight
  * everywhere in the table.
  */
-export function combineVerdict(status: StatusAssessment, probe: ProbeOutcome): ServiceVerdict {
+export function combineVerdict(status: CheckedStatusAssessment, probe: ProbeOutcome): ServiceVerdict {
   const failed = probe !== 'reachable';
   switch (status) {
     case 'incident_reported':
@@ -146,7 +157,7 @@ async function fetchStatus(
   entry: CatalogEntry | undefined,
   fetchImpl: typeof fetch,
   statusTimeoutMs: number,
-): Promise<{ assessment: StatusAssessment; incidents: StatusIncident[] }> {
+): Promise<{ assessment: CheckedStatusAssessment; incidents: StatusIncident[] }> {
   if (!entry) return { assessment: 'no_status_source', incidents: [] };
   try {
     const response = await fetchImpl(entry.statusUrl, {
@@ -195,10 +206,11 @@ export async function checkService(
       source,
       host,
       port,
-      // Neither fact was checked; 'status_unavailable' is the closest of the
-      // five existing StatusAssessment values to "unknown, and deliberately
-      // so" — the verdict is what actually carries the offline meaning.
-      statusAssessment: 'status_unavailable',
+      // Neither fact was checked at all — distinct from 'status_unavailable',
+      // which means a fetch was attempted and failed. Never fed into
+      // combineVerdict (see CheckedStatusAssessment); the verdict field is
+      // what actually carries the offline meaning to callers.
+      statusAssessment: 'not_checked',
       incidents: [],
       probe: 'skipped',
       verdict: 'offline_skipped',
@@ -211,7 +223,7 @@ export async function checkService(
     probeImpl(host, port, probeTimeoutMs),
   ]);
 
-  const statusAssessment: StatusAssessment =
+  const statusAssessment: CheckedStatusAssessment =
     statusSettled.status === 'fulfilled' ? statusSettled.value.assessment : 'status_unavailable';
   const incidents: StatusIncident[] = statusSettled.status === 'fulfilled' ? statusSettled.value.incidents : [];
   const probe: ProbeOutcome = probeSettled.status === 'fulfilled' ? probeSettled.value : 'connect_failed';

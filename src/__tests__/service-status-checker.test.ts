@@ -13,6 +13,11 @@ import type { ServiceVerdict } from '../framework/service-status/types.js';
 import type { StatusAssessment, ProbeOutcome } from '../framework/service-status/types.js';
 import type { OfflineGate } from '../framework/offline-gate.js';
 
+// combineVerdict never accepts 'not_checked' (see checker.ts's
+// CheckedStatusAssessment) — it can only be produced on the OfflineGate
+// short-circuit path, which returns before combineVerdict is ever called.
+type CheckedStatusAssessment = Exclude<StatusAssessment, 'not_checked'>;
+
 const MAJOR_WITH_INCIDENT = {
   status: { indicator: 'major', description: 'Partial System Outage' },
   components: [{ name: 'API', status: 'partial_outage' }],
@@ -30,7 +35,7 @@ function jsonResponse(body: unknown, ok = true): Response {
 }
 
 describe('combineVerdict', () => {
-  const TABLE: Array<[StatusAssessment, ProbeOutcome, ServiceVerdict]> = [
+  const TABLE: Array<[CheckedStatusAssessment, ProbeOutcome, ServiceVerdict]> = [
     ['incident_reported', 'reachable', 'confirmed_incident'],
     ['incident_reported', 'connect_failed', 'confirmed_incident'],
     ['degraded_reported', 'reachable', 'degraded_upstream'],
@@ -116,6 +121,24 @@ describe('checkService', () => {
     expect(report.probe).toBe('skipped');
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(probeImpl).not.toHaveBeenCalled();
+  });
+
+  it('offline per OfflineGate: statusAssessment is not_checked, distinct from status_unavailable', async () => {
+    // A machine-readable consumer (crisismode down --json) filtering on
+    // statusAssessment must be able to tell "we didn't check anything
+    // because this machine is offline" apart from "their status page is
+    // flaky" (status_unavailable) — the two mean very different things.
+    const fetchImpl = vi.fn(async () => jsonResponse({}));
+    const probeImpl = vi.fn(async (): Promise<ProbeOutcome> => 'reachable');
+    const offlineGate: OfflineGate = async () => ({ verdict: 'network', explanation: 'no route to host' });
+
+    const report = await checkService(
+      { id: 'github' },
+      { fetchImpl, probeImpl, offlineGate },
+    );
+
+    expect(report.statusAssessment).toBe('not_checked');
+    expect(report.statusAssessment).not.toBe('status_unavailable');
   });
 
   it('operational but unreachable: down_for_you, hedged wording pointing at the user side', async () => {
