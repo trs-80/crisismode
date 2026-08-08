@@ -271,6 +271,7 @@ crisismode diagnose                   # Health check + AI-powered diagnosis (rea
 crisismode recover                    # Full recovery flow with plain-English AI summaries
 crisismode status                     # Quick health probe
 crisismode triage                     # Is it me, my network, or them? Offline localization — exits 1 when the cause is this machine or its network
+crisismode down [<service>...]        # Is it down for everyone, or just me? Bare invocation checks the config's services: list — exits 1 if anything looks down, 2 on bad usage
 crisismode ask "<question>"           # Natural language AI diagnosis
 crisismode ask                        # Interactive diagnostic REPL
 crisismode demo                       # Simulator demo mode
@@ -348,6 +349,39 @@ crisismode recover --target my-db --json | jq 'select(.type == "diagnosis")'
 # Extract just the plan steps
 crisismode recover --target my-db --json | jq 'select(.type == "plan") | .plan.steps'
 ```
+
+### Third-party service checks (`down`)
+
+`crisismode down` checks third-party dependencies (Stripe, GitHub, Vercel, an LLM provider, ...) against two separate facts: what the provider's own status page reports, and whether this machine can reach it — a status-page hiccup is never reported as an outage. Read-only (escalation level 2: Diagnose).
+
+Exit codes: `0` nothing checked looks like a problem, `1` at least one service does, `2` the command itself was called wrong (an unrecognized flag — the only CrisisMode command that does this).
+
+Check specific services ad hoc — catalog ids (`stripe`, `github`, `vercel`, `netlify`, `supabase`, `cloudflare`, `npm`, `twilio`, `sendgrid`, `render`, `fly`, `upstash`), aliases (`flyio` → `fly`), raw domains (reachability only, no known status page), or `anthropic`/`openai` (routed through the LLM Provider agent's own status source):
+
+```bash
+crisismode down stripe github
+```
+
+```
+  ✅ Stripe (healthy)
+      Stripe is healthy and reachable.
+  ✅ GitHub (healthy)
+      GitHub is healthy and reachable.
+```
+
+Or configure a standing list in `crisismode.yaml` and run `crisismode down` with no arguments. A `services:` list is valid on its own — no `targets:` block required:
+
+```yaml
+apiVersion: crisismode/v1
+kind: SiteConfig
+metadata:
+  name: my-stack
+services:
+  - stripe
+  - example.com
+```
+
+Each `services:` entry is a catalog id/alias, a raw domain (reachability-only — no known status page, so a `down` verdict there means "can't reach it," not "provider incident"), or `{ host, port }` for a non-default port.
 
 ## Evidence Bundles
 

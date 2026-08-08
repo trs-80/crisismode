@@ -75,6 +75,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `recover` | Full recovery flow with execution planning |
 | `status` | Quick health probe |
 | `triage` | Offline localization: is the problem this machine, its network, or the remote services? (exit 1 on local/network/mixed) |
+| `down` | Is it down for everyone, or just me? Ad-hoc third-party service check (Stripe, GitHub, an LLM provider, ...); bare invocation uses the config's `services:` list (exit 0/1, 2 on bad usage) |
 | `ask` | Natural language AI diagnosis |
 | `demo` | Simulator demo mode |
 | `init` | Generate `crisismode.yaml` configuration |
@@ -196,6 +197,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/framework/triage.ts` | Offline triage — layered localization and verdict synthesis |
 | `src/framework/triage-probes.ts` | Node implementations of the triage probes (built-ins only) |
 | `src/cli/commands/triage.ts` | `crisismode triage` command and exit-code contract |
+| `src/framework/service-status/` | Third-party service status checker — combines a provider's status page with a reachability probe into one verdict, never conflating the two; catalog of known services (`catalog.ts`) and Statuspage v2 parsing (`statuspage.ts`); consumed by `down`, the service-status agent, and triage enrichment |
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
 | `src/cli/index.ts` | Unified CLI entry point |
@@ -226,6 +228,7 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/agent/aws-rds/` | AWS RDS control-plane health, metrics, reachability, and backup agent |
 | `src/agent/iac-drift/` | Terraform drift detection agent (intended vs. observed) |
 | `src/agent/vector-store/` | Managed vector store (Pinecone, Upstash Vector) reachability agent — maturity `simulator_only`: neither provider has been live-validated against a real account; the invalid-key rejection and secret-redaction paths were live-checked against the real Pinecone API, Upstash was exercised only in simulator/mocked tests |
+| `src/agent/service-status/` | Third-party service status agent — scans the config's `services:` list in `scan`/`watch`; maturity `live_validated` (all 12 catalog entries passed live validation) |
 | `src/config/builtin-agents.ts` | Built-in agent registration |
 | `src/config/agent-registry.ts` | Global agent registry |
 | `src/integrations/` | External integrations (GitHub, Sentry) |
