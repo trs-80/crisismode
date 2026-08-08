@@ -132,6 +132,17 @@ describe('services config', () => {
       expect(result.config.services).toEqual(['github']);
     });
 
+    it('normalizes targets to [] on a services-only config (not undefined)', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        services: ['github'],
+      });
+      const result = loadConfig({ configPath: filePath });
+      expect(result.config.targets).toEqual([]);
+    });
+
     it('errors when neither targets nor services are declared, naming both keys', () => {
       const filePath = writeYamlConfig(tmpDir, {
         apiVersion: 'crisismode/v1',

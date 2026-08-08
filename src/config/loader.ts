@@ -145,6 +145,8 @@ function loadConfigFile(filePath: string): SiteConfig {
     validateServices(config.services);
   }
 
+  config.targets = config.targets ?? [];
+
   return config as unknown as SiteConfig;
 }
 
