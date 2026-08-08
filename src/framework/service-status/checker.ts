@@ -30,10 +30,10 @@ export interface ServiceTarget {
   host?: string;
   port?: number;
   /**
-   * Pre-resolved catalog entry, bypassing `resolveCatalogEntry(id)`. For
-   * callers with a status source that isn't in `SERVICE_CATALOG` (e.g.
-   * `crisismode down`'s llm-provider routing) — never set by
-   * `resolveTarget()` or any existing caller, so this is purely additive.
+   * Pre-resolved catalog entry, bypassing `resolveCatalogEntry(id)`. Set by
+   * `resolveTarget()` on a catalog hit (skipping a redundant second lookup)
+   * and by callers with a status source that isn't in `SERVICE_CATALOG`
+   * (e.g. `crisismode down`'s llm-provider routing).
    */
   entry?: CatalogEntry;
 }
