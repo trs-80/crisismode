@@ -39,7 +39,13 @@ import { runScan } from '../cli/commands/scan.js';
 import { ConfigValidationError } from '../config/loader.js';
 
 // The reviewer's exact repro shape from the Task 6 review (Finding 1): a
-// redis-kind target and a services: entry that both resolve to "github".
+// redis-kind target and a services: entry that both resolve to the same
+// name. Uses an unregistered, .invalid-TLD name rather than "github" so
+// this suite never touches the network: "svc.test.invalid" has no catalog
+// entry (no status-page fetch) and .invalid (RFC 2606) fails DNS instantly
+// if a probe were ever reached — it collides on a purely literal name match
+// (validateNoServiceTargetCollision, config/loader.ts), so the catalog
+// membership of the name is irrelevant to the collision behavior under test.
 const COLLIDING_CONFIG_YAML = [
   'apiVersion: crisismode/v1',
   'kind: SiteConfig',
@@ -47,13 +53,13 @@ const COLLIDING_CONFIG_YAML = [
   '  name: test-site',
   '  environment: development',
   'targets:',
-  '  - name: github',
+  '  - name: svc.test.invalid',
   '    kind: redis',
   '    primary:',
   '      host: localhost',
   '      port: 6379',
   'services:',
-  '  - github',
+  '  - svc.test.invalid',
   '',
 ].join('\n');
 
@@ -71,7 +77,7 @@ const NON_COLLIDING_CONFIG_YAML = [
   '      host: simulator',
   '      port: 6379',
   'services:',
-  '  - github',
+  '  - svc.test.invalid',
   '',
 ].join('\n');
 
@@ -108,6 +114,6 @@ describe('runScan — services/targets name collision surfaces to the caller', (
 
     const services = result.findings.map((f) => f.service);
     expect(services.some((s) => s.includes('redis') && s.includes('my-redis'))).toBe(true);
-    expect(services.some((s) => s.includes('service-status') && s.includes('github'))).toBe(true);
+    expect(services.some((s) => s.includes('service-status') && s.includes('svc.test.invalid'))).toBe(true);
   });
 });

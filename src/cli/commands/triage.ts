@@ -17,11 +17,23 @@ import { getEscalationInfo } from '../../framework/escalation.js';
 import { getOutputMode, jsonOut, outputOptions, printBanner, printWarning } from '../output.js';
 import { triageVerdictColor } from '../status-presentation.js';
 import { discoverStack } from '../autodiscovery.js';
-import { ConfigNotFoundError, loadConfigWithDetection } from '../../config/loader.js';
+import { ConfigNotFoundError, ConfigValidationError, loadConfigWithDetection } from '../../config/loader.js';
+import { resolveTarget } from '../../framework/service-status/catalog.js';
 import type { TriageLayerStatus, TriageReport, TriageTarget, TriageVerdict } from '../../framework/triage.js';
+import type { ServiceConfigEntry } from '../../config/schema.js';
+// Type-only: a local/network triage run must never pull in checker.ts's
+// runtime graph (node:dns/promises, triage-probes) just to name its type —
+// the real implementation is dynamic-imported in enrichWithServiceStatus,
+// only on the remote/mixed path that actually needs it.
+import type { checkServices, ServiceTarget } from '../../framework/service-status/checker.js';
+import type { ServiceStatusReport } from '../../framework/service-status/types.js';
 
 export interface TriageCommandOptions {
   configPath?: string | undefined;
+  /** Injection seam for tests; defaults to the real checker.ts implementation, dynamic-imported. */
+  checkServices?: typeof checkServices;
+  /** Injection seam for tests; defaults to reading `services:` from the resolved config. */
+  loadServices?: () => ServiceConfigEntry[];
 }
 
 /** Exhaustive: adding a layer status must fail compilation here. */
@@ -104,8 +116,11 @@ export async function resolveTriageTargets(configPath?: string): Promise<TriageT
       .filter((t) => t.primary !== undefined)
       .map((t) => ({ host: t.primary!.host, port: t.primary!.port, label: t.name }));
   } catch (err) {
-    // An explicitly named config file that doesn't exist is a user error.
-    if (err instanceof ConfigNotFoundError) throw err;
+    // A config file that doesn't exist, or one that exists but is invalid
+    // (including the services:/targets: name-collision check), is a user
+    // error — propagate it rather than silently falling through to
+    // autodiscovery (mirrors down.ts's resolveDownTargets for the same case).
+    if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
   }
   for (const target of configured) {
     byEndpoint.set(`${target.host}:${target.port}`, target);
@@ -133,20 +148,103 @@ export async function resolveTriageTargets(configPath?: string): Promise<TriageT
   return all;
 }
 
+/** Shared status-page fetch deadline for the enrichment pass below. */
+const SERVICE_STATUS_TIMEOUT_MS = 1500;
+
+/**
+ * Reads `services:` from the resolved config, mirroring down.ts's
+ * resolveDownTargets for the same load. A config that fails to load here
+ * would already have failed identically in resolveTriageTargets above
+ * (same configPath, same loader) and thrown before this ever runs; the
+ * error handling exists for defense, not because it is expected to fire.
+ */
+function defaultLoadServices(configPath?: string): ServiceConfigEntry[] {
+  try {
+    const { config } = loadConfigWithDetection(configPath !== undefined ? { configPath } : {});
+    return config?.services ?? [];
+  } catch (err) {
+    if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
+    return [];
+  }
+}
+
+/** No-op reachability probe — triage has already probed connectivity (layer 6); this pass only fetches status pages. */
+async function noopProbe(): Promise<'reachable'> {
+  return 'reachable';
+}
+
+/** One line per service whose status page reports something other than operational. Pure. */
+export function serviceStatusEnrichmentLines(reports: readonly ServiceStatusReport[]): string[] {
+  const lines: string[] = [];
+  for (const report of reports) {
+    const title = report.incidents[0]?.title;
+    if (report.statusAssessment === 'incident_reported') {
+      lines.push(
+        title
+          ? `${report.label}'s status page reports an incident: ${title}`
+          : `${report.label}'s status page reports an incident.`,
+      );
+    } else if (report.statusAssessment === 'degraded_reported') {
+      lines.push(
+        title
+          ? `${report.label}'s status page reports degraded performance: ${title}`
+          : `${report.label}'s status page reports degraded performance.`,
+      );
+    }
+  }
+  return lines;
+}
+
+/**
+ * Enrichment at the command layer, not in framework/triage.ts (which stays
+ * pure): when the verdict points away from this machine, name which
+ * configured service's status page explains why. `checkServices` is
+ * dynamic-imported so a plain local/network/healthy triage run — the common
+ * case — never pulls in checker.ts's heavier runtime graph.
+ */
+async function enrichWithServiceStatus(
+  services: readonly ServiceConfigEntry[],
+  checkServicesImpl?: typeof checkServices,
+): Promise<string[]> {
+  const impl = checkServicesImpl ?? (await import('../../framework/service-status/checker.js')).checkServices;
+  const targets: ServiceTarget[] = services.map((entry) => resolveTarget(entry));
+  const reports = await impl(targets, {
+    // Triage already probed reachability (layer 6/targets) — this pass is
+    // status-fetch only, per the spec's honesty rule against re-asserting a
+    // fact already gathered.
+    probeImpl: noopProbe,
+    statusTimeoutMs: SERVICE_STATUS_TIMEOUT_MS,
+  });
+  return serviceStatusEnrichmentLines(reports);
+}
+
 export async function runTriageCommand(opts: TriageCommandOptions = {}): Promise<number> {
   const targets = await resolveTriageTargets(opts.configPath);
   const report = await runTriage({ targets });
 
+  // Never for local/network/healthy — only remote/mixed point away from this
+  // machine, where naming the culprit service is useful rather than noise.
+  let serviceLines: string[] = [];
+  if (report.verdict === 'remote' || report.verdict === 'mixed') {
+    const loadServices = opts.loadServices ?? (() => defaultLoadServices(opts.configPath));
+    const services = loadServices();
+    if (services.length > 0) {
+      serviceLines = await enrichWithServiceStatus(services, opts.checkServices);
+    }
+  }
+
   const mode = getOutputMode();
   if (mode === 'machine') {
-    jsonOut('triage', report);
+    jsonOut('triage', serviceLines.length > 0 ? { ...report, serviceStatusNotes: serviceLines } : report);
   } else if (mode === 'pipe') {
     for (const line of renderTriagePipe(report)) console.log(line);
+    for (const line of serviceLines) console.log(`service-status\t${line}`);
   } else {
     printBanner();
     // console.log, not printInfo — printInfo dims every line (chalk.dim),
     // which would gray out the explanation and next-step lines below.
     for (const line of renderTriageReport(report)) console.log(line);
+    for (const line of serviceLines) console.log(line);
   }
 
   const code = triageExitCode(report.verdict);

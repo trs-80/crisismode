@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import chalk from 'chalk';
-import { renderTriagePipe, renderTriageReport, runTriageCommand, triageExitCode } from '../cli/commands/triage.js';
+import { renderTriagePipe, renderTriageReport, resolveTriageTargets, runTriageCommand, triageExitCode } from '../cli/commands/triage.js';
 import { configure, setOutputOptions } from '../cli/output.js';
+import { runTriage } from '../framework/triage.js';
+import { ConfigValidationError } from '../config/loader.js';
 import type * as TriageFramework from '../framework/triage.js';
 import type { TriageReport } from '../framework/triage.js';
+import type { ServiceStatusReport } from '../framework/service-status/types.js';
+import type { CheckerDeps, ServiceTarget } from '../framework/service-status/checker.js';
 
 // The runTriageCommand human-output test below exercises the command for
 // real. Autodiscovery reads the real filesystem and environment, so it is
@@ -162,6 +168,140 @@ describe('runTriageCommand human output', () => {
     expect(reportLines).toEqual(expected);
     expect(reportLines).toContain(commandReport.explanation);
     expect(reportLines).toContain(`Next: ${commandReport.nextStep}`);
+  });
+});
+
+describe('runTriageCommand service-status enrichment', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let lines: string[];
+
+  function fakeServiceReport(overrides: Partial<ServiceStatusReport>): ServiceStatusReport {
+    return {
+      id: 'github',
+      label: 'GitHub',
+      source: 'catalog',
+      host: 'api.github.com',
+      port: 443,
+      statusAssessment: 'operational',
+      incidents: [],
+      probe: 'reachable',
+      verdict: 'healthy',
+      detail: 'GitHub is healthy and reachable.',
+      checkedAt: '2026-08-08T00:00:00.000Z',
+      durationMs: 5,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    configure({ json: false, noColor: false, mode: 'human' });
+    lines = [];
+    logSpy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    });
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    configure({ json: false, noColor: false, mode: 'human' });
+  });
+
+  function loggedOutput(): string {
+    return lines.join('\n');
+  }
+
+  it('appends a status-page incident line for a remote verdict with a configured service, without touching the verdict or exit code', async () => {
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'remote' });
+    const fakeCheckServices = vi.fn(async (_targets: ServiceTarget[], _deps?: CheckerDeps) => [
+      fakeServiceReport({
+        statusAssessment: 'incident_reported',
+        incidents: [{ title: 'Elevated error rates', impact: 'major' }],
+        verdict: 'confirmed_incident',
+        detail: "GitHub is down for everyone — they've confirmed an incident.",
+      }),
+    ]);
+
+    const exitCode = await runTriageCommand({ loadServices: () => ['github'], checkServices: fakeCheckServices });
+    const withServicesOutput = loggedOutput();
+
+    expect(withServicesOutput).toContain("GitHub's status page reports an incident:");
+    expect(withServicesOutput).toContain('Elevated error rates');
+    expect(fakeCheckServices).toHaveBeenCalledTimes(1);
+    // Shared 1500ms deadline, no-op probe — triage already probed reachability upstream.
+    expect(fakeCheckServices.mock.calls[0]?.[1]).toMatchObject({ statusTimeoutMs: 1500 });
+    const probeImpl = fakeCheckServices.mock.calls[0]?.[1]?.probeImpl;
+    await expect(probeImpl?.('irrelevant-host', 443, 1500)).resolves.toBe('reachable');
+
+    // Verdict line and exit code must be unchanged vs. a no-services run of the same report.
+    logSpy.mockClear();
+    lines = [];
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'remote' });
+    const noServicesExitCode = await runTriageCommand({ loadServices: () => [] });
+    const noServicesOutput = loggedOutput();
+
+    expect(exitCode).toBe(noServicesExitCode);
+    expect(withServicesOutput).toContain('Verdict: remote');
+    expect(noServicesOutput).toContain('Verdict: remote');
+  });
+
+  it('never calls the checker for a local verdict', async () => {
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'local' });
+    const fakeCheckServices = vi.fn(async () => []);
+
+    await runTriageCommand({ loadServices: () => ['github'], checkServices: fakeCheckServices });
+
+    expect(fakeCheckServices).not.toHaveBeenCalled();
+  });
+
+  it('adds no extra lines when every configured service is operational', async () => {
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'mixed' });
+    const fakeCheckServices = vi.fn(async () => [fakeServiceReport({})]);
+
+    await runTriageCommand({ loadServices: () => ['github'], checkServices: fakeCheckServices });
+
+    expect(loggedOutput()).not.toContain('status page reports');
+  });
+});
+
+describe('resolveTriageTargets — services/targets name collision surfaces to the caller', () => {
+  // Task 6 review, rider 1: resolveTriageTargets used to catch only
+  // ConfigNotFoundError, so a config that exists but fails validation
+  // (including the services:/targets: name-collision check) was silently
+  // swallowed and triage fell through to autodiscovery instead — mirrors
+  // the same fix already made in scan.ts/down.ts (see
+  // scan-config-collision.test.ts for the equivalent runScan-level test).
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'crisismode-triage-collision-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects with ConfigValidationError naming the collision, instead of silently probing auto-detected targets', async () => {
+    const configPath = join(tmpDir, 'crisismode.yaml');
+    const collidingConfigYaml = [
+      'apiVersion: crisismode/v1',
+      'kind: SiteConfig',
+      'metadata:',
+      '  name: test-site',
+      '  environment: development',
+      'targets:',
+      '  - name: svc.test.invalid',
+      '    kind: redis',
+      '    primary:',
+      '      host: localhost',
+      '      port: 6379',
+      'services:',
+      '  - svc.test.invalid',
+      '',
+    ].join('\n');
+    writeFileSync(configPath, collidingConfigYaml, 'utf-8');
+
+    await expect(resolveTriageTargets(configPath)).rejects.toThrow(ConfigValidationError);
+    await expect(resolveTriageTargets(configPath)).rejects.toThrow(/collides/);
   });
 });
 
