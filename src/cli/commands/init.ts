@@ -11,9 +11,68 @@ import { generateTemplate } from '../../config/init.js';
 import { printSuccess, printInfo } from '../output.js';
 import type { CheckPluginManifest } from '../../framework/check-plugin.js';
 
-export async function runInit(outputPath?: string, agentName?: string): Promise<void> {
-  if (agentName) {
-    await scaffoldCheckPlugin(agentName);
+export interface InitOptions {
+  /**
+   * `--plugin <name>` — canonical flag: scaffold a check plugin. Typed loosely
+   * because the CLI parses with `strict: false`, where a valueless `--plugin`
+   * arrives as `true` rather than a name.
+   */
+  plugin?: string | boolean | undefined;
+  /**
+   * `--agent <name>` — deprecated alias for `--plugin`, kept working for
+   * existing users. It never scaffolded a RecoveryAgent (`src/agent/*`); the
+   * name misled about what the command creates.
+   */
+  agent?: string | boolean | undefined;
+}
+
+/** Plugin names become a directory under `checks/`, so keep them path-safe. */
+const PLUGIN_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function pluginNameFrom(flag: 'plugin' | 'agent', value: string | boolean | undefined): string | undefined {
+  if (value === undefined || value === false) return undefined;
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`--${flag} requires a plugin name, e.g. crisismode init --${flag} my-check`);
+  }
+  if (!PLUGIN_NAME_PATTERN.test(value)) {
+    throw new Error(
+      `Invalid plugin name "${value}". Use letters, digits, ".", "_", or "-" — the name becomes a directory under checks/.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Deprecation notices go to stderr, not stdout: they describe how the command
+ * was invoked rather than what it produced, so they stay out of piped output
+ * and are never swallowed the way `printWarning` is in machine mode.
+ */
+function printDeprecation(msg: string): void {
+  process.stderr.write(`  ! ${msg}\n`);
+}
+
+export async function runInit(outputPath?: string, options: InitOptions = {}): Promise<void> {
+  const plugin = pluginNameFrom('plugin', options.plugin);
+  const agent = pluginNameFrom('agent', options.agent);
+
+  if (agent) {
+    // `--plugin` wins when both are given — the canonical flag is the one the
+    // user is being pointed at, so honoring it keeps the two invocations from
+    // disagreeing about which name gets scaffolded.
+    if (plugin && plugin !== agent) {
+      printDeprecation(
+        `--agent is deprecated; scaffolding --plugin ${plugin} and ignoring --agent ${agent}.`,
+      );
+    } else {
+      printDeprecation(
+        `--agent is deprecated and will be removed in a future release. Use: crisismode init --plugin ${agent}`,
+      );
+    }
+  }
+
+  const pluginName = plugin ?? agent;
+  if (pluginName) {
+    await scaffoldCheckPlugin(pluginName);
     return;
   }
 
