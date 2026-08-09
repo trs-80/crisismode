@@ -120,12 +120,19 @@ describe('callClaude', () => {
 
   it('throws AiTimeoutError when the timeout fires', async () => {
     // Reject the way the real SDK does once the signal we passed is aborted.
+    // `callClaude` awaits the dynamic SDK import before calling create(), so a
+    // deadline this short can already have fired by the time we are invoked —
+    // the real SDK rejects immediately in that case, and so must this stub, or
+    // the promise never settles and the test hangs.
     createMock.mockImplementation(
       (_params: unknown, options: { signal: AbortSignal }) =>
         new Promise((_resolve, reject) => {
-          options.signal.addEventListener('abort', () => {
-            reject(new APIUserAbortError({}));
-          });
+          const rejectAsSdkAbort = () => reject(new APIUserAbortError({}));
+          if (options.signal.aborted) {
+            rejectAsSdkAbort();
+            return;
+          }
+          options.signal.addEventListener('abort', rejectAsSdkAbort, { once: true });
         }),
     );
 
