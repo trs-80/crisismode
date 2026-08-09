@@ -127,6 +127,26 @@ describe('crisismode init — plugin scaffolding flags', () => {
     expect(existsSync(join(tmpDir, 'checks'))).toBe(false);
   });
 
+  // `false` is not something the parser can produce — `--plugin`/`--agent` are
+  // registered as string options with no default, so an omitted flag is
+  // `undefined`. Treating `false` as "omitted" would let a caller with a bad
+  // value quietly get a crisismode.yaml instead of a usage error.
+  it('rejects plugin: false as bad input rather than treating it as absent', async () => {
+    await expect(runInit(undefined, { plugin: false })).rejects.toThrow(
+      'crisismode init --plugin my-check',
+    );
+    expect(existsSync(join(tmpDir, 'checks'))).toBe(false);
+    expect(existsSync(join(tmpDir, 'crisismode.yaml'))).toBe(false);
+  });
+
+  it('rejects agent: false as bad input rather than treating it as absent', async () => {
+    await expect(runInit(undefined, { agent: false })).rejects.toThrow(
+      'crisismode init --agent my-check',
+    );
+    expect(existsSync(join(tmpDir, 'checks'))).toBe(false);
+    expect(existsSync(join(tmpDir, 'crisismode.yaml'))).toBe(false);
+  });
+
   it('rejects a plugin name that would escape checks/', async () => {
     await expect(runInit(undefined, { plugin: '../../evil' })).rejects.toThrow('Invalid plugin name');
     expect(existsSync(join(tmpDir, 'checks'))).toBe(false);
@@ -165,6 +185,27 @@ describe('crisismode init — CLI flag registration', () => {
     const { values, positionals } = parseArgs({ ...parseOpts, args: ['--agent', 'legacy-check'] });
     expect(values.agent).toBe('legacy-check');
     expect(positionals).toEqual([]);
+  });
+
+  // The reachable value set is what licenses runInit treating *only* `undefined`
+  // as "flag omitted": string options carry no default, so absence is
+  // `undefined`, a valueless flag is `true`, and `--no-plugin` lands on its own
+  // key. `false` is not reachable, so rejecting it cannot break an ordinary run.
+  it('yields undefined, not false, when the flags are omitted', () => {
+    const { values } = parseArgs({ ...parseOpts, args: [] });
+    expect(values.plugin).toBeUndefined();
+    expect(values.agent).toBeUndefined();
+  });
+
+  it('yields true, not false, for a valueless flag', () => {
+    expect(parseArgs({ ...parseOpts, args: ['--plugin'] }).values.plugin).toBe(true);
+    expect(parseArgs({ ...parseOpts, args: ['--agent'] }).values.agent).toBe(true);
+  });
+
+  it('never routes --no-plugin onto the plugin value', () => {
+    const { values } = parseArgs({ ...parseOpts, args: ['--no-plugin', '--no-agent'] });
+    expect(values.plugin).toBeUndefined();
+    expect(values.agent).toBeUndefined();
   });
 
   it('registers both flags in the real parseArgs config', () => {
