@@ -1,8 +1,8 @@
-# Remediation guide walk-through — 2026-08-07
+# Remediation guide walk-through — 2026-08-08
 
 ## What this is
 
-CrisisMode ships 16 remediation guides that tell users exactly what to click in a provider console. This checklist verifies each guide against the real console, one platform at a time. Total effort is roughly 48 minutes, but you do not need to do it in one sitting — each platform section stands alone, and progress in this file is never lost.
+CrisisMode ships 17 remediation guides that tell users exactly what to click in a provider console. This checklist verifies each guide against the real console, one platform at a time. Total effort is roughly 51 minutes, but you do not need to do it in one sitting — each platform section stands alone, and progress in this file is never lost.
 
 If a click-path has drifted, the person who finds out is a user in the middle of an incident, following directions that no longer match their screen — catching it here is the whole point. A test fails the build when any guide goes 12 months unverified, so this comes due whether or not you schedule it.
 
@@ -20,7 +20,7 @@ If a click-path has drifted, the person who finds out is a user in the middle of
 5. When you have done as much as you want, run:
 
    ```bash
-   pnpm run guides:apply docs/guide-verification/2026-08-07-walkthrough.md
+   pnpm run guides:apply docs/guide-verification/2026-08-08-walkthrough.md
    ```
 
    Every guide marked MATCHES gets its `verifiedOn` date stamped automatically, and its line here
@@ -401,6 +401,30 @@ aws rds describe-db-instances --db-instance-identifier <instance> (then, if stop
 ```
 
 **Verdict:** PENDING <!-- guide:aws-rds-instance-not-available -->
+
+---
+
+## Third-party status pages — 1 guide, ~3 min
+
+> No login required — these steps walk a public status page, not an account-specific console.
+
+### 1. Confirm and respond to a third-party dependency incident
+
+Guide id: `dependency-incident-response` · last verified 2026-08-08 · defined in `src/framework/guidance/guides/service-status.ts`
+
+**Steps users are told to follow:**
+
+1. Open the status page for <service> (e.g. https://status.<provider>.com) and confirm it lists an incident matching what CrisisMode observed.
+2. Subscribe to updates on that status page (email, RSS, or a Slack/webhook integration) so the team hears about resolution without polling.
+3. Do not ship debugging changes, redeploys, or config edits against your own systems while the incident is confirmed upstream — nothing in your app or infrastructure caused it, and changes made now are likely to get blamed for the outage's after-effects.
+4. Check your app's error handling for calls to <service>: does it retry with backoff, fail gracefully, and surface a clear error, rather than crashing or hanging the request?
+5. Note the incident-history URL for <service> (e.g. https://status.<provider>.com/history) so a future occurrence can be checked against this one.
+
+**Users are told to expect:** The provider's status page confirms resolution, and CrisisMode's next scan reports the status-page and reachability checks for <service> healthy again.
+
+**Caution shown to users:** This is the provider's incident, not yours to fix — resist the urge to redeploy or roll back your own service while it is open.
+
+**Verdict:** PENDING <!-- guide:dependency-incident-response -->
 
 ---
 
