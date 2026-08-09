@@ -30,7 +30,7 @@ The target user's stack leans on third-party services they do not operate — St
 
 ### Shared module
 
-```
+```text
 src/framework/service-status/
   catalog.ts        # SERVICE_CATALOG — curated known services
   checker.ts        # checkService()/checkServices() — probes + status fetch + verdict
@@ -76,7 +76,7 @@ Two independent facts per service, never conflated (honesty foundation):
 - `status_unavailable` — fetch failed/timed out/unparseable. **Explicitly not evidence the service is down.**
 - `no_status_source` — raw domain with no catalog entry.
 
-**Fact 2 — reachability from here** (`probeResult`): DNS resolve of the probe host, then TCP+TLS connect (no HTTP request body; connect-level only, mirroring triage's target probe). `reachable` / `dns_failed` / `connect_failed`. All timing via `performance.now()` (series contract).
+**Fact 2 — reachability from here** (`probeResult`): DNS resolve of the probe host, then a plain TCP connect — no TLS handshake (connect-level only, mirroring triage's target probe; cert problems are the tls agent's job). This is a deliberate plan-level refinement of an earlier TCP+TLS draft — see `docs/superpowers/plans/2026-08-08-service-status.md`'s "Plan-level refinements" note. `reachable` / `dns_failed` / `connect_failed`. All timing via `performance.now()` (series contract).
 
 **Combined verdict** (plain language shown in parentheses):
 

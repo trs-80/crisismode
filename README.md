@@ -362,7 +362,7 @@ Check specific services ad hoc — catalog ids (`stripe`, `github`, `vercel`, `n
 crisismode down stripe github
 ```
 
-```
+```text
   ✅ Stripe (healthy)
       Stripe is healthy and reachable.
   ✅ GitHub (healthy)
