@@ -16,7 +16,7 @@
 import { createInterface } from 'node:readline';
 import { sanitizeInput } from '../../framework/ai-diagnosis.js';
 import { getNetworkProfile } from '../../framework/network-profile.js';
-import { printBanner, printInfo, printWarning } from '../output.js';
+import { getOutputMode, jsonOut, printBanner, printInfo, printWarning } from '../output.js';
 import { missingEnvVar } from '../errors.js';
 import { defaultAiModel } from '../../framework/ai-model.js';
 import { callClaudeDetailed } from '../../framework/ai-client.js';
@@ -90,6 +90,34 @@ Guidelines:
 Supported systems: PostgreSQL, Redis, etcd, Kafka, Kubernetes, Ceph, Flink.
 Cross-system awareness: consider cascade failures, shared root causes, and upstream/downstream dependencies.`;
 
+// ── Machine output ──
+
+/**
+ * One JSONL record per answer, in the CLI's standard `{ type, ... }` shape.
+ *
+ * `ask` used to print the answer with a bare `console.log` and route the
+ * truncation notice through `printWarning`/`printInfo`, both of which return
+ * early in machine mode. A `--json` consumer therefore received a partial
+ * answer with nothing marking it as partial — the one caller least able to
+ * notice, since it cannot read the prose and judge.
+ *
+ * `truncated` is a field rather than a warning because that is the only form a
+ * machine consumer can act on: `.truncated` is checkable, a suppressed human
+ * sentence is not. `answer` carries the partial text unchanged — it is still
+ * the most useful thing we have — but never on its own.
+ */
+function emitAskRecord(
+  question: string,
+  result: { response: string; source: 'ai' | 'fallback'; truncated: boolean },
+): void {
+  jsonOut('ask', {
+    question,
+    answer: result.response,
+    source: result.source,
+    truncated: result.truncated,
+  });
+}
+
 // ── Single-shot mode (backward compatible) ──
 
 export async function runAsk(question: string): Promise<void> {
@@ -99,11 +127,22 @@ export async function runAsk(question: string): Promise<void> {
     throw missingEnvVar('ANTHROPIC_API_KEY', 'required for AI-powered diagnosis');
   }
 
-  printInfo(`Question: ${question}`);
-  console.log('');
+  const machine = getOutputMode() === 'machine';
+
+  if (!machine) {
+    printInfo(`Question: ${question}`);
+    console.log('');
+  }
 
   const { universalAiDiagnosis } = await import('../../framework/ai-diagnosis-universal.js');
   const result = await universalAiDiagnosis({ question });
+
+  // Machine mode emits the record instead of the prose: the blank lines and the
+  // bare answer below would otherwise sit in the stream as non-JSON lines.
+  if (machine) {
+    emitAskRecord(question, result);
+    return;
+  }
 
   if (result.source === 'ai') {
     console.log(result.response);
@@ -132,17 +171,25 @@ export async function runAskRepl(): Promise<void> {
     throw missingEnvVar('ANTHROPIC_API_KEY', 'required for interactive diagnosis');
   }
 
+  const machine = getOutputMode() === 'machine';
+
   const profile = getNetworkProfile();
   if (profile && profile.internet.status === 'unavailable') {
-    printWarning('No internet connectivity — AI diagnosis requires network access.');
+    const message = 'No internet connectivity — AI diagnosis requires network access.';
+    // Same reason as the truncation record: printWarning is a no-op in machine
+    // mode, so a --json REPL would otherwise exit having emitted nothing at all.
+    if (machine) jsonOut('error', { message });
+    else printWarning(message);
     return;
   }
 
-  printInfo('Interactive diagnosis session. Type your question, or:');
-  printInfo('  /context   — show accumulated context');
-  printInfo('  /clear     — reset conversation history');
-  printInfo('  /exit      — end session');
-  console.log('');
+  if (!machine) {
+    printInfo('Interactive diagnosis session. Type your question, or:');
+    printInfo('  /context   — show accumulated context');
+    printInfo('  /clear     — reset conversation history');
+    printInfo('  /exit      — end session');
+    console.log('');
+  }
 
   const ctx: ReplContext = {
     history: [],
@@ -154,7 +201,9 @@ export async function runAskRepl(): Promise<void> {
 
   const rl = createInterface({
     input: process.stdin,
-    output: process.stdout,
+    // No output stream in machine mode: readline would write "crisismode> " into
+    // the middle of the JSONL stream. Nothing else in this loop prints there.
+    output: machine ? undefined : process.stdout,
     prompt: 'crisismode> ',
     terminal: process.stdin.isTTY === true,
   });
@@ -183,18 +232,26 @@ export async function runAskRepl(): Promise<void> {
     // Send question to AI with conversation history
     try {
       const turn = await sendWithHistory(ctx, input);
-      console.log('');
-      console.log(turn.text);
-      console.log('');
-      if (turn.truncated) {
-        printWarning(
-          'This answer is cut off — it hit the response length limit, so the last point above is incomplete.',
-        );
-        printInfo('Type "continue" to pick up where it stopped, or ask something narrower.');
+      if (machine) {
+        // One record per exchange, same shape as single-shot: a REPL consumer
+        // reading JSONL gets `truncated` on the turn it belongs to.
+        emitAskRecord(input, { response: turn.text, source: 'ai', truncated: turn.truncated });
+      } else {
         console.log('');
+        console.log(turn.text);
+        console.log('');
+        if (turn.truncated) {
+          printWarning(
+            'This answer is cut off — it hit the response length limit, so the last point above is incomplete.',
+          );
+          printInfo('Type "continue" to pick up where it stopped, or ask something narrower.');
+          console.log('');
+        }
       }
     } catch (err) {
-      printWarning(`AI error: ${err instanceof Error ? err.message : String(err)}`);
+      const message = `AI error: ${err instanceof Error ? err.message : String(err)}`;
+      if (machine) jsonOut('error', { message });
+      else printWarning(message);
     }
 
     rl.prompt();
