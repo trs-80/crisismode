@@ -215,7 +215,7 @@ The rollback section is captured as free-text and included in the compiled plan'
 
 ## Complete Example
 
-```markdown
+````markdown
 ---
 name: "redis-memory-pressure"
 version: "1.0.0"
@@ -251,16 +251,22 @@ redis-cli info memory
 ### 3. Capture state
 - type: checkpoint
 
-### 4. Evict expired keys
+### 4. Reclaim keys already past their TTL
 - type: system_action
 - risk: routine
 - capability: cache.expiry.trigger
 - target: redis-primary
+- preserve: keyspace_before
 - precondition: "Redis is accepting commands"
 - success: "Memory usage below 85%"
 
 ```sh
-redis-cli --scan --pattern '*' | head -1000 | xargs redis-cli unlink
+# Bounded sample of the keyspace. Reading a key that is already past its TTL is
+# what makes Redis reclaim it; keys still inside their TTL, and keys with no TTL
+# at all, are read and left alone.
+redis-cli --scan --count 100 | head -n 1000 | while read -r key; do
+  redis-cli TTL "$key" > /dev/null
+done
 ```
 
 ### 5. Verify recovery
@@ -271,9 +277,21 @@ redis-cli --scan --pattern '*' | head -1000 | xargs redis-cli unlink
 
 ## Rollback
 
-If eviction causes cache miss storms:
-1. Monitor hit rate for 5 minutes
-2. If hit rate drops below 80%, alert the application team
-```
+Reclaiming already-expired keys is not reversible, and does not remove anything
+applications can still read. If memory stays above 85%:
+1. Escalate for `maxmemory` and eviction-policy tuning
+2. Watch the hit rate for 5 minutes before any further change
+````
+
+**Why step 4 is `routine`.** The command only reclaims keys Redis already considers
+expired, and it is bounded to a 1000-key sample, so it cannot cause a cache-miss
+storm. Deleting keys that have *not* expired — what
+`redis-cli --scan --pattern '*' | xargs redis-cli unlink` would do — is a different
+action: it drops live cache entries, so it belongs at `elevated` risk with
+`preserve` declared and a blast radius that admits the impact. That is exactly how
+the built-in Redis agent declares its aggressive-expiry step (`elevated`, with an
+`INFO keyspace` capture — see `src/agent/redis/agent.ts`). Risk labels are read
+under incident pressure; a mislabelled step is how a "routine" playbook takes out a
+cache.
 
 For more playbook examples, see the `playbooks/examples/` directory.

@@ -55,13 +55,17 @@ redis-cli DBSIZE
 ### 4. Clear expired keys
 - type: system_action
 - risk: routine
-- description: Force lazy expiration scan to reclaim memory from expired keys
+- description: Reclaim memory from keys already past their TTL by touching a bounded sample of the keyspace
 - target: redis-primary
 - capability: cache.expiry.trigger
 
 ```sh
-redis-cli DEBUG JMAP
-redis-cli SCAN 0 COUNT 10000
+# Reading a key that is already past its TTL is what makes Redis reclaim it
+# (passive expiration). Keys still inside their TTL, and keys with no TTL at all,
+# are read and left alone. Bounded to a 10000-key sample.
+redis-cli --scan --count 100 | head -n 10000 | while read -r key; do
+  redis-cli TTL "$key" > /dev/null
+done
 ```
 
 ### 5. Evaluate memory after cleanup

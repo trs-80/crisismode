@@ -37,7 +37,7 @@ crisismode
 `scan` is the default command, so bare `crisismode` and `crisismode scan` do the
 same thing.
 
-```
+```text
   Scanning for services...
   Detected services:
     ✓ postgresql at localhost:5432

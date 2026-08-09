@@ -40,7 +40,7 @@ npx tsx src/cli/index.ts scan        # run the CLI from source
 
 Check plugins are standalone shell scripts. No TypeScript needed.
 
-1. Scaffold with `crisismode init --agent <name>` (creates the directory,
+1. Scaffold with `crisismode init --plugin <name>` (creates the directory,
    `manifest.json`, and a stub `check.sh`), or create a directory in `checks/`
    by hand with a `manifest.json` and a `check.sh`
 2. Test with `crisismode scan`
@@ -86,10 +86,15 @@ best-effort and labels its findings as leads rather than conclusions in operator
 output. That default is the point.
 
 Only claim `live_validated` when the agent has actually been run against a real
-deployment of its target system, and say in the PR description what you ran it
-against. "The live client compiles" is not validation. If you validated diagnosis
-in dry-run but never executed a mutating plan, `dry_run_only` is the accurate
-label.
+deployment of its target system and diagnosed it correctly, and say in the PR
+description what you ran it against. "The live client compiles" is not validation.
+The label describes *diagnosis*: a diagnosis-only agent can be `live_validated`
+without any mutating run — `src/agent/tls/`, `src/agent/disk/`, and
+`src/agent/backup/` are. If your agent has a mutating recovery path and its only
+live exposure was dry-run, `dry_run_only` is the accurate label. Whether a
+mutating plan ran and the fault was verified resolved is a separate, stricter
+claim, tracked under
+[Execute-verified recovery](docs/coverage.md#execute-verified-recovery).
 
 Where each agent currently stands is tracked in
 [docs/coverage.md](docs/coverage.md) — update it in the same PR that changes a
@@ -108,7 +113,7 @@ maturity value.
   // Copyright 2026 CrisisMode Contributors
   ```
 - **Conventional Commits** for all commit messages:
-  ```
+  ```text
   feat(agent): add MySQL recovery agent
   fix(engine): handle timeout in step execution
   test(redis): add memory pressure scenario tests

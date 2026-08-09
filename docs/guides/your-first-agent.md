@@ -30,7 +30,7 @@ If you just need to check a port or validate a certificate, a [check plugin](you
 
 Every agent follows this structure:
 
-```
+```text
 src/agent/<system>/
   backend.ts        # Interface for querying the target system
   simulator.ts      # In-memory implementation for demos and tests
@@ -769,12 +769,25 @@ Two rules the helper enforces (and that you must not work around):
   not connect" finding. Never catch a live-client error and silently fall
   back to simulated data — that reports fake health for a real system.
 
-A working live client on its own does **not** change your maturity label. Once you
-have run the agent against a real deployment and confirmed it diagnoses correctly,
-move `plugin.maturity` to `"dry_run_only"` (diagnosis validated, no mutating run
-verified) or `"live_validated"` (a mutating recovery actually ran and the fault
-was verified resolved). Until then it stays `"simulator_only"` and CrisisMode
-labels its findings as leads.
+A working live client on its own does **not** change your maturity label. The label
+tracks how far your **diagnosis** has been proven against real infrastructure:
+
+- `"simulator_only"` — where every new agent starts, and where it stays until you
+  have confirmed diagnosis against a real deployment. CrisisMode labels its
+  findings as leads, not conclusions.
+- `"dry_run_only"` — diagnosis validated only in dry-run against real
+  infrastructure (real reads, mutations logged instead of executed), with the
+  agent's mutating recovery path never exercised live.
+- `"live_validated"` — you have run the agent against a real deployment of its
+  target system and confirmed it diagnoses correctly there. This does **not**
+  require a mutating recovery: several in-tree agents are `live_validated` on
+  diagnosis alone (`src/agent/tls/`, `src/agent/disk/`, `src/agent/backup/`).
+
+Whether a mutating plan actually ran and the fault was verified resolved is a
+separate, stricter claim that the maturity label does not encode — it is tracked
+under [Execute-verified recovery](../coverage.md#execute-verified-recovery), which
+today covers three scenarios. Say in the PR description what you validated
+against, and update [docs/coverage.md](../coverage.md) in the same PR.
 
 ## Distributing as a Plugin
 
