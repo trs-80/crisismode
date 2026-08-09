@@ -38,9 +38,14 @@ high eviction rates, or approaching maxmemory limits.
 - target: redis-primary
 
 ```sh
-redis-cli INFO memory
-redis-cli INFO stats
-redis-cli DBSIZE
+# -e turns a Redis error reply into a nonzero exit, and set -e stops the block on
+# the first failure — the whole block is one command to the engine, so without it
+# only the last line's status would be reported. A diagnosis that could not read
+# the instance must fail here rather than hand later steps an empty reading.
+set -e
+redis-cli -e INFO memory
+redis-cli -e INFO stats
+redis-cli -e DBSIZE
 ```
 
 ### 2. Notify operations team
@@ -63,8 +68,9 @@ redis-cli DBSIZE
 # Bounded sample of the keyspace. Reading a key that is already past its TTL is
 # what makes Redis reclaim it; keys still inside their TTL, and keys with no TTL
 # at all, are read and left alone. This step deletes nothing itself.
-# Every redis-cli call is checked, so a failed SCAN or TTL fails the step rather
-# than reporting a cleanup that never happened.
+# Every redis-cli call runs with -e and is checked, so a failed SCAN or TTL fails
+# the step rather than reporting a cleanup that never happened. Without -e,
+# redis-cli exits 0 even when Redis answers with an error reply such as NOAUTH.
 set -u
 limit=1000
 cursor=0
@@ -73,7 +79,7 @@ rounds=0
 
 while [ "$scanned" -lt "$limit" ] && [ "$rounds" -lt 50 ]; do
   rounds=$((rounds + 1))
-  if ! reply=$(redis-cli SCAN "$cursor" COUNT 100); then
+  if ! reply=$(redis-cli -e SCAN "$cursor" COUNT 100); then
     echo "SCAN failed at cursor $cursor" >&2
     exit 1
   fi
@@ -83,7 +89,7 @@ while [ "$scanned" -lt "$limit" ] && [ "$rounds" -lt 50 ]; do
   while IFS= read -r key; do
     if [ "$first" -eq 1 ]; then cursor=$key; first=0; continue; fi
     [ -n "$key" ] || continue
-    if ! redis-cli TTL "$key" > /dev/null; then
+    if ! redis-cli -e TTL "$key" > /dev/null; then
       echo "TTL failed for key: $key" >&2
       exit 1
     fi
@@ -125,7 +131,10 @@ temporarily to prevent further evictions while the team investigates.
   max_downtime_seconds: 0
 
 ```sh
-redis-cli CONFIG SET maxmemory 8gb
+# -e is what makes a rejected CONFIG SET fail this step. Without it redis-cli exits
+# 0 after Redis refuses the value — a bad unit is enough — and the plan continues
+# to step 8 reporting that maxmemory was raised when nothing changed.
+redis-cli -e CONFIG SET maxmemory 8gb
 ```
 
 ### 8. Recovery complete

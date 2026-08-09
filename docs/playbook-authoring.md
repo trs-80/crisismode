@@ -240,7 +240,7 @@ estimated_duration: "15m"
 - target: redis-primary
 
 ```sh
-redis-cli info memory
+redis-cli -e info memory
 ```
 
 ### 2. Notify on-call
@@ -264,8 +264,9 @@ redis-cli info memory
 # Bounded sample of the keyspace. Reading a key that is already past its TTL is
 # what makes Redis reclaim it; keys still inside their TTL, and keys with no TTL
 # at all, are read and left alone. This step deletes nothing itself.
-# Every redis-cli call is checked, so a failed SCAN or TTL fails the step rather
-# than reporting a cleanup that never happened.
+# Every redis-cli call runs with -e and is checked, so a failed SCAN or TTL fails
+# the step rather than reporting a cleanup that never happened. Without -e,
+# redis-cli exits 0 even when Redis answers with an error reply such as NOAUTH.
 set -u
 limit=1000
 cursor=0
@@ -274,7 +275,7 @@ rounds=0
 
 while [ "$scanned" -lt "$limit" ] && [ "$rounds" -lt 50 ]; do
   rounds=$((rounds + 1))
-  if ! reply=$(redis-cli SCAN "$cursor" COUNT 100); then
+  if ! reply=$(redis-cli -e SCAN "$cursor" COUNT 100); then
     echo "SCAN failed at cursor $cursor" >&2
     exit 1
   fi
@@ -284,7 +285,7 @@ while [ "$scanned" -lt "$limit" ] && [ "$rounds" -lt 50 ]; do
   while IFS= read -r key; do
     if [ "$first" -eq 1 ]; then cursor=$key; first=0; continue; fi
     [ -n "$key" ] || continue
-    if ! redis-cli TTL "$key" > /dev/null; then
+    if ! redis-cli -e TTL "$key" > /dev/null; then
       echo "TTL failed for key: $key" >&2
       exit 1
     fi
@@ -333,8 +334,31 @@ engine would record step 4 as a success and move on to step 5 believing memory p
 had been addressed. Reaching for `set -o pipefail` trades that for the opposite bug:
 `head` closes the pipe after 1000 lines, `redis-cli` dies of `SIGPIPE`, and a perfectly
 healthy Redis reports exit 141. The loop above has no pipeline at all — it feeds the
-`SCAN` reply in through a here-document and tests each `redis-cli` exit status directly,
-so any failure fails the step and a clean run is the only way to exit 0. A step that
-silently succeeds after its cleanup failed is worse than one that fails loudly.
+`SCAN` reply in through a here-document and tests each `redis-cli` exit status directly.
+
+Testing the exit status is only half of it, because `redis-cli` exits `0` even when Redis
+answers with an error reply — a `NOAUTH` on a password-protected instance, a `NOPERM` from
+an ACL-restricted `--user`, a `WRONGTYPE`, an unknown command. The step would print
+`touched 0 keys` and succeed having run nothing. `-e` is what makes an error reply an exit
+code (`redis-cli --help`: "Return exit error code when command execution fails"), so every
+call in the loop carries it. `-e` reacts to error *replies* only: an empty `SCAN` result,
+a missing key, and a `TTL` of `-1` or `-2` are ordinary replies, so a healthy Redis still
+exits `0`. A step that silently succeeds after its cleanup failed is worse than one that
+fails loudly.
+
+**The rule is not specific to step 4.** Every `redis-cli` call in a playbook carries `-e`,
+including the read-only `INFO` in step 1: a diagnosis that could not reach the instance
+should fail rather than hand the following steps an empty reading. It matters most on
+mutating steps. `redis-cli CONFIG SET maxmemory 8gb` exits `0` when Redis *rejects* the
+value — a bad unit is enough, no auth failure required — so an `elevated` step would report
+that the memory ceiling had been raised when nothing changed, and the plan would carry on
+under that belief. That is the failure this framework exists to prevent, so the mutating
+step gets `-e` even more than the read-only one does.
+
+**A block is one command to the engine.** The runtime compiles each step's `sh` block into
+a single `structured_command`, so a block's exit status is its *last* line's. `-e` alone is
+not enough where a step runs several commands: step 1's block opens with `set -e` so a
+failing `INFO` aborts it instead of being overwritten by a successful `DBSIZE`. Step 4 does
+not need `set -e` — it tests every status itself and exits explicitly.
 
 For more playbook examples, see the `playbooks/examples/` directory.
