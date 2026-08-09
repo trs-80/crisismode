@@ -136,6 +136,25 @@ function loadConfigFile(filePath: string): SiteConfig {
   const hasTargets = Array.isArray(config.targets) && config.targets.length > 0;
   const hasServices = Array.isArray(config.services) && config.services.length > 0;
 
+  // `hasTargets` is false for a present-but-non-array `targets:` (e.g.
+  // `targets: {}`), same as if it were absent — so a config with both a
+  // malformed targets: and a valid services: passed validation entirely,
+  // then `config.targets = config.targets ?? []` below kept the non-array
+  // value (`??` only replaces null/undefined), and downstream `.map(...)`
+  // calls (serviceTargetsFromConfig, runScan) threw a raw TypeError at
+  // runtime instead of the "must be a list" error `targets: 'nope'` alone
+  // already gets. Reject explicitly, before that error class can happen.
+  if (config.targets !== undefined && !Array.isArray(config.targets)) {
+    throw new ConfigValidationError(
+      'config error: targets must be a list.\n' +
+      '  Example:\n' +
+      '    targets:\n' +
+      '      - name: my-postgres\n' +
+      '        kind: postgresql\n' +
+      '        primary: { host: localhost, port: 5432 }',
+    );
+  }
+
   if (!hasTargets && !hasServices) {
     throw new ConfigValidationError(
       'Config must define at least one target or service. ' +
@@ -165,8 +184,14 @@ function loadConfigFile(filePath: string): SiteConfig {
     validateServices(config.services);
   }
 
-  if (hasTargets && hasServices) {
-    validateNoServiceTargetCollision(config.targets as Record<string, unknown>[], config.services as unknown[]);
+  // Runs whenever services: is present, not only alongside targets: — a
+  // services-only config can still collide two of its own entries against
+  // each other (see the function doc).
+  if (hasServices) {
+    validateNoServiceTargetCollision(
+      hasTargets ? (config.targets as Record<string, unknown>[]) : [],
+      config.services as unknown[],
+    );
   }
 
   config.targets = config.targets ?? [];
@@ -280,6 +305,13 @@ function validateServices(services: unknown): void {
  * under the service-status label (the checked service is never contacted,
  * and a coincidentally-healthy result reads as a false "service is up").
  * Caught here, at config load, rather than left to be discovered live.
+ *
+ * Also checks `services:` entries against EACH OTHER, not just against
+ * `targets:` — two services entries that resolve to the same id (including
+ * via alias, e.g. `flyio` and `fly`) synthesize two targets with the same
+ * name, and the same first-match-wins behavior means only the first-listed
+ * one ever runs. Runs even for a services-only config (no `targets:` at
+ * all), since this collision doesn't need a targets: block to happen.
  */
 function validateNoServiceTargetCollision(targets: Record<string, unknown>[], services: unknown[]): void {
   const targetsByName = new Map<string, Record<string, unknown>>();
@@ -287,8 +319,10 @@ function validateNoServiceTargetCollision(targets: Record<string, unknown>[], se
     if (typeof target.name === 'string') targetsByName.set(target.name, target);
   }
 
+  const seenServiceEntries = new Map<string, unknown>();
   for (const entry of services) {
     const resolved = resolveTarget(entry as string | { host: string; port?: number });
+
     const colliding = targetsByName.get(resolved.id);
     if (colliding) {
       throw new ConfigValidationError(
@@ -300,6 +334,17 @@ function validateNoServiceTargetCollision(targets: Record<string, unknown>[], se
         '  Suggestion: rename the targets[] entry, or change the services[] id/alias/domain.',
       );
     }
+
+    const priorEntry = seenServiceEntries.get(resolved.id);
+    if (priorEntry !== undefined) {
+      throw new ConfigValidationError(
+        `Config error: services entries ${JSON.stringify(priorEntry)} and ${JSON.stringify(entry)} both resolve ` +
+        `to the name "${resolved.id}" (catalog aliases like "flyio" and "fly" resolve to the same id) — ` +
+        'only the first-listed one would ever run.\n' +
+        '  Suggestion: remove the duplicate, or use distinct services.',
+      );
+    }
+    seenServiceEntries.set(resolved.id, entry);
   }
 }
 

@@ -141,6 +141,39 @@ describe('services config', () => {
     });
   });
 
+  describe('non-array targets: (CodeRabbit wave, ledger)', () => {
+    /**
+     * hasTargets is false for a present-but-non-array `targets:` (same as
+     * absent), so a config with a malformed `targets: {}` AND a valid
+     * `services:` used to pass validation entirely — config.targets = {}
+     * ?? [] keeps the non-array value (?? only replaces null/undefined) —
+     * and downstream `config.targets.map(...)` (serviceTargetsFromConfig,
+     * runScan) threw a raw TypeError at runtime. This is the crash path a
+     * bare `targets: 'nope'` config already avoided via the "must be a
+     * list" error; the services:-present case needs the same rejection.
+     */
+    it('rejects a non-array targets: even when services: is present and valid', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        targets: {},
+        services: ['github'],
+      });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/targets must be a list/);
+    });
+
+    it('rejects a non-array targets: with no services: present, same as before', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        targets: 'nope',
+      });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/targets must be a list/);
+    });
+  });
+
   describe('targets/services relaxation', () => {
     it('loads a services-only config with no targets', () => {
       const filePath = writeYamlConfig(tmpDir, {
@@ -256,6 +289,50 @@ describe('services config', () => {
       ]);
       const merged = [...result.config.targets, ...serviceTargets];
       expect(merged.map((t) => t.name)).toEqual(['my-redis', 'github']);
+    });
+
+    /**
+     * CodeRabbit wave (verified real + cheap): the collision check above
+     * only compared services: against targets[], and only ran when both
+     * blocks were present. A services: list can collide with ITSELF —
+     * serviceTargetsFromConfig synthesizes each entry into a target named
+     * after its resolved id, so two entries resolving to the same id
+     * (including via alias) give two targets with the same name, and only
+     * the first-listed one ever runs.
+     */
+    it('rejects two services: entries that resolve to the same id, even with no targets: present', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        // 'flyio' and 'fly' both resolve to the canonical catalog id 'fly'.
+        services: ['flyio', 'fly'],
+      });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/fly/);
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/both resolve/);
+    });
+
+    it('rejects a literal duplicate in services: (mixed with a targets: block)', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        targets: [
+          { name: 'my-redis', kind: 'redis', primary: { host: 'localhost', port: 6379 } },
+        ],
+        services: ['github', 'github'],
+      });
+      expect(() => loadConfig({ configPath: filePath })).toThrow(/both resolve/);
+    });
+
+    it('does not throw when services: entries resolve to distinct ids', () => {
+      const filePath = writeYamlConfig(tmpDir, {
+        apiVersion: 'crisismode/v1',
+        kind: 'SiteConfig',
+        metadata: { name: 'test-site', environment: 'development' },
+        services: ['github', 'stripe'],
+      });
+      expect(() => loadConfig({ configPath: filePath })).not.toThrow();
     });
   });
 });
