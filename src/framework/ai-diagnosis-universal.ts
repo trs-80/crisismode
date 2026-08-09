@@ -20,7 +20,7 @@ import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { SentryEnrichment } from '../integrations/sentry.js';
 import { defaultAiModel } from './ai-model.js';
-import { callClaude } from './ai-client.js';
+import { AiTimeoutError, callClaude } from './ai-client.js';
 
 const DEFAULT_MODEL = defaultAiModel();
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -77,7 +77,11 @@ export async function universalAiDiagnosis(
   try {
     return await callAi(request, apiKey);
   } catch (err) {
-    console.error('AI diagnosis failed:', err instanceof Error ? err.message : err);
+    if (err instanceof AiTimeoutError) {
+      console.error(`AI diagnosis ${err.message}`);
+    } else {
+      console.error('AI diagnosis failed:', err instanceof Error ? err.message : err);
+    }
     return buildFallback(request);
   }
 }

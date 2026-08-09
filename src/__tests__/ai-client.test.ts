@@ -2,16 +2,25 @@
 // Copyright 2026 CrisisMode Contributors
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { callClaude, stripCodeFence } from '../framework/ai-client.js';
+import { APIUserAbortError } from '@anthropic-ai/sdk';
+import type * as AnthropicSdk from '@anthropic-ai/sdk';
+import { AiTimeoutError, callClaude, stripCodeFence } from '../framework/ai-client.js';
 
 // Capture the SDK's messages.create so each test can control its behavior.
 const { createMock } = vi.hoisted(() => ({ createMock: vi.fn() }));
 
-vi.mock('@anthropic-ai/sdk', () => ({
-  default: class {
-    messages = { create: createMock };
-  },
-}));
+// Keep the real module's exports (notably APIUserAbortError) and stub only the
+// client, so abort tests can reject with the error the SDK actually throws
+// rather than a hand-built stand-in.
+vi.mock('@anthropic-ai/sdk', async (importOriginal) => {
+  const actual = await importOriginal<typeof AnthropicSdk>();
+  return {
+    ...actual,
+    default: class {
+      messages = { create: createMock };
+    },
+  };
+});
 
 describe('callClaude', () => {
   let originalApiKey: string | undefined;
@@ -98,22 +107,51 @@ describe('callClaude', () => {
     expect(createMock).toHaveBeenCalledTimes(1);
   });
 
-  it('aborts and rejects with AbortError when the timeout fires', async () => {
-    // Honor the abort signal: reject with an AbortError once aborted.
+  // Guards the assumption the timeout detection rests on. The SDK's error
+  // classes never assign `name`, so it inherits "Error" from Error.prototype —
+  // which is why matching on `err.name === 'AbortError'` cannot work and the
+  // signal has to be the witness instead.
+  it("the SDK's abort error is not named AbortError", () => {
+    const err = new APIUserAbortError({});
+    expect(err.name).toBe('Error');
+    expect(err.name).not.toBe('AbortError');
+    expect(err.message).toBe('Request was aborted.');
+  });
+
+  it('throws AiTimeoutError when the timeout fires', async () => {
+    // Reject the way the real SDK does once the signal we passed is aborted.
     createMock.mockImplementation(
       (_params: unknown, options: { signal: AbortSignal }) =>
         new Promise((_resolve, reject) => {
           options.signal.addEventListener('abort', () => {
-            const err = new Error('Request was aborted');
-            err.name = 'AbortError';
-            reject(err);
+            reject(new APIUserAbortError({}));
           });
         }),
     );
 
-    await expect(
-      callClaude({ system: 'sys', user: 'hi', timeoutMs: 5, apiKey: 'test-key' }),
-    ).rejects.toMatchObject({ name: 'AbortError' });
+    const err = await callClaude({
+      system: 'sys',
+      user: 'hi',
+      timeoutMs: 5,
+      apiKey: 'test-key',
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(AiTimeoutError);
+    expect(err).toMatchObject({ name: 'AiTimeoutError', timeoutMs: 5 });
+    expect((err as Error).message).toBe('timed out after 5ms');
+  });
+
+  it('does not mistake a non-timeout API failure for a timeout', async () => {
+    createMock.mockRejectedValue(new Error('overloaded_error'));
+
+    const err = await callClaude({
+      system: 'sys',
+      user: 'hi',
+      apiKey: 'test-key',
+    }).catch((e: unknown) => e);
+
+    expect(err).not.toBeInstanceOf(AiTimeoutError);
+    expect((err as Error).message).toBe('overloaded_error');
   });
 
   it('propagates API errors to the caller', async () => {
