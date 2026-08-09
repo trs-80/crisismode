@@ -190,7 +190,11 @@ scan hint and this fix now read `crisismode init --plugin my-check`.
 - PostgreSQL target on a wrong port → `Investigate: crisismode diagnose prod-db`,
   and `diagnose prod-db` resolves (`Target: prod-db (postgresql)`) while the old
   `diagnose PG-001` still errors.
-- Scan with no plugins discovered → hint now reads `crisismode init --agent my-check`.
+- Scan with no health plugins discovered → hint now reads
+  `crisismode init --plugin my-check`. The message says "No health check plugins
+  found" rather than "No check plugins found", because the count it reports is
+  filtered to plugins declaring the `health` verb — a diagnose-only or plan-only
+  plugin is discovered but not counted here.
 
 ## Noted, not changed
 
