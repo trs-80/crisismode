@@ -60,12 +60,43 @@ redis-cli DBSIZE
 - capability: cache.expiry.trigger
 
 ```sh
-# Reading a key that is already past its TTL is what makes Redis reclaim it
-# (passive expiration). Keys still inside their TTL, and keys with no TTL at all,
-# are read and left alone. Bounded to a 10000-key sample.
-redis-cli --scan --count 100 | head -n 10000 | while read -r key; do
-  redis-cli TTL "$key" > /dev/null
+# Bounded sample of the keyspace. Reading a key that is already past its TTL is
+# what makes Redis reclaim it; keys still inside their TTL, and keys with no TTL
+# at all, are read and left alone. This step deletes nothing itself.
+# Every redis-cli call is checked, so a failed SCAN or TTL fails the step rather
+# than reporting a cleanup that never happened.
+set -u
+limit=1000
+cursor=0
+scanned=0
+rounds=0
+
+while [ "$scanned" -lt "$limit" ] && [ "$rounds" -lt 50 ]; do
+  rounds=$((rounds + 1))
+  if ! reply=$(redis-cli SCAN "$cursor" COUNT 100); then
+    echo "SCAN failed at cursor $cursor" >&2
+    exit 1
+  fi
+
+  # First line of a SCAN reply is the next cursor; the rest are keys.
+  first=1
+  while IFS= read -r key; do
+    if [ "$first" -eq 1 ]; then cursor=$key; first=0; continue; fi
+    [ -n "$key" ] || continue
+    if ! redis-cli TTL "$key" > /dev/null; then
+      echo "TTL failed for key: $key" >&2
+      exit 1
+    fi
+    scanned=$((scanned + 1))
+    [ "$scanned" -lt "$limit" ] || break
+  done <<EOF
+$reply
+EOF
+
+  [ "$cursor" != "0" ] || break
 done
+
+echo "touched $scanned keys, deleted none"
 ```
 
 ### 5. Evaluate memory after cleanup
