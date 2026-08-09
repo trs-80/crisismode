@@ -197,7 +197,7 @@ export const mySystemManifest: AgentManifest = {
 **`metadata`** -- identity and authorship:
 - `name` -- unique agent name, used as the registry key.
 - `version` -- semver version of the agent.
-- `plugin.maturity` -- set to `"simulator_only"` until a live client exists; change to `"beta"` or `"stable"` later.
+- `plugin.maturity` -- one of `"experimental"`, `"simulator_only"`, `"dry_run_only"`, `"live_validated"`, `"production_certified"`. Start at `"simulator_only"`; CrisisMode reports every value except `"live_validated"` as best-effort, and only real validation against a live system earns the upgrade. See [Declaring maturity honestly](../../CONTRIBUTING.md#declaring-maturity-honestly).
 
 **`spec.targetSystems`** -- what systems this agent manages:
 ```typescript

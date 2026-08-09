@@ -4,75 +4,33 @@
 [![codecov](https://codecov.io/gh/trs-80/crisismode/graph/badge.svg)](https://codecov.io/gh/trs-80/crisismode)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node](https://img.shields.io/badge/Node-%3E%3D18-green?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/Node-%3E%3D22-green?logo=node.js&logoColor=white)](https://nodejs.org/)
 
-CrisisMode is the recovery layer for your infrastructure. Monitoring tells you something is wrong. CrisisMode tells you what to do about it — safely.
+**Monitoring tells you something is wrong. CrisisMode tells you what to do about it — safely.**
 
-It diagnoses issues using AI, builds validated recovery plans with blast-radius controls, and executes them with human-in-the-loop oversight. Every action is preceded by a state capture. Every execution produces an immutable forensic record. Domain experts contribute recovery knowledge as agents and check plugins — the framework ensures that knowledge is applied safely when infrastructure is degraded and the cost of wrong actions is highest.
+CrisisMode diagnoses infrastructure failures, builds validated recovery plans with
+blast-radius controls, and executes them under human-in-the-loop oversight. Every
+mutation is preceded by a state capture. Every execution leaves an immutable
+forensic record.
+
+It is built for the moment when infrastructure is degraded and the cost of a wrong
+action is highest — which is also why it reports what it *hasn't* verified. See
+[Maturity and validation](#maturity-and-validation).
 
 **Website:** [crisismode.ai](https://crisismode.ai)
 
-## Who This Is For
+## Who it's for
 
-- SREs and platform engineers who get paged and need to act under pressure.
-- AI app builders operating managed infrastructure with limited ops depth.
-- On-call engineers who inherit systems they didn't build.
-- Domain experts (database specialists, Kafka engineers, storage admins) who want to codify recovery knowledge.
-
-## From Alert to Recovery
-
-Live mode diagnosing real PostgreSQL replication lag (local podman test
-environment; the excerpt shows a single elevated-risk step executing — see
-[Validation status](#validation-status) for what is and isn't verified today):
-
-```
-  Connecting to PostgreSQL...
-  ✅ Primary connected — 3 active connections
-  ✅ Replication: 1 replica(s) streaming
-  ✅ Replica connected — recovery mode: true, lag: 636s
-
-  ── Live Replication Status ──
-  🔴 10.89.0.5/32 | streaming | lag: 41s | sent: 0/63704F0 | replay: 0/5EDE5F8
-
-  Phase 3: Diagnosis (Live — AI-Powered)
-  ──────────────────────────────────────
-  🤖 AI analyzing system state...
-     Status:      identified
-     Scenario:    replication_lag_cascade
-     Confidence:  94%
-     Root cause:  WAL replay paused on replica — sent LSN is advancing
-                  but replay LSN is static, indicating a deliberate pause
-                  or I/O bottleneck on the replica, not a network issue.
-
-  Phase 4: Plan Creation
-  ──────────────────────
-     #   Type                    Risk        Name
-     ────────────────────────────────────────────────────────────
-     1   diagnosis_action        —           Assess replication lag
-     2   human_notification      —           Notify on-call DBA
-     3   checkpoint              —           Pre-recovery state capture
-     4   system_action           elevated    Disconnect lagging replica
-     5   system_action           routine     Redirect read traffic
-     6   replanning_checkpoint   —           Assess progress
-     7   human_approval          —           Approve resynchronization
-     8   system_action           high        pg_basebackup + resync
-     9   conditional             —           Restore traffic or notify
-     10  human_notification      —           Recovery summary
-
-  Phase 7: Execution (Live — EXECUTE MODE)
-  ─────────────────────────────────────────
-  🔴 EXECUTE MODE — SQL mutations WILL be run against real PostgreSQL.
-
-     Step step-004 [system_action]
-     Disconnect lagging replica 10.89.0.5/32 from replication
-     ✓ Precondition: Replica 10.89.0.5/32 is currently connected
-     ✓ Success: WAL sender for 10.89.0.5/32 is no longer present
-     ● SUCCESS (6ms)
-```
+- **SREs and platform engineers** who get paged and need to act under pressure.
+- **AI app builders** running managed infrastructure without deep ops backup.
+- **On-call engineers** who inherit systems they didn't build.
+- **Domain experts** — DBAs, Kafka and storage specialists — who want to codify
+  recovery knowledge as something executable instead of a wiki page.
 
 ## Install
 
-Download a prebuilt binary from [GitHub Releases](https://github.com/trs-80/crisismode/releases/latest) — no Node.js required. macOS binaries are codesigned and notarized; every artifact ships with a SHA256 checksum.
+Prebuilt binaries need no Node.js. macOS builds are codesigned and notarized, and
+every artifact ships a SHA256 checksum.
 
 ```bash
 # Linux (x64)
@@ -81,370 +39,184 @@ curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisism
 # macOS (Apple Silicon)
 curl -fsSL https://github.com/trs-80/crisismode/releases/latest/download/crisismode-darwin-arm64 -o crisismode
 
-chmod +x crisismode
-./crisismode scan
+chmod +x crisismode && ./crisismode scan
 ```
 
-Also available: `crisismode-linux-arm64` and `crisismode-darwin-x64`. To verify a download, fetch the matching `.sha256` file and run `shasum -a 256 -c`.
+Also built: `crisismode-linux-arm64`, `crisismode-darwin-x64`. To verify a
+download, fetch the matching `.sha256` and run `shasum -a 256 -c`. Building from
+source needs Node.js >= 22 — see [GETTING_STARTED.md](GETTING_STARTED.md).
 
-Enable tab completion for your shell:
+## 60-second demo
+
+No config, no infrastructure. CrisisMode autodiscovers what's running locally and
+checks it:
 
 ```bash
-crisismode completions bash|zsh|fish
+crisismode                 # zero-config health scan (the default command)
 ```
 
-## Quick Start
+```
+  System Health Score: 100/100
+  Scanned at 2026-08-09T15:09:00.480Z (586ms)
 
-**Zero-config scan** — CrisisMode autodiscovers databases, caches, and brokers on your machine and checks what it finds:
+  HEALTHY
+  PG-001      OK postgresql (default-postgres) — PostgreSQL replication is healthy.
+  DNS-002     OK dns (local-dns) — DNS resolution is healthy.
+  DISK-003    OK disk (local-disk) — Disk usage is healthy.
+```
+
+Three questions it answers without touching your infrastructure:
 
 ```bash
-crisismode
+crisismode triage          # is it me, my network, or them?  (exit 1 on local/network)
+crisismode down stripe     # is it down for everyone, or just me?
+crisismode readiness       # will this stack break under load?
 ```
 
-**Demo mode** (no infrastructure required, building from source):
+Then the full pipeline against a simulator — trigger → diagnosis → plan →
+validation → execution → forensic record:
 
 ```bash
-pnpm install && pnpm dev
+crisismode demo
 ```
 
-**Real PostgreSQL** (requires [test environment setup](test/podman/scripts/start.sh)):
+Recovery is **dry-run by default**. `crisismode recover` reads live systems and
+shows you the plan; mutations require an explicit `--execute`.
+
+## From alert to recovery
+
+Live mode against real PostgreSQL replication lag (local podman test
+environment), abridged:
+
+```
+  Phase 3: Diagnosis (Live — AI-Powered)
+  🤖 AI analyzing system state...
+     Scenario:    replication_lag_cascade
+     Confidence:  94%
+     Root cause:  WAL replay paused on replica — sent LSN is advancing
+                  but replay LSN is static, indicating a deliberate pause
+                  or I/O bottleneck on the replica, not a network issue.
+
+  Phase 4: Plan Creation
+     #   Type                    Risk        Name
+     1   diagnosis_action        —           Assess replication lag
+     2   human_notification      —           Notify on-call DBA
+     3   checkpoint              —           Pre-recovery state capture
+     4   system_action           elevated    Disconnect lagging replica
+     7   human_approval          —           Approve resynchronization
+     8   system_action           high        pg_basebackup + resync
+    10   human_notification      —           Recovery summary
+
+  Phase 7: Execution (Live — EXECUTE MODE)
+     Step step-004 [system_action]
+     ✓ Precondition: Replica 10.89.0.5/32 is currently connected
+     ✓ Success: WAL sender for 10.89.0.5/32 is no longer present
+     ● SUCCESS (6ms)
+```
+
+## Safety model
+
+- Dry-run by default — reads real systems, logs mutations without running them.
+- Pre-mutation state capture on every `elevated`-or-higher action.
+- Blast-radius validation against the agent's declared manifest.
+- Human approval gates; `--execute` fails closed when confirmation can't be
+  collected (non-interactive stdin).
+- Five escalation levels: observe → diagnose → suggest → repair-safe →
+  repair-destructive.
+- Immutable forensic record per execution, and a rollback strategy on every plan.
+
+These are enforced by the plan validator, not by convention — see
+[docs/architecture.md](docs/architecture.md).
+
+## Maturity and validation
+
+CrisisMode registers more agents than it has validated against real
+infrastructure, and it says so at runtime rather than in a footnote. Its honesty
+layer collapses every agent to one of two labels:
+
+- **live-validated** — exercised against a real deployment of that system.
+- **best-effort** — the checks exist and run, but have never been proven against
+  a live system. Findings are leads, not conclusions. This is the default; an
+  agent has to earn the other label.
+
+Ask the tool directly — this is the authoritative roster, not this README:
 
 ```bash
-pnpm run live                  # Dry-run — reads real PG, logs mutations
-pnpm run live -- --execute     # Execute mode — runs recovery commands
+crisismode agent list      # 26 registrations, each with its maturity label
 ```
 
-**AlertManager webhook:**
+Today **9 of 26** registrations are live-validated: PostgreSQL replication,
+Kubernetes, DNS, TLS, disk, backup verification, third-party service status, and
+the LLM-provider agent for Anthropic and OpenAI (it registers once per provider).
+Everything else — Redis, etcd, Kafka, Ceph, Flink, AWS (S3/DynamoDB/RDS),
+Terraform drift, deploy rollback, DB migration, queue backlog, config drift,
+vector stores, AI-provider failover — is best-effort.
 
-```bash
-pnpm run webhook               # Dry-run, listens on :3000
-pnpm run webhook --execute     # Execute mode
-```
+Separately, end-to-end `--execute` recovery (a mutating plan that ran, plus
+post-recovery verification that the fault was actually gone) is proven for
+**exactly three scenarios** as of 2026-07-13, all reproducible in the
+[crisismode-torture](https://github.com/trs-80/crisismode-torture) harness:
+Redis memory pressure, PostgreSQL WAL-replay-paused replication lag, and
+PostgreSQL connection-pool exhaustion. Treat every other execute path as
+experimental. AWS and Vercel scenarios remain dry-run only.
 
-See [QUICKSTART.md](QUICKSTART.md) for a full walkthrough.
+Full per-system coverage tables and what each harness proves:
+**[docs/coverage.md](docs/coverage.md)**.
 
-## What CrisisMode Recovers
+## Extending it
 
-Status legend:
+Two contribution tracks, depending on whether your recovery knowledge is a
+procedure or a decision tree:
 
-- **Live (execute-capable)** — queries real infrastructure and can run recovery mutations in `--execute` mode
-- **Live (diagnosis only)** — queries real infrastructure; recovery output is advisory (no mutating actions)
-- **Simulator** — full agent logic against an in-memory simulator; live client not yet wired into the CLI
-
-### Modern Application Incidents
-
-| Scenario | Agent | Status |
+| Track | You write | Good for |
 |---|---|---|
-| Bad deploy rollback | Deploy Rollback | Live (execute-capable) -- Vercel, requires `VERCEL_TOKEN` |
-| LLM provider failures (key, quota, rate limit, model, outage) | LLM Provider | Live (diagnosis only) -- validated against real Anthropic and OpenAI keys; Google and OpenRouter paths implemented, best-effort validated |
-| AI provider degradation / failover | AI Provider | Simulator -- explicit config and demo only; no longer auto-detected from API keys |
-| Database migration failures | DB Migration | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
-| Queue and worker backlog | Queue Backlog | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
-| Config and environment drift | Config Drift | Live (execute-capable) -- diagnosis validated in dry-run via torture harness |
+| **Playbook** | Markdown + YAML frontmatter | A runbook with fixed steps |
+| **Agent** | TypeScript implementing `RecoveryAgent` | Diagnosis that builds different plans for different failures |
 
-### Stateful Infrastructure Recovery
+Playbooks compile to the same `RecoveryPlan` the engine runs for code-based
+agents, through the same validator — no shortcuts, no second safety path.
 
-| System | Scenarios | Status |
-|---|---|---|
-| PostgreSQL | Replication lag, slot overflow, replica divergence, connection-pool exhaustion | Live (execute-capable) -- see validation status below |
-| Redis | Memory pressure, client exhaustion, slow queries, cluster health | Live (execute-capable) |
-| etcd | Leader election loop, member thrashing, snapshot corruption | Simulator |
-| Kafka | Under-replicated partitions, consumer lag cascade | Simulator |
-| Kubernetes | Node not-ready cascade, pod crashloop, stuck reconciliation | Live (execute-capable) |
-| Ceph | OSD down cascade, degraded PGs, pool near-full | Simulator |
-| Flink | Checkpoint failure cascade, TaskManager loss, backpressure | Simulator |
-| AWS | S3, DynamoDB, and RDS recovery; backup verification, PITR, snapshot staleness | Live (execute-capable) -- validated in dry-run against real AWS |
-| Terraform | Drift detection: intended state vs. observed AWS resources (RDS, S3, DynamoDB); read-only, suggests reconciliation | Simulator |
-
-### Host & Platform Health
-
-| Check | Scenarios | Status |
-|---|---|---|
-| DNS | Resolution failures, resolver health | Live (diagnosis + local cache flush) |
-| TLS | Certificate expiry and chain health | Live (diagnosis only) |
-| Disk | Local disk exhaustion | Live (diagnosis only) |
-| Backup | Backup verification and DR readiness | Live (diagnosis only) |
-
-### Validation status
-
-The [crisismode-torture](https://github.com/trs-80/crisismode-torture) harness
-runs CrisisMode against real degraded infrastructure (PostgreSQL replication,
-Redis, 3-node etcd, 3-broker Kafka, Redis Cluster partitions, cascading
-failures, and real AWS RDS/S3/DynamoDB). What it currently proves:
-
-- **Validated:** failure detection (typically 3–5s), AI diagnosis, and dry-run
-  recovery planning against real infrastructure, including real AWS and Vercel.
-- **Execute-verified (as of 2026-07-13):** end-to-end `--execute` recovery —
-  a mutating recovery plan that actually ran, plus post-recovery health
-  verification confirming the underlying fault was resolved (not just that
-  the engine exited without error) — for exactly three scenarios: Redis
-  memory pressure, PostgreSQL WAL-replay-paused replication lag, and
-  PostgreSQL connection-pool exhaustion. All three are reproducible via the
-  crisismode-torture harness.
-- **Not yet validated:** end-to-end `--execute` recovery for every other
-  agent/scenario in the tables above. Execute mode is functional for
-  individual actions, and the engine correctly refuses to run a plan when a
-  required live provider is missing (a blocked run is never counted as a
-  recovery), but no torture scenario besides the three above has completed a
-  full mutating recovery with post-recovery verification — treat the rest as
-  experimental until the harness verifies them. AWS and Vercel scenarios
-  remain dry-run/skipped in `--execute` mode.
-
-## Building Agents
-
-CrisisMode is extensible through recovery agents. Two contribution tracks:
-
-### Markdown Playbooks (low-code)
-
-Write recovery procedures as Markdown files with YAML frontmatter:
-
-```markdown
----
-name: "my-recovery-playbook"
-version: "1.0.0"
-description: "Recovery for my system"
-severity: elevated
-tags: [postgresql, replication]
----
-
-### 1. Diagnose the issue
-- type: diagnosis_action
-- target: primary
-
-### 2. Notify the team
-- type: human_notification
-- channel: default
-```
-
-Validate and test:
-```sh
+```bash
 crisismode playbook validate my-playbook.md
 crisismode playbook dry-run my-playbook.md
 ```
 
-See [Playbook Authoring Guide](docs/playbook-authoring.md) for details.
+Check plugins are a third, smaller entry point: a shell script that probes a
+system and reports health on a JSON wire protocol. CrisisMode also adapts
+existing Nagios/Icinga/Checkmk plugins, Goss assertions, and Sensu checks, so
+established checks work without a rewrite.
 
-### TypeScript Agents
+- [Playbook Authoring Guide](docs/playbook-authoring.md)
+- [Your First Agent](docs/guides/your-first-agent.md) · [Agent reference](docs/guides/creating-a-recovery-agent.md)
+- [Your First Check Plugin](docs/guides/your-first-check-plugin.md) · [Check plugin reference](docs/guides/creating-a-check-plugin.md)
 
-For complex recovery logic, build agents with the SDK. The types-only SDK lives at [`packages/agent-sdk`](packages/agent-sdk) and is consumed from a repo checkout via the pnpm workspace (`@crisismode/agent-sdk`).
+## Works with your tools
 
-Implement the `RecoveryAgent` interface with `assessHealth()`, `diagnose()`, `plan()`, and `replan()` methods.
-
-See the [Agent Development Guide](docs/guides/creating-a-recovery-agent.md) for a full tutorial.
-
-## Architecture
-
-```
-Alert Source (Prometheus) → Spoke Webhook Receiver
-                              ↓
-                           Diagnose (query real systems)
-                              ↓
-                           Plan (build recovery steps)
-                              ↓
-                           Validate (manifest + policy checks)
-                              ↓
-                           Execute (dry-run or live)
-                              ↓
-                           Forensic Record → Hub API
-```
-
-Hub-and-spoke topology: **spokes** (Layers 1-2) run close to target systems and handle execution and safety; the **hub** (Layers 3-4) provides coordination, analytics, and AI enrichment. Recovery actions progress through five escalation levels: observe, diagnose, suggest, repair-safe, and repair-destructive.
-
-See [Architecture Overview](docs/architecture.md) for details.
-
-## Safety Model
-
-- Blast radius validation on every system action
-- Pre-mutation state capture (checkpoint before any change)
-- Human approval gates for elevated-risk operations
-- Dry-run mode by default (reads real systems, logs mutations without executing)
-- `--execute` fails closed when confirmation can't be collected (non-interactive stdin)
-- Five-level progressive escalation (observe → diagnose → suggest → repair-safe → repair-destructive)
-- Immutable forensic record for every execution
-
-## CLI Reference
+**MCP server** — `crisismode mcp` exposes 8 read-only diagnosis tools over stdio,
+so Claude Code or any MCP client can inspect your infrastructure. The MCP surface
+never mutates anything.
 
 ```bash
-crisismode                            # Zero-config health scan (default)
-crisismode scan                       # Health scan with scored summary and next-action hints
-crisismode diagnose                   # Health check + AI-powered diagnosis (read-only)
-crisismode recover                    # Full recovery flow with plain-English AI summaries
-crisismode status                     # Quick health probe
-crisismode triage                     # Is it me, my network, or them? Offline localization — exits 1 when the cause is this machine or its network
-crisismode down [<service>...]        # Is it down for everyone, or just me? Bare invocation checks the config's services: list — exits 1 if anything looks down, 2 on bad usage
-crisismode ask "<question>"           # Natural language AI diagnosis
-crisismode ask                        # Interactive diagnostic REPL
-crisismode demo                       # Simulator demo mode
-crisismode init                       # Generate crisismode.yaml configuration
-crisismode init --agent <name>        # Scaffold a check plugin
-crisismode webhook                    # Start webhook receiver for AlertManager
-crisismode watch                      # Continuous shadow observation
-crisismode readiness                  # Scale-readiness report (read-only): will this stack break under load, and where are the capacity ceilings? See docs/readiness.md
-
-crisismode bundle ingest <path|->     # Ingest an SRE evidence bundle (v1) for AI diagnosis
-crisismode bundle respond <path|->    # Emit AdapterResponse v1 ("-" reads from stdin)
-crisismode bundle execute <path|->    # Translate a bundle to a RecoveryPlan (dry-run)
-
-crisismode playbook list              # List discovered playbooks
-crisismode playbook validate <path>   # Validate a playbook file
-crisismode playbook dry-run <path>    # Preview compiled recovery plan
-
-crisismode agent list                 # List all registered agents
-crisismode agent info <name>          # Show agent details
-
-crisismode registry list              # List available check plugins
-crisismode registry search <query>    # Search check plugins
-crisismode registry install <name>    # Install a check plugin
-
-crisismode mcp                        # Start MCP server on stdio (read-only diagnosis tools)
-
-crisismode completions bash|zsh|fish  # Generate shell completions
+claude mcp add crisismode -- crisismode mcp
 ```
 
-Output modes: `--json` for machine-readable output, plain text auto-detected when piped, colored TTY output by default.
-
-### Pipe output format
-
-When stdout is not a TTY and `--json` isn't set, `crisismode scan` emits plain, tab-separated rows instead of colored output — stable enough to feed to `cut`/`awk`.
-
-A `scan` row has 4 fields:
-
-```
-scan\t<score>\t<scanned_at>\t<duration_ms>
-```
-
-Each `finding` row has 7 fixed fields, so every row has the same column count regardless of whether a finding has a guide:
-
-```
-finding\t<id>\t<service>\t<status>\t<confidence>\t<summary>\t<guide_refs>
-```
-
-| # | Field | Notes |
-|---|---|---|
-| 1 | `finding` | literal row-type marker |
-| 2 | `id` | finding id |
-| 3 | `service` | e.g. `postgresql (prod-db-01)` |
-| 4 | `status` | `healthy` / `recovering` / `unhealthy` / `unknown` |
-| 5 | `confidence` | 0–1 |
-| 6 | `summary` | free text; tab/newline characters are stripped so they can't shift later columns |
-| 7 | `guide_refs` | `guide:<id>[,<id>...]`, empty string when the finding has no matched remediation guide |
-
-### JSON output format
-
-The `--json` flag emits **JSON lines** (one JSON object per line), not a single JSON document. Each line has a `type` field indicating the data it carries:
-
-| Type | Description |
-|---|---|
-| `health` | Health assessment with `status` and `signals` array |
-| `diagnosis` | AI-powered diagnosis with `scenario`, `confidence`, and root cause |
-| `plan` | Recovery plan with `steps` array |
-| `triage` | Localization verdict (`local`/`network`/`remote`/`mixed`/`healthy`) with per-layer results. Exit code 0 for `healthy`/`remote`, 1 for `local`/`network`/`mixed` |
-
-Example usage:
-
-```bash
-# Pipe to jq for human-readable inspection
-crisismode recover --target my-db --json | jq 'select(.type == "diagnosis")'
-
-# Extract just the plan steps
-crisismode recover --target my-db --json | jq 'select(.type == "plan") | .plan.steps'
-```
-
-### Third-party service checks (`down`)
-
-`crisismode down` checks third-party dependencies (Stripe, GitHub, Vercel, an LLM provider, ...) against two separate facts: what the provider's own status page reports, and whether this machine can reach it — a status-page hiccup is never reported as an outage. Read-only (escalation level 2: Diagnose).
-
-Exit codes: `0` nothing checked looks like a problem, `1` at least one service does, `2` the command itself was called wrong (an unrecognized flag — the only CrisisMode command that does this).
-
-Check specific services ad hoc — catalog ids (`stripe`, `github`, `vercel`, `netlify`, `supabase`, `cloudflare`, `npm`, `twilio`, `sendgrid`, `render`, `fly`, `upstash`), aliases (`flyio` → `fly`), raw domains (reachability only, no known status page), or `anthropic`/`openai` (routed through the LLM Provider agent's own status source — `down`-only; see below):
-
-```bash
-crisismode down stripe github
-```
-
-```text
-  ✅ Stripe (healthy)
-      Stripe is healthy and reachable.
-  ✅ GitHub (healthy)
-      GitHub is healthy and reachable.
-```
-
-Or configure a standing list in `crisismode.yaml` and run `crisismode down` with no arguments. A `services:` list is valid on its own — no `targets:` block required:
-
-```yaml
-apiVersion: crisismode/v1
-kind: SiteConfig
-metadata:
-  name: my-stack
-services:
-  - stripe
-  - example.com
-```
-
-Each `services:` entry is a catalog id/alias, a raw domain (reachability-only — no known status page, so a `down` verdict there means "can't reach it," not "provider incident"), or `{ host, port }` for a non-default port. `anthropic`/`openai` are rejected here (config validation error) — they're covered automatically by the LLM Provider agent whenever the corresponding API key is set, and are only meant for the ad-hoc `crisismode down anthropic` form above. Listing them in `services:` would make `scan`/`watch` DNS-probe the literal hostname instead of routing through the provider's real status source.
-
-## Evidence Bundles
-
-CrisisMode speaks the SRE evidence-bundle v1 format, so external incident tooling can hand it a bundle of evidence (logs, metrics, operator notes) and get back a ranked diagnosis with policy-checked recovery actions:
-
-- `bundle ingest` — read-only AI diagnosis of the evidence
-- `bundle respond` — full AdapterResponse v1: ranked hypotheses with evidence citations, proposed actions gated by action-class policy, and explicit abstention when evidence is insufficient
-- `bundle execute` — translate a bundle into a validated RecoveryPlan (dry-run)
-
-All three accept a file path or `-` for stdin, making them easy to wire into pipelines:
+**Evidence bundles** — CrisisMode speaks the SRE evidence-bundle v1 format, so
+external incident tooling can hand it logs, metrics, and operator notes and get
+back ranked hypotheses with policy-gated actions. Reads a path or stdin:
 
 ```bash
 cat incident-bundle.json | crisismode bundle respond -
 ```
 
-## MCP Server
-
-`crisismode mcp` starts a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio, so AI agents (Claude Code, Claude Desktop, or any MCP client) can diagnose your infrastructure directly:
+**Pipelines** — `--json` emits JSON lines; plain tab-separated output is
+auto-detected when stdout isn't a TTY.
 
 ```bash
-# Claude Code
-claude mcp add crisismode -- crisismode mcp
+crisismode recover --target my-db --json | jq 'select(.type == "diagnosis")'
 ```
 
-Or in `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "crisismode": { "command": "crisismode", "args": ["mcp"] }
-  }
-}
-```
-
-Every MCP tool is read-only — the MCP surface never mutates infrastructure:
-
-| Tool | What it does |
-|---|---|
-| `crisismode_scan` | Zero-config health scan with a 0–100 score and per-service findings |
-| `crisismode_diagnose` | Health assessment + diagnosis for one target (AI-powered with `ANTHROPIC_API_KEY`, rule-based otherwise) |
-| `crisismode_status` | Quick UP/DOWN probe of configured or detected services |
-| `crisismode_list_agents` | The built-in recovery agent roster |
-| `crisismode_bundle_ingest` | Read-only diagnosis of an SRE evidence bundle (v1) |
-| `crisismode_bundle_respond` | Ranked hypotheses with evidence citations and policy-gated proposed actions |
-| `crisismode_bundle_plan` | Translate a bundle into a dry-run RecoveryPlan (returned, never executed) |
-| `crisismode_readiness` | Forward-looking scale-readiness report: connection headroom, pooling, indexes, slow queries; includes capacity ceilings and a conditional weak-link verdict — see [docs/readiness.md](docs/readiness.md) |
-
-## Check Plugin Ecosystem
-
-CrisisMode consumes external health checks through a unified adapter layer, making thousands of existing checks available without rewriting them:
-
-- **Native check plugins** — JSON wire protocol for purpose-built CrisisMode checks
-- **Nagios/Icinga/Checkmk plugins** — thousands of battle-tested infrastructure checks
-- **Goss YAML health assertions** — declarative system state validation
-- **Sensu checks** — Graphite, InfluxDB, OpenTSDB, and Prometheus metric formats
-
-See [docs/guides/creating-a-check-plugin.md](docs/guides/creating-a-check-plugin.md) for the check plugin authoring guide.
-
-## Contributing
-
-Domain experts contribute recovery knowledge as agents, playbooks, and check plugins — the framework handles safety, validation, and execution.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution workflows and [GETTING_STARTED.md](GETTING_STARTED.md) for developer setup.
+Full command list, flags, exit codes, and output-format contracts:
+**[docs/cli-reference.md](docs/cli-reference.md)**.
 
 ## Deployment
 
@@ -456,22 +228,30 @@ helm install crisis-spoke deploy/helm/crisismode-spoke/ \
   --set targetNamespaces='{default,production}'
 ```
 
-The spoke runs in 256Mi and operates autonomously when the hub is unreachable.
+Spokes (Layers 1–2) run close to target systems and own execution and safety;
+the hub (Layers 3–4) adds coordination, analytics, and AI enrichment. A spoke
+runs in 256Mi and keeps working when the hub is unreachable.
 
-## Specifications
+## Documentation
 
-- [Recovery Agent Contract](specs/foundational/recovery-agent-contract.md) — the authoritative agent interface definition
-- [Deployment & Operations](specs/deployment/operations.md) — hub-and-spoke architecture, integration patterns, operational management
-- [Plugin Platform Architecture Guide](specs/architecture/plugin-platform.md) — how the repo evolves from bespoke agents to a scalable plugin ecosystem
-- [Operator Health & AI Services](specs/architecture/operator-health-and-ai-services.md) — operator summary, AI diagnosis, and site config spec
+| If you want to… | Read |
+|---|---|
+| Use the CLI on your own stack | [QUICKSTART.md](QUICKSTART.md) |
+| Build and hack on CrisisMode | [GETTING_STARTED.md](GETTING_STARTED.md) |
+| Contribute an agent or playbook | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Understand the design | [docs/architecture.md](docs/architecture.md) |
+| Look up a command or output format | [docs/cli-reference.md](docs/cli-reference.md) |
+| Know what's actually validated | [docs/coverage.md](docs/coverage.md) |
+| Check scale readiness | [docs/readiness.md](docs/readiness.md) |
+
+Specifications: [Recovery Agent Contract](specs/foundational/recovery-agent-contract.md)
+(authoritative) · [Deployment & Operations](specs/deployment/operations.md) ·
+[Plugin Platform](specs/architecture/plugin-platform.md) ·
+[Operator Health & AI Services](specs/architecture/operator-health-and-ai-services.md)
 
 ## License
 
-The spoke runtime, agent SDK, and specifications are licensed under **Apache 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for details.
-
-| Component | License |
-|---|---|
-| Spoke runtime (`src/framework/`, `src/agent/`, `src/types/`) | Apache 2.0 |
-| Agent SDK and contract spec (`specs/foundational/`) | Apache 2.0 |
-| Test infrastructure (`test/`, `deploy/`) | Apache 2.0 |
-| Hub API, coordination, and management UI | Commercial (not in this repo) |
+Apache 2.0 for everything in this repo — spoke runtime, agent SDK, specs, and
+test infrastructure. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The hub API,
+coordination service, and management UI are commercial and not part of this
+repository.

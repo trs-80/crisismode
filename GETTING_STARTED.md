@@ -1,263 +1,260 @@
-# Getting Started
+# Getting Started (Development)
 
-This guide covers everything you need to start developing on CrisisMode — from first clone to running recovery agents against real infrastructure.
+Setting up a CrisisMode development environment — first clone through running
+agents against real degraded PostgreSQL.
+
+> **Just want to use the CLI?** That's [QUICKSTART.md](QUICKSTART.md) — install a
+> binary and scan your stack. This guide is about building and modifying
+> CrisisMode itself.
+>
+> **Ready to contribute?** [CONTRIBUTING.md](CONTRIBUTING.md) covers the
+> contribution tracks, code standards, and PR expectations.
 
 ## Prerequisites
 
-- **Node.js** >= 18 (recommended: use [fnm](https://github.com/Schniz/fnm) or [nvm](https://github.com/nvm-sh/nvm))
-- **pnpm** — `npm install -g pnpm`
-- **Podman** — for the containerized test environment. `brew install podman && podman machine init && podman machine start`
-- **Git** — with the repo cloned: `git clone git@github.com:trs-80/crisismode.git`
+- **Node.js** >= 22 (recommended: [fnm](https://github.com/Schniz/fnm) or
+  [nvm](https://github.com/nvm-sh/nvm)) — Node 18 and 20 are end-of-life; CI
+  tests 22 and 24
+- **pnpm** — `npm install -g pnpm`. The exact version is pinned via
+  `packageManager` in `package.json`
+- **Podman** — for the containerized test environment:
+  `brew install podman && podman machine init && podman machine start`
+- **Git** — `git clone git@github.com:trs-80/crisismode.git`
 
-### Optional
+Optional, but the pre-commit hooks want them:
 
-- **shellcheck** — `brew install shellcheck` (required by pre-commit hooks for `.sh` files)
-- **gitleaks** — `brew install gitleaks` (required by pre-commit hooks for secret scanning)
+- **shellcheck** — `brew install shellcheck` (lints staged `.sh` files)
+- **gitleaks** — `brew install gitleaks` (secret scanning)
 
-## First-time Setup
+## First-time setup
 
 ```bash
 cd crisismode
-pnpm install
+pnpm install          # also installs husky pre-commit hooks via `prepare`
+pnpm run build        # compiles to dist/, including the agent-sdk workspace
 ```
 
-This installs dependencies and sets up husky pre-commit hooks automatically (via the `prepare` script).
-
-Verify the hooks are working:
+Verify the toolchain:
 
 ```bash
-pnpm run typecheck    # TypeScript compilation check
+pnpm run typecheck    # tsc --noEmit
+pnpm test             # vitest unit tests
+pnpm run lint         # eslint
 ```
 
-## Running the Demo
-
-The demo runs entirely in-memory using simulators — no database or infrastructure required:
+Then run the in-memory demo — no database or infrastructure required:
 
 ```bash
 pnpm dev
 ```
 
-This walks through the full recovery pipeline for a PostgreSQL replication lag cascade: trigger → diagnosis → plan → validation → execution → forensic record.
+That walks the full recovery pipeline for a PostgreSQL replication lag cascade:
+trigger → diagnosis → plan → validation → execution → forensic record.
 
-## Setting Up the Test Environment
-
-The test environment gives you real PostgreSQL with streaming replication, Prometheus, AlertManager, and a mock hub API.
-
-### Start the stack
+To run the CLI from source without building:
 
 ```bash
-./test/podman/scripts/start.sh
+npx tsx src/cli/index.ts scan
+npx tsx src/cli/index.ts agent list
 ```
 
-This pulls container images and starts:
-- **PostgreSQL primary** on `localhost:5432` (user: `crisismode`, password: `crisismode`)
-- **PostgreSQL replica** on `localhost:5433` (streaming replication from primary)
-- **Prometheus** on `http://localhost:9090` (scraping PG metrics)
-- **AlertManager** on `http://localhost:9093` (configured to webhook to `localhost:3000`)
-- **postgres_exporter** on `http://localhost:9187`
-- **Mock Hub API** on `http://localhost:8080`
+## The test environment
 
-### Validate
+Real PostgreSQL with streaming replication, Prometheus, AlertManager, and a mock
+hub API.
 
 ```bash
-./test/smoke/run-all.sh                # 16 checks: services, replication, metrics, hub API
-./test/smoke/test-failure-injection.sh  # 6 checks: inject failures, verify, reset
+./test/podman/scripts/start.sh     # start
+./test/podman/scripts/status.sh    # check
+./test/podman/scripts/stop.sh      # tear down
 ```
 
-### Inject failures
+`start.sh` pulls images and brings up:
 
-These scripts create real degraded states in the test PostgreSQL:
+| Service | Where | Notes |
+|---|---|---|
+| PostgreSQL primary | `localhost:5432` | user `crisismode`, password `crisismode` |
+| PostgreSQL replica | `localhost:5433` | streaming replication from primary |
+| Prometheus | `http://localhost:9090` | scraping PG metrics |
+| AlertManager | `http://localhost:9093` | webhooks to `localhost:3000` |
+| postgres_exporter | `http://localhost:9187` | |
+| Mock Hub API | `http://localhost:8080` | |
+
+Validate it came up correctly:
 
 ```bash
-./test/failures/inject-replication-lag.sh     # Pause WAL replay → growing lag
-./test/failures/inject-connection-flood.sh    # Open 200 idle connections
-./test/failures/inject-long-queries.sh        # Hold row locks + expensive scans
-./test/failures/inject-slot-overflow.sh       # Abandoned slot accumulating WAL
-./test/failures/reset.sh                      # Restore everything to healthy
+./test/smoke/run-all.sh                 # services, replication, metrics, hub API
+./test/smoke/test-failure-injection.sh   # inject, verify, reset round-trip
+./test/smoke/test-alert-pipeline.sh      # AlertManager → spoke webhook path
 ```
 
-### Run the spoke against real PostgreSQL
+Each script prints a `passed/total` tally at the end.
+
+### Injecting real failures
+
+These create genuinely degraded states in the test PostgreSQL — not mocks:
 
 ```bash
-# Dry-run: reads from real PG, logs mutations
-pnpm run live
+./test/failures/inject-replication-lag.sh      # pause WAL replay → growing lag
+./test/failures/inject-connection-flood.sh     # 200 idle connections
+./test/failures/inject-long-queries.sh         # hold row locks + expensive scans
+./test/failures/inject-slot-overflow.sh        # abandoned slot accumulating WAL
+./test/failures/inject-pgvector-unindexed.sh   # vector column with no ANN index
+./test/failures/reset.sh                       # restore everything to healthy
+./test/failures/reset-pgvector.sh              # undo just the pgvector injection
+```
 
-# With lag injected first:
+### Running against real PostgreSQL
+
+```bash
+pnpm run live                    # dry-run: reads real PG, logs mutations
+pnpm run live -- --execute       # execute mode: runs real SQL mutations
+
+# A useful loop:
+./test/failures/inject-replication-lag.sh && pnpm run live
+```
+
+### Webhook receiver
+
+```bash
+pnpm run webhook                 # dry-run, listens on :3000
+pnpm run webhook --execute       # execute mode
+
+# Inject lag; AlertManager fires an alert at the spoke
 ./test/failures/inject-replication-lag.sh
-pnpm run live
-
-# Execute mode: actually runs SQL mutations
-pnpm run live -- --execute
 ```
 
-### Run the webhook receiver
-
-```bash
-pnpm run webhook                # dry-run, listens on :3000
-pnpm run webhook --execute      # execute mode
-
-# Then inject lag — AlertManager will fire an alert to the spoke
-./test/failures/inject-replication-lag.sh
-```
-
-### Tear down
-
-```bash
-./test/podman/scripts/stop.sh
-```
-
-## Project Layout
+## Project layout
 
 ### CLI (`src/cli/`)
 
-The unified `crisismode` CLI provides commands: `scan` (default), `diagnose`, `recover`, `status`, `ask`, `demo`, `init`, `webhook`, `watch`, `readiness`, plus subcommand groups `bundle` (ingest/respond/execute for SRE evidence bundles), `playbook` (list/validate/dry-run), `agent` (list/info), `registry` (list/search/install), and `mcp` (stdio MCP server) and `completions` (shell completions). Running `crisismode` with no arguments performs a zero-config health scan. Supporting modules handle system detection (`detect.ts`), zero-config agent discovery (`autodiscovery.ts`), structured output (`output.ts`), and error formatting (`errors.ts`); escalation levels live in `src/framework/escalation.ts`. See the [README CLI reference](README.md#cli-reference) for the full command list.
+`src/cli/index.ts` is the entry point. Commands live in `src/cli/commands/`.
+Supporting modules: `detect.ts` (port probing), `autodiscovery.ts` (zero-config
+agent detection), `output.ts` (structured output), `errors.ts` (error
+formatting), `status-presentation.ts` (single source for status → presentation
+mappings), `visibility.ts` (coverage and maturity reporting).
 
-### Core Framework (`src/framework/`)
+Full command surface: [docs/cli-reference.md](docs/cli-reference.md).
+
+### Framework (`src/framework/`)
 
 | File | Purpose |
 |---|---|
-| `engine.ts` | Executes recovery plans step-by-step. Handles dry-run vs execute mode. |
-| `graph-engine.ts` | LangGraph-based graph execution engine for complex workflows |
-| `backend.ts` | ExecutionBackend contract — shared interface for all execution backends |
-| `safety.ts` | State capture, blast radius validation |
-| `coordinator.ts` | Human approval logic (auto-approve decisions based on trust + catalog) |
-| `validator.ts` | Validates plans against agent manifests |
+| `engine.ts` | `LegacyExecutionEngine` — sequential step execution, dry-run vs execute |
+| `graph-engine.ts` | `RecoveryGraphEngine` — LangGraph-based, supports checkpoint/resume |
+| `backend.ts` | `ExecutionBackend` contract shared by all backends |
+| `safety.ts` | State capture, blast-radius validation |
+| `validator.ts` | Validates plans against agent manifests and safety rules |
+| `coordinator.ts` | Human approval logic (trust + catalog driven) |
 | `catalog.ts` | Pre-authorized action catalog matching |
 | `forensics.ts` | Forensic record assembly and persistence |
-| `hub-client.ts` | Spoke ↔ hub communication (bootstrap, heartbeat, forensics, policies) |
-| `capability-registry.ts` | Global registry of standard recovery capabilities |
+| `escalation.ts` | The five-level progressive escalation model |
+| `agent-maturity.ts` | Collapses manifest maturity to the two labels operators see |
+| `capability-registry.ts` | Registry of standard recovery capabilities |
 | `provider-registry.ts` | Resolves capability providers for plan steps |
-| `operator-summary.ts` | Builds operator-facing health and readiness summaries |
-| `symptom-router.ts` | Routes symptoms to appropriate recovery agents |
+| `symptom-router.ts` | Routes symptoms to the appropriate agent |
+| `root-cause-synthesis.ts` | Correlation clustering (the rule set is frozen — see CONTRIBUTING) |
 | `ai-diagnosis-universal.ts` | Universal AI-powered diagnosis for any agent |
+| `operator-summary.ts` | Operator-facing health and readiness summaries |
 | `incident-report.ts` | Structured incident report generation |
 | `network-profile.ts` | Network diagnostics and profiling |
-| `index.ts` | Barrel export for all framework modules |
+| `triage.ts` / `triage-probes.ts` | Offline layered localization and verdict synthesis |
+| `service-status/` | Third-party status checker — status page + reachability, never conflated |
+| `guidance/` | Static `RemediationGuide` registry for console-only fixes |
+| `hooks/` | 9-point lifecycle hook system |
+| `playbook/` | Markdown playbook parser, runtime, discovery |
+| `registry/` | Agent plugin discovery and manifest handling |
+| `hub-client.ts` | Spoke ↔ hub communication |
+
+`src/readiness/` holds the scale-readiness rule registry and capacity ceilings —
+see [docs/readiness.md](docs/readiness.md).
 
 ### Agents (`src/agent/`)
 
-Each agent follows the same pattern:
+Every agent follows the same six-file pattern:
 
 ```
-agent/
-  <system>/
-    backend.ts        # Interface that both simulator and live client implement
-    simulator.ts      # In-memory implementation for demos and tests
-    live-client.ts    # Real infrastructure client (connects to actual systems)
-    manifest.ts       # Agent manifest (capabilities, risk profile, triggers)
-    agent.ts          # RecoveryAgent implementation (diagnose, plan, replan)
-    registration.ts   # Lazy factory for the agent registry
+src/agent/<system>/
+  backend.ts        # Interface both simulator and live client implement
+  simulator.ts      # In-memory implementation for demos and tests
+  live-client.ts    # Real infrastructure client
+  manifest.ts       # Capabilities, risk profile, triggers, maturity
+  agent.ts          # RecoveryAgent implementation
+  registration.ts   # Lazy factory for the agent registry
 ```
 
-**PostgreSQL Replication** (`pg-replication/`) — the MVP agent. Has a full live client that queries real `pg_stat_replication`.
-
-**Redis Memory** (`redis/`) — cache recovery agent. Live client complete; execute-verified via the torture harness.
-
-**etcd Recovery** (`etcd/`) — consensus cluster recovery. Handles leader election loops, NOSPACE alarms, member failures. Simulator complete.
-
-**Kafka Recovery** (`kafka/`) — broker recovery agent. Handles under-replicated partitions, leader imbalance, consumer lag cascades. Simulator complete.
-
-**Kubernetes Recovery** (`kubernetes/`) — cluster recovery agent. Handles node failures, pod crash loops, stuck deployments, PVC issues. Live client complete.
-
-**Ceph Storage** (`ceph/`) — distributed storage recovery. Handles OSD failures, degraded placement groups, pool near-full conditions. Simulator complete.
-
-**Flink Stream Processing** (`flink/`) — stream job recovery. Handles checkpoint failure cascades, savepoint corruption, backpressure. Simulator complete.
-
-**AI Provider** (`ai-provider/`) — AI service failover and fallback. Handles provider failover routing, rate limit management. Live client complete.
-
-**Config Drift** (`config-drift/`) — configuration drift detection and remediation. Handles drift detection, compliance enforcement. Live client complete; diagnosis validated in dry-run via the torture harness.
-
-**DB Migration** (`db-migration/`) — database migration safety. Handles migration safety checks, rollback orchestration. Live client complete; diagnosis validated in dry-run via the torture harness.
-
-**Deploy Rollback** (`deploy-rollback/`) — deployment rollback orchestration (Vercel, requires `VERCEL_TOKEN`). Handles rollback coordination, canary failure response. Live client complete.
-
-**Queue Backlog** (`queue-backlog/`) — queue backlog and lag recovery. Handles backlog reduction, consumer lag recovery. Live client complete; diagnosis validated in dry-run via the torture harness.
-
-**AWS S3 / DynamoDB / RDS** (`aws-s3/`, `aws-dynamodb/`, `aws-rds/`) — AWS backup verification and recovery (bucket versioning/lifecycle, PITR status, backup retention and snapshot recency). Live clients validated in dry-run against real AWS.
-
-**DNS** (`dns/`) — DNS resolution failure recovery. Live diagnosis plus local cache flush.
-
-**TLS** (`tls/`) — certificate expiry and chain health. Live diagnosis only.
-
-**Disk** (`disk/`) — local disk exhaustion detection. Live diagnosis only.
-
-**Backup Verification** (`backup/`) — backup verification and DR readiness across pluggable providers (filesystem, `aws_s3`, `aws_rds`). Live diagnosis only.
-
-See `src/config/builtin-agents.ts` for the authoritative roster (19 agents) and the README status tables for what is execute-verified versus dry-run validated.
-
-### Type System (`src/types/`)
-
-All contract types are defined here. Key types:
-- `RecoveryPlan` — the plan structure with steps, impact analysis, rollback strategy
-- `RecoveryStep` — 7 step types (system_action, diagnosis_action, human_notification, human_approval, checkpoint, replanning_checkpoint, conditional)
-- `AgentManifest` — agent capabilities declaration
-- `ForensicRecord` — immutable audit trail
-- `AgentContext` — trigger, topology, trust levels, policies
-- `HealthAssessment` / `OperatorSummary` — health assessment and operator-facing readiness types
-- `PluginKind` / `CapabilityProviderDescriptor` — plugin ecosystem types for capability providers
-
-## Building a New Agent
-
-1. Create `src/agent/<system>/backend.ts` — define the interface for querying your target system
-2. Create `src/agent/<system>/simulator.ts` — implement the interface with canned data
-3. Create `src/agent/<system>/manifest.ts` — declare what your agent targets and its risk profile
-4. Create `src/agent/<system>/agent.ts` — implement `RecoveryAgent` (diagnose, plan, replan)
-5. Create `src/agent/<system>/registration.ts` — lazy factory for the agent registry
-6. Register your agent in `src/config/builtin-agents.ts` via the agent registry (`src/config/agent-registry.ts`)
-7. Add capabilities to `src/framework/capability-registry.ts` if your agent uses new capability domains
-
-The framework handles validation, approval workflows, forensic recording, and hub communication — your agent only needs to diagnose and produce plans.
-
-## Commit Conventions
-
-This repo uses [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-type(scope): description
-
-feat(agent): add Redis memory pressure recovery
-fix: correct replication lag threshold check
-docs: update README with webhook instructions
-chore: update dependencies
-test: add failure injection round-trip tests
-```
-
-Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `ci`, `perf`, `build`
-
-The commit-msg hook enforces this format.
-
-## Pre-commit Hooks
-
-All hooks run automatically on `git commit`. To bypass (e.g., for WIP commits):
+`src/config/builtin-agents.ts` is the authoritative roster. For the live list
+with maturity labels, ask the CLI:
 
 ```bash
-git commit --no-verify -m "wip: work in progress"
+crisismode agent list      # 26 registrations
+crisismode agent info postgresql-replication-recovery
 ```
 
-| Hook | What it checks |
+**Do not duplicate that roster in prose.** Which agents are validated versus
+best-effort is tracked in one place: [docs/coverage.md](docs/coverage.md).
+`src/agent/pg-replication/` is the reference implementation — read it first.
+
+### Types (`src/types/`)
+
+Public types are defined in `packages/agent-sdk` (zero runtime dependencies) and
+re-exported from `src/types/index.ts`. Key ones:
+
+- `RecoveryPlan` — steps, impact analysis, rollback strategy
+- `RecoveryStep` — the 7 step types
+- `AgentManifest` — capability and risk declaration, including `plugin.maturity`
+- `ForensicRecord` — immutable audit trail
+- `AgentContext` — trigger, topology, trust levels, policies
+- `HealthAssessment` / `OperatorSummary` — health and operator-facing readiness
+- `PluginKind` / `PluginMaturity` / `CapabilityProviderDescriptor` — plugin types
+
+## Pre-commit hooks
+
+All hooks run on `git commit`. Bypass with `--no-verify` only for genuine WIP.
+
+| Hook | Checks |
 |---|---|
 | TypeScript typecheck | `tsc --noEmit` on staged `.ts` files |
-| gitleaks | Secret detection (API keys, tokens, passwords) |
+| gitleaks | Secrets (API keys, tokens, passwords) |
 | Sensitive files | Blocks `.pem`, `.key`, `.p12`, `.env`, `kubeconfig`, `tfstate` |
-| shellcheck | Lints staged `.sh` files |
+| shellcheck | Staged `.sh` files |
 | Large files | Blocks files >1MB |
-| Conflict markers | Catches leftover `<<<<<<<` / `>>>>>>>` |
-| Conventional commits | Enforces commit message format |
+| Conflict markers | Leftover `<<<<<<<` / `>>>>>>>` |
+| Conventional commits | Commit message format |
 
-## Useful Commands
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
+`type(scope): description`, where type is one of `feat`, `fix`, `docs`, `style`,
+`refactor`, `test`, `chore`, `ci`, `perf`, `build`.
+
+## Command reference
 
 ```bash
 pnpm dev                              # Demo mode (simulated)
 pnpm run live                         # Live mode against test PG (dry-run)
 pnpm run live -- --execute            # Live mode with mutations
 pnpm run webhook                      # Start webhook receiver
-pnpm test                             # Run unit tests (vitest)
-pnpm run test:watch                   # Run tests in watch mode
+pnpm test                             # Unit tests (vitest)
+pnpm run test:watch                   # Tests in watch mode
+pnpm run test:coverage                # Tests with coverage
+pnpm run test:cli                     # CLI smoke test
 pnpm run typecheck                    # TypeScript check
+pnpm run lint                         # ESLint  (lint:fix to autofix)
 pnpm run build                        # Compile to dist/
-./test/podman/scripts/start.sh        # Start test environment
-./test/podman/scripts/status.sh       # Check test environment status
-./test/smoke/run-all.sh               # Run smoke tests
-./test/failures/inject-replication-lag.sh  # Inject test failure
-./test/failures/reset.sh              # Reset to healthy
+pnpm run build:bundle                 # esbuild single-file bundle
+pnpm run build:binary                 # Standalone binary
+pnpm run eval:diagnosis               # Diagnosis eval, writes eval/reports/
+pnpm run eval:diagnosis:gate          # Fails below the 13/14 score gate
+pnpm run guides:walkthrough           # Generate a remediation-guide checklist
+pnpm run guides:apply <checklist>     # Stamp verifiedOn for verified guides
 ```
+
+Lint-time TypeScript is pinned to 6.0.2 via `.pnpmfile.cjs` because
+typescript-eslint does not yet support the TS 7 native compiler; `tsc` itself
+stays on TS 7.
+
+## Next steps
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution tracks, code standards, PR expectations
+- [docs/architecture.md](docs/architecture.md) — layers, engines, safety, plugin model
+- [Your First Agent](docs/guides/your-first-agent.md) — build an agent start to finish
+- [specs/foundational/recovery-agent-contract.md](specs/foundational/recovery-agent-contract.md) — the authoritative contract

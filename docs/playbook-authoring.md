@@ -120,6 +120,13 @@ Capture system state before mutations. The framework snapshots the configured ta
 ### `system_action`
 Execute a command that mutates system state. Must declare `risk` and `capability`; at `elevated` risk or higher must also declare `preserve` (state captured before the step runs, blocking on failure). Should have `precondition`, `success`, and `blast_radius`. Include a code block with the command. `crisismode playbook validate` runs the compiled plan through the same safety validator as code-based agents and reports exactly which rule a step violates.
 
+`capability` values must be ids that are already registered in
+`src/framework/capability-registry.ts` — for example `db.query.read`,
+`db.replica.disconnect`, `cache.expiry.trigger`, `k8s.node.drain`,
+`queue.workers.restart`. An unregistered id fails validation with
+`Missing capabilities on steps: <step-id>`, which is the most common reason a
+playbook parses but will not validate.
+
 ### `human_approval`
 Pause execution until a human approves. Set `timeout` and `escalation`. The body text is shown to the approver as context.
 
@@ -247,6 +254,7 @@ redis-cli info memory
 ### 4. Evict expired keys
 - type: system_action
 - risk: routine
+- capability: cache.expiry.trigger
 - target: redis-primary
 - precondition: "Redis is accepting commands"
 - success: "Memory usage below 85%"

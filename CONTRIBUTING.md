@@ -22,41 +22,17 @@ Choose based on what you need and how much time you have:
 
 ## Development Setup
 
-### Prerequisites
-
-- Node.js >= 18
-- pnpm 10+ (the repo pins the exact version via `packageManager` in `package.json`)
-
-### Quick start
+Full setup — prerequisites, build, the podman test environment, failure
+injection, and the project layout — lives in
+**[GETTING_STARTED.md](GETTING_STARTED.md)**. The short version:
 
 ```bash
 git clone https://github.com/trs-80/crisismode.git
 cd crisismode
-pnpm install
-pnpm run build        # Compile to dist/ (also builds the agent-sdk workspace)
-pnpm run typecheck    # Verify types
-pnpm test             # Run unit tests
+pnpm install && pnpm run build
+pnpm run typecheck && pnpm test
+npx tsx src/cli/index.ts scan        # run the CLI from source
 ```
-
-### Running the CLI
-
-```bash
-npx tsx src/cli/index.ts scan        # Health scan
-npx tsx src/cli/index.ts demo        # Simulator demo
-npx tsx src/cli/index.ts diagnose    # AI-powered diagnosis
-```
-
-### Test environment
-
-For testing against real infrastructure:
-
-```bash
-./test/podman/scripts/start.sh       # Start PG, Prometheus, etc.
-./test/smoke/run-all.sh              # Validate the test environment
-pnpm run live                        # Dry-run against test PG
-```
-
-See [GETTING_STARTED.md](GETTING_STARTED.md) for full setup instructions.
 
 ## Your First Contribution
 
@@ -89,11 +65,35 @@ Agents are TypeScript modules that follow the 6-file pattern (`backend.ts`, `sim
 
 1. Build the simulator first -- it enables testing without real infrastructure
 2. Implement `assessHealth`, `diagnose`, `plan`, `replan`
-3. Register in `src/config/builtin-agents.ts`
-4. Add tests in `src/__tests__/`
-5. Submit a PR
+3. Declare `metadata.plugin.maturity` honestly (see below)
+4. Register in `src/config/builtin-agents.ts`
+5. Add tests in `src/__tests__/`
+6. Submit a PR
 
 See the [Your First Agent](docs/guides/your-first-agent.md) tutorial for a step-by-step walkthrough. The PostgreSQL agent at `src/agent/pg-replication/` is the canonical reference implementation.
+
+### Declaring maturity honestly
+
+Your manifest's `metadata.plugin.maturity` is a claim operators rely on during an
+incident, so it is the one field never to be optimistic about. Valid values are
+`experimental`, `simulator_only`, `dry_run_only`, `live_validated`, and
+`production_certified`.
+
+**A new agent is `simulator_only`.** That is not a placeholder to be upgraded when
+the code feels finished — CrisisMode's honesty layer
+(`src/framework/agent-maturity.ts`) treats everything except `live_validated` as
+best-effort and labels its findings as leads rather than conclusions in operator
+output. That default is the point.
+
+Only claim `live_validated` when the agent has actually been run against a real
+deployment of its target system, and say in the PR description what you ran it
+against. "The live client compiles" is not validation. If you validated diagnosis
+in dry-run but never executed a mutating plan, `dry_run_only` is the accurate
+label.
+
+Where each agent currently stands is tracked in
+[docs/coverage.md](docs/coverage.md) — update it in the same PR that changes a
+maturity value.
 
 ## Code Standards
 
@@ -243,8 +243,11 @@ When you open a pull request:
 
 ## Further Reading
 
+- [GETTING_STARTED.md](GETTING_STARTED.md) -- development setup, test environment, project layout
 - [Agent Development Guide](docs/guides/creating-a-recovery-agent.md) -- full agent contract, manifest reference, and safety checklist
 - [Check Plugin Reference](docs/guides/creating-a-check-plugin.md) -- wire protocol, Nagios/Goss/Sensu adapters
 - [Architecture Overview](docs/architecture.md) -- system architecture and key abstractions
+- [CLI Reference](docs/cli-reference.md) -- every command, flag, exit code, and output format
+- [Coverage & Validation Status](docs/coverage.md) -- what each agent has actually been validated against
 - [Recovery Agent Contract](specs/foundational/recovery-agent-contract.md) -- the authoritative specification
 - [Plugin Platform Guide](specs/architecture/plugin-platform.md) -- plugin taxonomy and platform architecture

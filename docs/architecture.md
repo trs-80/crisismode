@@ -46,7 +46,7 @@ graph TB
 The execution kernel runs recovery plans step by step. Two execution engines are available:
 
 - **LegacyExecutionEngine** — Sequential, callback-based. Each step runs in order. Failures halt execution. Suitable for simple recovery flows.
-- **RecoveryGraphEngine** — Built on LangGraph. Steps become graph nodes with conditional edges. Supports durable checkpointing (MemorySaver for dev, PostgresSaver for production), interrupt/resume for human-in-the-loop approval, and crash recovery from the last checkpoint.
+- **RecoveryGraphEngine** — Built on LangGraph. Steps become graph nodes with conditional edges. Supports checkpointing, interrupt/resume for human-in-the-loop approval, and recovery from the last checkpoint. The checkpointer is injectable and defaults to LangGraph's in-memory `MemorySaver`; a durable store (e.g. `PostgresSaver`) is the intended hub deployment but is not wired up in this repo.
 
 Both engines share the same `ExecutionBackend` interface for command execution and check evaluation.
 
@@ -193,8 +193,93 @@ Two execution modes control whether mutations actually run:
 - **`dry-run`** (default) — Reads from real systems, logs what mutations would happen, but does not execute them. All safety checks still run. State transitions are simulated.
 - **`execute`** — Runs all operations including system mutations. Requires explicit opt-in via `--execute` flag.
 
+## Escalation Levels
+
+Every action CrisisMode can take is placed on a five-level scale
+(`src/framework/escalation.ts`), which is what lets output say how far a
+suggestion goes before anyone runs it:
+
+| Level | Name | Touches the system? |
+|---|---|---|
+| 1 | Observe | No — read-only health checks, no interaction |
+| 2 | Diagnose | Reads only — live queries |
+| 3 | Suggest | Generates plans, executes nothing |
+| 4 | Repair (safe) | Executes `routine` and `elevated` risk actions |
+| 5 | Repair (destructive) | Executes `high` and `critical` risk actions |
+
+`triage`, `down`, and `readiness` never exceed level 2 by design.
+
+## The Honesty Layer
+
+CrisisMode registers more agents than it has validated, so it treats "how much do
+we actually know" as a first-class part of the architecture rather than a
+documentation problem.
+
+- **Maturity collapse** (`src/framework/agent-maturity.ts`) — a manifest's
+  five-value `PluginMaturity` is reduced to two operator-facing labels:
+  `live_validated`, or best-effort for everything else. Unknown and unregistered
+  kinds default to best-effort, and a *kind* only counts as live-validated when
+  every agent registered for it says so. Best-effort findings carry an explicit
+  "treat this as a lead, not a conclusion" suffix in human output.
+- **Unknown is a real status.** Health findings, readiness rules, and provider
+  checks can return `unknown` with a `reason` instead of guessing. `unknown`
+  never moves a readiness score or verdict — demanding zero unknowns would
+  invite fabrication.
+- **Omit rather than estimate.** A capacity ceiling that cannot be computed from
+  declared or measured inputs is dropped with a reason, never approximated.
+- **Failures degrade coverage, not delivery.** Per-rule and per-agent error
+  isolation turns a thrown error into an `unknown` finding, leaving the rest of
+  the report intact.
+- **Blocked is not recovered.** When a required live capability provider is
+  missing, the engine refuses to run the plan, and a blocked run is never counted
+  as a successful recovery.
+
+See [coverage.md](coverage.md) for where each agent currently stands.
+
+## Localization and Outward Checks
+
+Not every incident is inside your infrastructure, so three read-only subsystems
+answer questions that precede recovery:
+
+- **Triage** (`triage.ts`, `triage-probes.ts`) — offline layered localization.
+  Probes outward through interfaces → gateway → DNS → captive portal → internet
+  → configured targets, then synthesizes a verdict of `local`, `network`,
+  `remote`, `mixed`, or `healthy`. It works with no connectivity at all, which is
+  the situation it exists for.
+- **Service status** (`service-status/`) — combines a provider's own status page
+  (Statuspage v2 parsing, plus a catalog of known services) with an independent
+  reachability probe, and never conflates the two: a status-page hiccup is not
+  reported as an outage, and an unreachable host is not reported as a provider
+  incident.
+- **Readiness** (`src/readiness/`) — forward-looking rules and capacity ceilings
+  answering "will this break under load?" rather than "is it broken now?". See
+  [readiness.md](readiness.md).
+
+## Remediation Guidance
+
+Some fixes CrisisMode must not perform itself — rotating a key, changing a
+billing plan, resizing a managed instance through a vendor console. Rather than
+staying silent, it ships a static `RemediationGuide` registry
+(`src/framework/guidance/`) keyed to readiness rule ids and agent `checkId`s.
+Each guide carries console steps, a CLI equivalent, the expected outcome, and a
+`verifiedOn` date.
+
+Two properties keep this from rotting into stale instructions:
+
+- A guide's `applicableFindingTypes` must name something the codebase actually
+  emits; a test fails otherwise, so a renamed rule cannot silently orphan its
+  guidance.
+- A test fails when any guide's `verifiedOn` is more than 12 months old, so
+  console paths are re-walked on a schedule instead of during someone's incident.
+
+`scan`, `diagnose`, `readiness`, and `recover` all render guidance identically,
+from the same registry.
+
 ## Further Reading
 
 - [Recovery Agent Contract](../specs/foundational/recovery-agent-contract.md) — authoritative specification
 - [Deployment & Operations](../specs/deployment/operations.md) — hub-and-spoke deployment details
 - [Agent Development Guide](guides/creating-a-recovery-agent.md) — building a new agent from scratch
+- [CLI Reference](cli-reference.md) — commands, flags, exit codes, output formats
+- [Coverage & Validation Status](coverage.md) — what has actually been validated
+- [Scale Readiness](readiness.md) — readiness rules, ceilings, and the honesty contract
