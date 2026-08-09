@@ -11,13 +11,23 @@ import { SERVICE_STATUS_CHECK_IDS } from '../../../agent/service-status/check-id
  * own status page — so the steps stay provider-agnostic and lean on
  * `<placeholder>` tokens the operator fills in for the service that is
  * actually failing.
+ *
+ * Anchored to `statusPage` only, deliberately not `reachability` — the
+ * reachability checkId also fires for `down_for_you` (provider says all
+ * clear, this machine can't reach them) and unverified-failure verdicts,
+ * where "confirmed upstream, don't investigate locally" is the wrong advice:
+ * the provider may be fine and it may genuinely be this machine or its
+ * network. `down_for_you` already gets its own pointer at the command layer
+ * (`crisismode down` and `crisismode triage` suggestions in down.ts). A
+ * dedicated neutral reachability guide (distinguishing down_for_you from a
+ * confirmed incident) is a reasonable follow-up, not built here.
  */
 export const serviceStatusGuides: RemediationGuide[] = [
   {
     id: 'dependency-incident-response',
     platform: 'status-page',
     title: 'Confirm and respond to a third-party dependency incident',
-    applicableFindingTypes: [SERVICE_STATUS_CHECK_IDS.statusPage, SERVICE_STATUS_CHECK_IDS.reachability],
+    applicableFindingTypes: [SERVICE_STATUS_CHECK_IDS.statusPage],
     consoleSteps: [
       'Open the status page for <service> (e.g. https://status.<provider>.com) and confirm it lists an incident matching what CrisisMode observed.',
       'Subscribe to updates on that status page (email, RSS, or a Slack/webhook integration) so the team hears about resolution without polling.',

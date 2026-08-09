@@ -303,6 +303,23 @@ describe('guidance registry — content coverage', () => {
     );
     expect(google).toEqual([]);
   });
+
+  /**
+   * CodeRabbit wave (Major finding): dependency-incident-response used to be
+   * keyed to both the status-page and reachability checkIds, so a
+   * down_for_you finding (provider's status page says all clear, only THIS
+   * machine can't reach them) got "the incident is confirmed upstream, do
+   * not investigate locally" advice — wrong, since down_for_you is exactly
+   * the case where the provider is fine and it may genuinely be the
+   * machine/network. Anchored to statusPage only now.
+   */
+  it('the dependency-incident-response guide answers the status-page checkId but not reachability', () => {
+    const statusPageGuides = guidesForFindingTypes([SERVICE_STATUS_CHECK_IDS.statusPage]).map((g) => g.id);
+    expect(statusPageGuides).toContain('dependency-incident-response');
+
+    const reachabilityGuides = guidesForFindingTypes([SERVICE_STATUS_CHECK_IDS.reachability]).map((g) => g.id);
+    expect(reachabilityGuides).not.toContain('dependency-incident-response');
+  });
 });
 
 describe('guidance freshness', () => {
