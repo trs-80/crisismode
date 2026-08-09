@@ -75,11 +75,13 @@ import type {
 const RESPONSE_SCHEMA_VERSION = 'incident-generator.agent-adapter-response/v1' as const;
 
 // Bundle prompts include the full evidence body + a structured-output
-// system prompt. Real-crisis agents use a tight 10s/1024-token budget;
-// here we give Claude more room because (a) the response is rich JSON
-// covering hypotheses, evidence_refs, actions, abstention, uncertainty
-// and (b) we're typically running in a benchmark, not a live incident.
-// Overridable via env vars so benchmark callers can tune without rebuilding.
+// system prompt. These values were the first in the framework sized for a rich
+// JSON response (hypotheses, evidence_refs, actions, abstention, uncertainty)
+// rather than a one-paragraph answer, and they turned out to be the right
+// shape: the diagnosis toolkit has since converged on the same 60s bound after
+// its 10s/1024-token budget was found to truncate every structured response it
+// ever produced. Kept overridable via env vars so benchmark callers can tune
+// without rebuilding.
 const DEFAULT_BUNDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_BUNDLE_MAX_TOKENS = 4096;
 

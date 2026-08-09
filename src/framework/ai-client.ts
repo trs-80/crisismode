@@ -20,8 +20,24 @@
 
 import { defaultAiModel } from './ai-model.js';
 
-const DEFAULT_TIMEOUT_MS = 10_000;
-const DEFAULT_MAX_TOKENS = 1024;
+/**
+ * Fallback budgets for callers that don't set their own.
+ *
+ * Sized so a full structured response fits: the previous 1024-token ceiling
+ * truncated every JSON diagnosis mid-string, and since a truncated response
+ * cannot be parsed, the AI path failed closed to heuristics with no signal
+ * beyond a parse error on stderr. 60s likewise leaves headroom for a
+ * reasoning model — measured 28-40s for a full-length sonnet-5 diagnosis
+ * against the 10s that was here before.
+ *
+ * Every production call site currently passes both explicitly (which is why
+ * these values only ever applied to the two toolkit entry points in
+ * ai-diagnosis.ts). New callers on an INTERACTIVE path should keep doing so
+ * with a tighter `timeoutMs` — a human waiting at a prompt is better served
+ * by a fast fallback than by a 60s hang.
+ */
+const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_MAX_TOKENS = 4096;
 
 /**
  * Thrown when the request did not complete within `timeoutMs`.
@@ -60,9 +76,9 @@ export interface CallClaudeOptions {
   user?: string;
   /** Full conversation history. Overrides `user` when set (used by the ask REPL). */
   messages?: ClaudeMessage[];
-  /** Max tokens for the response. Defaults to 1024. */
+  /** Max tokens for the response. Defaults to 4096. */
   maxTokens?: number;
-  /** Timeout in milliseconds. Defaults to 10000. */
+  /** Timeout in milliseconds. Defaults to 60000. */
   timeoutMs?: number;
   /** Model to use. Defaults to defaultAiModel() (CRISISMODE_AI_MODEL override). */
   model?: string;
