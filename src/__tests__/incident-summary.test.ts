@@ -4,8 +4,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildIncidentSummary,
+  diagnoseCommandFor,
   formatIncidentSummaryText,
 } from '../cli/incident-summary.js';
+import type { SummaryFinding } from '../cli/incident-summary.js';
 import type { ScanResult } from '../cli/output.js';
 
 function makeFinding(
@@ -35,6 +37,47 @@ function makeResult(
     ...overrides,
   };
 }
+
+describe('diagnoseCommandFor', () => {
+  function summaryFinding(overrides: Partial<SummaryFinding> = {}): SummaryFinding {
+    return { id: 'PG-001', service: 'postgresql (prod-db)', status: 'unhealthy', summary: 'x', ...overrides };
+  }
+
+  it('names the target, not the finding id — `diagnose PG-001` does not resolve', () => {
+    expect(diagnoseCommandFor(summaryFinding())).toBe('crisismode diagnose prod-db');
+  });
+
+  it('keeps the finding id for PLUG-* findings, which diagnose routes by index', () => {
+    expect(
+      diagnoseCommandFor(summaryFinding({ id: 'PLUG-002', service: 'plugin (check-disk-usage)' })),
+    ).toBe('crisismode diagnose PLUG-002');
+  });
+
+  it('matches PLUG-* case-insensitively', () => {
+    expect(diagnoseCommandFor(summaryFinding({ id: 'plug-7', service: 'plugin (x)' })))
+      .toBe('crisismode diagnose plug-7');
+  });
+
+  it('falls back to the bare command when no target name is recoverable', () => {
+    expect(diagnoseCommandFor(summaryFinding({ service: 'postgresql' })))
+      .toBe('crisismode diagnose');
+  });
+
+  it('handles kinds that themselves contain dots and dashes', () => {
+    expect(
+      diagnoseCommandFor(summaryFinding({
+        id: 'LLM-004',
+        service: 'llm-provider.anthropic (derived-llm-anthropic)',
+      })),
+    ).toBe('crisismode diagnose derived-llm-anthropic');
+  });
+
+  it('takes the trailing group when the service string has more than one', () => {
+    expect(
+      diagnoseCommandFor(summaryFinding({ service: 'postgresql (v16) (prod-db)' })),
+    ).toBe('crisismode diagnose prod-db');
+  });
+});
 
 describe('buildIncidentSummary', () => {
   it('handles zero findings', () => {
@@ -70,8 +113,8 @@ describe('buildIncidentSummary', () => {
     const result = makeResult({
       score: 50,
       findings: [
-        makeFinding({ id: 'PG-001', service: 'postgresql', status: 'unhealthy', summary: 'Replication lag' }),
-        makeFinding({ id: 'REDIS-001', service: 'redis', status: 'healthy' }),
+        makeFinding({ id: 'PG-001', service: 'postgresql (prod-db)', status: 'unhealthy', summary: 'Replication lag' }),
+        makeFinding({ id: 'REDIS-001', service: 'redis (cache-01)', status: 'healthy' }),
       ],
     });
 
@@ -81,7 +124,9 @@ describe('buildIncidentSummary', () => {
     expect(summary.critical[0]!.id).toBe('PG-001');
     expect(summary.healthy).toHaveLength(1);
     expect(summary.headline).toContain('1 service unhealthy');
-    expect(summary.nextSteps[0]).toContain('crisismode diagnose PG-001');
+    // The suggestion must name the target, not the finding id — `diagnose PG-001`
+    // does not resolve.
+    expect(summary.nextSteps[0]).toContain('crisismode diagnose prod-db');
   });
 
   it('groups recovering and unknown as warning', () => {
@@ -104,15 +149,15 @@ describe('buildIncidentSummary', () => {
     const result = makeResult({
       score: 0,
       findings: [
-        makeFinding({ id: 'PG-001', status: 'unhealthy', summary: 'Down' }),
-        makeFinding({ id: 'REDIS-001', status: 'unhealthy', summary: 'OOM' }),
+        makeFinding({ id: 'PG-001', service: 'postgresql (prod-db)', status: 'unhealthy', summary: 'Down' }),
+        makeFinding({ id: 'REDIS-001', service: 'redis (cache-01)', status: 'unhealthy', summary: 'OOM' }),
       ],
     });
 
     const summary = buildIncidentSummary(result);
 
     expect(summary.nextSteps).toHaveLength(3);
-    expect(summary.nextSteps[0]).toContain('crisismode diagnose PG-001');
+    expect(summary.nextSteps[0]).toContain('crisismode diagnose prod-db');
     expect(summary.nextSteps[1]).toContain('1 more unhealthy');
     expect(summary.nextSteps[2]).toContain('crisismode recover');
   });
