@@ -28,6 +28,19 @@
 set -euo pipefail
 
 DECISION="${1:-approve}"
+
+# Validate before anything expensive happens: the recording makes a live billed
+# API call, so a typo must not be discovered only when the driver mistypes it at
+# the approval gate and the whole capture has to be thrown away.
+case "$DECISION" in
+  approve | skip | reject) ;;
+  *)
+    echo "error: invalid decision '$DECISION'. Expected: approve, skip, or reject." >&2
+    echo "Usage: bash scripts/record-demo.sh [approve|skip|reject]" >&2
+    exit 2
+    ;;
+esac
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/site/assets"
 CAST="$OUT_DIR/demo.cast"
@@ -48,6 +61,27 @@ for tool in asciinema agg expect; do
   }
 done
 
+# agg's --select is load-bearing for the content-anchored GIF cut below and only
+# exists from agg 1.9.0 (released 2026-05-29). On an older agg the run dies at the
+# very last step with a bare clap "unexpected argument" error — after the live,
+# billed recording has already been spent. Check the version up front instead.
+AGG_VERSION="$(agg --version 2>/dev/null | awk 'NR == 1 {print $2}')"
+AGG_MAJOR="${AGG_VERSION%%.*}"
+AGG_MINOR="${AGG_VERSION#*.}"
+AGG_MINOR="${AGG_MINOR%%.*}"
+if [[ "$AGG_MAJOR" =~ ^[0-9]+$ && "$AGG_MINOR" =~ ^[0-9]+$ ]]; then
+  if [ "$AGG_MAJOR" -lt 1 ] || { [ "$AGG_MAJOR" -eq 1 ] && [ "$AGG_MINOR" -lt 9 ]; }; then
+    echo "error: agg $AGG_VERSION is too old; --select needs agg >= 1.9.0." >&2
+    echo "       Upgrade with: brew upgrade agg" >&2
+    exit 1
+  fi
+else
+  # Only our own parsing failed (nightly build, patched --version output, ...).
+  # Refusing here would block a perfectly new agg, and the fallback is just
+  # today's behaviour: agg rejects --select itself if it really is too old.
+  echo "warning: could not parse agg version from '${AGG_VERSION:-}'; assuming >= 1.9.0" >&2
+fi
+
 [ -f "$REPO_ROOT/dist/cli/index.js" ] || {
   echo "error: dist/cli/index.js missing. Run 'pnpm run build' first." >&2
   exit 1
@@ -65,10 +99,21 @@ done
 
 mkdir -p "$OUT_DIR" "$(dirname "$RAW_CAST")"
 
-DRIVER="$(mktemp -t crisismode-demo-driver).exp"
-trap 'rm -f "$DRIVER"' EXIT
+# A private directory, not a bare mktemp file: `mktemp -t X` creates a file at the
+# path it returns, so appending `.exp` to that path produced a second, unmanaged
+# file and leaked the mktemp one on every run. The 0700 directory also means the
+# driver is written into a location nothing else can pre-create or observe.
+TMP_BASE="${TMPDIR:-/tmp}"
+DRIVER_DIR="$(mktemp -d "${TMP_BASE%/}/crisismode-demo-driver.XXXXXX")"
+trap 'rm -rf "$DRIVER_DIR"' EXIT
+DRIVER="$DRIVER_DIR/driver.exp"
 
-cat > "$DRIVER" <<EXPECT_SCRIPT
+# The here-doc is QUOTED: nothing is interpolated into Tcl source. Tcl substitutes
+# [...] and $... while parsing, so a repo path containing brackets would be
+# mis-parsed as a command, and an interpolated decision would be Tcl code rather
+# than a keystroke. Both values reach the driver through the environment instead,
+# where Tcl reads them as data and never re-parses them.
+cat > "$DRIVER" <<'EXPECT_SCRIPT'
 #!/usr/bin/env expect -f
 # Drives the demo through its interactive approval gate.
 #
@@ -81,12 +126,12 @@ set send_human {0.09 0.02 1 0.20 0.40}
 
 # A beat before the first keystroke so the recording does not open mid-command.
 sleep 1.2
-spawn -noecho node "$REPO_ROOT/dist/cli/index.js" demo
+spawn -noecho node $env(CRISISMODE_DEMO_CLI) demo
 expect {
   -re {Enter your decision \(approve/skip/reject\): } {
     # Let the viewer read the approval panel before answering.
     sleep 2.5
-    send -h -- "$DECISION"
+    send -h -- $env(CRISISMODE_DEMO_DECISION)
     sleep 0.6
     send -- "\r"
   }
@@ -104,10 +149,14 @@ echo "==> recording ${COLS}x${ROWS} -> $RAW_CAST"
 rm -f "$RAW_CAST"
 
 # ANTHROPIC_API_KEY is inherited deliberately: Phase 5 must reach the real API.
+# CRISISMODE_DEMO_* carry the two values the expect driver needs, as data rather
+# than as interpolated Tcl source.
 env TERM=xterm-256color \
     FORCE_COLOR=3 \
     COLUMNS="$COLS" \
     LINES="$ROWS" \
+    CRISISMODE_DEMO_CLI="$REPO_ROOT/dist/cli/index.js" \
+    CRISISMODE_DEMO_DECISION="$DECISION" \
   asciinema rec "$RAW_CAST" \
     --window-size "${COLS}x${ROWS}" \
     --overwrite \
