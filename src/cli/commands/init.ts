@@ -30,7 +30,11 @@ export interface InitOptions {
 const PLUGIN_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 function pluginNameFrom(flag: 'plugin' | 'agent', value: string | boolean | undefined): string | undefined {
-  if (value === undefined || value === false) return undefined;
+  // Only `undefined` means "flag omitted". The parser registers these as string
+  // options with no default, so an absent flag is always `undefined` and never
+  // `false` — anything else, including `false`, is bad input and gets a usage
+  // error rather than silently falling through to writing crisismode.yaml.
+  if (value === undefined) return undefined;
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`--${flag} requires a plugin name, e.g. crisismode init --${flag} my-check`);
   }
