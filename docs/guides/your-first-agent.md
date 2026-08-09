@@ -275,7 +275,7 @@ export const websiteManifest: AgentManifest = {
 
 ### Important manifest fields
 
-- **`plugin.maturity`** -- set to `"simulator_only"` until you build a live client. Change to `"beta"` or `"stable"` later.
+- **`plugin.maturity`** -- one of `"experimental"`, `"simulator_only"`, `"dry_run_only"`, `"live_validated"`, `"production_certified"`. Start at `"simulator_only"` and only move up when you have actually validated against a real system -- CrisisMode reports anything other than `"live_validated"` as best-effort, which is deliberate. See [Declaring maturity honestly](../../CONTRIBUTING.md#declaring-maturity-honestly).
 - **`riskProfile.maxRiskLevel`** -- the maximum risk any step in your plans can declare. Do not set to `"critical"` without discussion with maintainers.
 - **`failureScenarios`** -- string identifiers that your `diagnose()` method returns. The framework uses these to match agents to incidents.
 
@@ -769,7 +769,12 @@ Two rules the helper enforces (and that you must not work around):
   not connect" finding. Never catch a live-client error and silently fall
   back to simulated data — that reports fake health for a real system.
 
-Update the manifest's `plugin.maturity` from `"simulator_only"` to `"beta"` once the live client is working.
+A working live client on its own does **not** change your maturity label. Once you
+have run the agent against a real deployment and confirmed it diagnoses correctly,
+move `plugin.maturity` to `"dry_run_only"` (diagnosis validated, no mutating run
+verified) or `"live_validated"` (a mutating recovery actually ran and the fault
+was verified resolved). Until then it stays `"simulator_only"` and CrisisMode
+labels its findings as leads.
 
 ## Distributing as a Plugin
 
