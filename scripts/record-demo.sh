@@ -125,14 +125,20 @@ node "$REPO_ROOT/scripts/pace-cast.mjs" "$RAW_CAST" "$CAST"
 THEME="0a0a0b,e4e4e7,27272a,ef4444,22c55e,f59e0b,3b82f6,ec4899,06b6d4,e4e4e7,52525b,f87171,4ade80,fbbf24,60a5fa,f472b6,22d3ee,fafafa"
 
 # The GIF is a fallback/social teaser, not the whole story: a full-length 100x30
-# GIF is >7MB at any usable quality. Cover the opening arc (alert -> diagnosis ->
-# plan table) and let the player carry the rest.
+# GIF is >7MB at any usable quality. Cover the opening arc (alert -> live AI
+# diagnosis) and let the player carry the rest.
 #
 # The cut point is found in the cast rather than fixed at a percentage: the live
 # AI diagnosis varies in length run to run, so a percentage lands somewhere
 # different every time (36% used to reach the plan table; with a wordier model
-# response it stops short of it). Anchor on the Phase 7 heading instead, which
-# is exactly where the plan table ends.
+# response it stops short of it). Anchor on the Phase 6 heading instead, which
+# is exactly where the diagnosis verdict ends.
+#
+# Phase 6 and not Phase 7: the repo refuses to commit a file over 1MB, and
+# rendering through the plan table costs 1.3MB even at font-size 10 / 4fps,
+# which is past legible. Ending on the diagnosis keeps the part that matters —
+# the model's own root-cause paragraph, which is the whole reason this is
+# recorded live — inside the budget.
 CUT="$(node -e '
 const fs = require("node:fs");
 const lines = fs.readFileSync(process.argv[1], "utf8").trim().split("\n").slice(1);
@@ -142,26 +148,28 @@ for (const line of lines) {
   if (!line.trim()) continue;
   const [interval, code, data] = JSON.parse(line);
   t += interval;
-  if (code === "o" && String(data).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").includes("Phase 7:")) {
+  if (code === "o" && String(data).replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").includes("Phase 6:")) {
     // A beat past the heading so the transition is visible in the last frame.
     cut = t + 0.8;
     break;
   }
 }
 if (cut === null) {
-  console.error("record-demo: could not find the Phase 7 heading; cannot place the GIF cut");
+  console.error("record-demo: could not find the Phase 6 heading; cannot place the GIF cut");
   process.exit(1);
 }
 process.stdout.write(cut.toFixed(2));
 ' "$CAST")"
 
-# 6fps, not 10: the wider window needed to reach the plan table past a live AI
-# diagnosis renders at 4.4MB at 10fps. 6fps holds it under 3MB and text output
-# stays legible — nothing is lost, the reveal is just less smooth.
+# 2fps, not 6: the window has to span a real 8-20s AI call, and the diagnosis
+# text is expensive to render (6fps costs 2.9MB, 3fps still 1.4MB). At 2fps the
+# GIF lands near 900KB, inside the repo's 1MB commit ceiling. The demo reveals
+# text in bursts and the cast is already re-timed for reading speed, so the
+# frame rate costs smoothness rather than content.
 echo "==> rendering GIF teaser (0..${CUT}s) -> $GIF"
 agg -q \
   --select "0..$CUT" \
-  --fps-cap 6 \
+  --fps-cap 2 \
   --font-size 14 \
   --line-height 1.4 \
   --theme "$THEME" \
@@ -169,10 +177,13 @@ agg -q \
 
 # The teaser is embedded in the landing page, so guard the budget out loud
 # rather than discovering a 5MB GIF in production.
+# 1MB is not a soft budget: the pre-commit hook rejects files above it, so a
+# regression here blocks the commit rather than quietly shipping a heavy page.
 GIF_BYTES="$(wc -c < "$GIF" | tr -d ' ')"
-if [ "$GIF_BYTES" -gt 3145728 ]; then
-  echo "warning: GIF is $((GIF_BYTES / 1024))KiB, over the ~3MB budget." >&2
-  echo "         Lower --fps-cap or --font-size, or shorten the window." >&2
+if [ "$GIF_BYTES" -gt 1048576 ]; then
+  echo "error: GIF is $((GIF_BYTES / 1024))KiB, over the 1MB pre-commit ceiling." >&2
+  echo "       Lower --fps-cap or --font-size, or move the cut anchor earlier." >&2
+  exit 1
 fi
 
 echo
