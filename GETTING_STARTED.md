@@ -15,8 +15,11 @@ agents against real degraded PostgreSQL.
 - **Node.js** >= 22 (recommended: [fnm](https://github.com/Schniz/fnm) or
   [nvm](https://github.com/nvm-sh/nvm)) — Node 18 and 20 are end-of-life; CI
   tests 22 and 24
-- **pnpm** — `npm install -g pnpm`. The exact version is pinned via
-  `packageManager` in `package.json`
+- **pnpm** — install the version pinned by `packageManager` in `package.json`
+  (currently `pnpm@10.30.3`): `npm install -g pnpm@10.30.3`. A bare
+  `npm install -g pnpm` gets the latest release instead, which can resolve the
+  lockfile differently than CI — CI takes its version from that same
+  `packageManager` field
 - **Podman** — for the containerized test environment:
   `brew install podman && podman machine init && podman machine start`
 - **Git** — `git clone git@github.com:trs-80/crisismode.git`
@@ -173,7 +176,7 @@ see [docs/readiness.md](docs/readiness.md).
 
 Every agent follows the same six-file pattern:
 
-```
+```text
 src/agent/<system>/
   backend.ts        # Interface both simulator and live client implement
   simulator.ts      # In-memory implementation for demos and tests

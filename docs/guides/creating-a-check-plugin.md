@@ -20,7 +20,7 @@ Three verbs are supported:
 
 Each check plugin lives in its own directory under `checks/`:
 
-```
+```text
 checks/
   check-mysql-connection/
     manifest.json       # Plugin metadata and capabilities
@@ -410,7 +410,7 @@ Thousands of Nagios/Icinga/Checkmk plugins exist. Wrap any of them:
 
 Nagios plugins receive **no stdin**. They output a status line optionally followed by `|` and performance data:
 
-```
+```text
 OK - Load 0.85 (16 CPUs), up 5d 3h | load=0.85;32;64;0; uptime=445736s;;;;
 ```
 

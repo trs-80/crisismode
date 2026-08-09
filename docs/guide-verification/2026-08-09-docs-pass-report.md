@@ -112,9 +112,19 @@ weaker claim.
 Everything documented was checked at the real surface after `pnpm run build`.
 
 - **Flags:** the complete flag set was taken from `node dist/cli/index.js --help`.
-  No invented flags — an audit of every `--flag` across all docs found only
-  `--json`, `--target`, `--agent`, all real. (Subcommand `--help` prints the
-  global help, so the top-level list is authoritative.)
+  No invented flags. (Subcommand `--help` prints the global help, so the top-level
+  list is authoritative.)
+
+  *Correction (same day):* this bullet originally read that an audit of every
+  `--flag` across all docs found only `--json`, `--target`, and `--agent`. Those
+  three are the flags that appear in the *onboarding* docs; `docs/cli-reference.md`
+  documents the full surface. Re-verified against a fresh `pnpm run build`, its
+  flag table matches `--help` exactly, all 15 entries: `--plugin`, `--agent`,
+  `--config`, `--target`, `--category`, `--terse`, `--execute`, `--health-only`,
+  `--local`, `--force`, `--json`, `--no-color`, `--verbose`, `-h`/`--help`,
+  `-v`/`--version`. `--agent` has since become a deprecated alias for `--plugin`
+  (see the superseded note under "Scan suggested a flag that does not exist"
+  below).
 - **Commands run:** `scan`, `scan --category dns`, `scan --json`/pipe, `triage`,
   `down stripe github`, `down --badflag` (exit 2 confirmed), `agent list`,
   `completions zsh`, `init --agent`, `init --plugin`, `playbook validate`,
@@ -164,6 +174,11 @@ not a shape real scan produces. Fixtures made realistic, assertions corrected, a
 recognized: it falls through to the positional path argument and writes a *config
 file* named `my-check` instead of scaffolding a plugin. Corrected to `--agent`,
 which I verified produces `manifest.json` + an executable `check.sh`.
+
+*Superseded (same day):* `--agent` was the wrong name for a flag that scaffolds a
+check plugin — "agent" means `RecoveryAgent` everywhere else in this codebase.
+`--plugin` is now the canonical flag and `--agent` a deprecated alias, so both the
+scan hint and this fix now read `crisismode init --plugin my-check`.
 
 ### Verification
 

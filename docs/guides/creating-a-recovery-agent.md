@@ -44,7 +44,7 @@ The agent never executes recovery actions directly. It builds a `RecoveryPlan` c
 
 Every agent follows this structure:
 
-```
+```text
 src/agent/<system>/
   backend.ts          # Interface for querying the target system
   simulator.ts        # In-memory implementation for demos and tests

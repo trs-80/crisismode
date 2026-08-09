@@ -130,7 +130,7 @@ A `RecoveryPlan` contains metadata, impact assessment, an ordered list of steps,
 
 Playbooks are Markdown files with YAML frontmatter that describe recovery procedures. They compile to the same `RecoveryPlan` structure used by code-based agents.
 
-```
+```text
 Markdown + YAML frontmatter
         |
         v

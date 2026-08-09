@@ -55,7 +55,7 @@ checks it:
 crisismode                 # zero-config health scan (the default command)
 ```
 
-```
+```text
   System Health Score: 100/100
   Scanned at 2026-08-09T15:09:00.480Z (586ms)
 
@@ -88,7 +88,7 @@ shows you the plan; mutations require an explicit `--execute`.
 Live mode against real PostgreSQL replication lag (local podman test
 environment), abridged:
 
-```
+```text
   Phase 3: Diagnosis (Live — AI-Powered)
   🤖 AI analyzing system state...
      Scenario:    replication_lag_cascade

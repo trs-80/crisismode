@@ -33,7 +33,7 @@ From a source checkout, substitute `node dist/cli/index.js` (after
 | Command | What it does |
 |---|---|
 | `crisismode init [path]` | Generate `crisismode.yaml` |
-| `crisismode init --agent <name>` | Scaffold a check plugin |
+| `crisismode init --plugin <name>` | Scaffold a check plugin (`--agent` is a deprecated alias) |
 | `crisismode demo` | Simulator demo — full pipeline, no infrastructure |
 | `crisismode webhook` | Start a webhook receiver for Prometheus AlertManager |
 | `crisismode watch` | Continuous shadow observation |
@@ -65,10 +65,11 @@ This is the complete set — there are no per-command flags beyond these.
 | `--config <path>` | all | Path to `crisismode.yaml` |
 | `--target <name>` | all | Target name from config |
 | `--category <kinds>` | `scan` | Comma-separated service kinds to scan |
-| `--agent <name>` | `init` | Scaffold a check plugin instead of a config file |
+| `--plugin <name>` | `init` | Scaffold a check plugin instead of a config file |
+| `--agent <name>` | `init` | Deprecated alias for `--plugin`. Still scaffolds, prints a deprecation notice; `--plugin` wins if both are given |
 | `--execute` | `recover`, `webhook` | Enable mutations. Without it, everything is dry-run |
 | `--health-only` | `recover` | Health check only, no diagnosis |
-| `--local` | `registry install`, `init --agent` | Install to `./checks/` instead of `~/.crisismode/checks/` |
+| `--local` | `registry install` | Install to `./checks/` instead of `~/.crisismode/checks/` |
 | `--force` | `registry install` | Overwrite an existing plugin installation |
 | `--terse` | all | Suppress plain-language explanations and risk framing. Human output only — `--json` always carries the full data |
 | `--json` | all | Machine-readable JSON output |
@@ -104,14 +105,14 @@ Three modes, auto-selected:
 
 A `scan` row has 4 fields:
 
-```
+```text
 scan\t<score>\t<scanned_at>\t<duration_ms>
 ```
 
 Every `finding` row has the same 7 fields, whether or not the finding has a
 remediation guide, so the column count never shifts:
 
-```
+```text
 finding\t<id>\t<service>\t<status>\t<confidence>\t<summary>\t<guide_refs>
 ```
 
@@ -127,7 +128,7 @@ finding\t<id>\t<service>\t<status>\t<confidence>\t<summary>\t<guide_refs>
 
 `triage` uses the same shape with a `triage` row and one `layer` row per probe:
 
-```
+```text
 triage\t<verdict>\t<checked_at>\t<duration_ms>
 layer\t<name>\t<result>\t<evidence>
 ```

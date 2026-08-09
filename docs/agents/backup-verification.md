@@ -41,7 +41,7 @@ crisismode scan
 
 The agent appears in scan results with finding ID prefix `BKUP`:
 
-```
+```text
 BKUP-001  unhealthy  Backup failures detected. Missing or corrupted backups require immediate attention.
 ```
 
@@ -198,7 +198,7 @@ Backups are healthy, but their size means estimated restore time may exceed reco
 
 The agent uses a **strategy pattern** where backup technologies are pluggable providers:
 
-```
+```text
 BackupVerificationAgent (coordinator)
   └── BackupBackend
         └── verifyAll(configs[]) → BackupVerificationReport
@@ -278,7 +278,7 @@ The agent reports four health signals during `assessHealth`:
 
 The live client recognizes these file patterns:
 
-```
+```text
 .sql  .sql.gz  .sql.bz2  .sql.xz  .sql.zst
 .dump  .dump.gz
 .tar  .tar.gz  .tgz  .tar.bz2  .tar.xz  .tar.zst
@@ -387,7 +387,7 @@ Simulator states: `no_backups_found`, `stale_backup`, `size_anomaly`, `integrity
 
 ## File structure
 
-```
+```text
 src/agent/backup/
   backend.ts            # BackupBackend + BackupProvider interfaces
   simulator.ts          # In-memory simulator (7 states, 6 failure scenarios)
