@@ -261,6 +261,76 @@ describe('runTriageCommand service-status enrichment', () => {
 
     expect(loggedOutput()).not.toContain('status page reports');
   });
+
+  /**
+   * CodeRabbit wave (Major): enrichment used to run unguarded — a failure in
+   * the dynamic import, loadServices, or resolveTarget (malformed services:
+   * entry) rejected runTriageCommand itself, costing the operator the whole
+   * triage report and exit code over what is only an optional annotation.
+   * Compares against an identical no-services run to prove the report and
+   * exit code are byte-for-byte unaffected by the enrichment failure.
+   */
+  it('an enrichment failure leaves the triage report and exit code identical to a no-services run', async () => {
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'mixed' });
+    const throwingCheckServices = vi.fn(async () => {
+      throw new Error('dynamic import or resolveTarget blew up');
+    });
+    const failingExitCode = await runTriageCommand({ loadServices: () => ['github'], checkServices: throwingCheckServices });
+    const failingOutput = loggedOutput();
+
+    logSpy.mockClear();
+    lines = [];
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'mixed' });
+    const noServicesExitCode = await runTriageCommand({ loadServices: () => [] });
+    const noServicesOutput = loggedOutput();
+
+    expect(failingExitCode).toBe(noServicesExitCode);
+    expect(failingOutput).toBe(noServicesOutput);
+  });
+
+  it('a loadServices that throws also leaves the report and exit code untouched', async () => {
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'remote' });
+    const throwingLoadServices = (): never => {
+      throw new Error('loadServices blew up');
+    };
+    const exitCode = await runTriageCommand({ loadServices: throwingLoadServices });
+    expect(exitCode).toBe(0); // remote is not-a-problem, same as triageExitCode('remote')
+    expect(loggedOutput()).toContain('Verdict: remote');
+  });
+
+  /**
+   * CodeRabbit wave (Major): the enrichment pass had no cap — with a long
+   * services: list the added wall time is unbounded
+   * (ceil(N / CHECK_CONCURRENCY) * SERVICE_STATUS_TIMEOUT_MS). Caps at the
+   * first MAX_ENRICHMENT_SERVICES (10), appending a one-line note when more
+   * were configured — mirrors resolveTriageTargets' MAX_TRIAGE_TARGETS cap.
+   */
+  it('checks only the first 10 configured services and notes how many were omitted', async () => {
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'mixed' });
+    const fifteenServices = Array.from({ length: 15 }, (_, i) => `svc-${i}.example.com`);
+    const fakeCheckServices = vi.fn(async (targets: ServiceTarget[]) =>
+      targets.map((t) => fakeServiceReport({ id: t.id, label: t.id })),
+    );
+
+    await runTriageCommand({ loadServices: () => fifteenServices, checkServices: fakeCheckServices });
+
+    expect(fakeCheckServices).toHaveBeenCalledTimes(1);
+    expect(fakeCheckServices.mock.calls[0]?.[0]).toHaveLength(10);
+    expect(loggedOutput()).toContain('5 more configured service(s) not checked');
+  });
+
+  it('does not add a truncation note when the configured service count is at or under the cap', async () => {
+    vi.mocked(runTriage).mockResolvedValueOnce({ ...commandReport, verdict: 'mixed' });
+    const tenServices = Array.from({ length: 10 }, (_, i) => `svc-${i}.example.com`);
+    const fakeCheckServices = vi.fn(async (targets: ServiceTarget[]) =>
+      targets.map((t) => fakeServiceReport({ id: t.id, label: t.id })),
+    );
+
+    await runTriageCommand({ loadServices: () => tenServices, checkServices: fakeCheckServices });
+
+    expect(fakeCheckServices.mock.calls[0]?.[0]).toHaveLength(10);
+    expect(loggedOutput()).not.toContain('not checked');
+  });
 });
 
 describe('resolveTriageTargets — services/targets name collision surfaces to the caller', () => {

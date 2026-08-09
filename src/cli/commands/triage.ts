@@ -152,6 +152,17 @@ export async function resolveTriageTargets(configPath?: string): Promise<TriageT
 const SERVICE_STATUS_TIMEOUT_MS = 1500;
 
 /**
+ * Hard cap on services checked during triage enrichment, mirroring
+ * `resolveTriageTargets`'s `MAX_TRIAGE_TARGETS` for the same reason: an
+ * unbounded `services:` list must not turn an optional status-page
+ * annotation into an unbounded wall-time cost. `checkServices` bounds
+ * concurrency and each fetch is bounded by `SERVICE_STATUS_TIMEOUT_MS`, but
+ * the pass as a whole was not — with N services the added wall time is
+ * `ceil(N / CHECK_CONCURRENCY) * SERVICE_STATUS_TIMEOUT_MS`.
+ */
+const MAX_ENRICHMENT_SERVICES = 10;
+
+/**
  * Reads `services:` from the resolved config, mirroring down.ts's
  * resolveDownTargets for the same load. A config that fails to load here
  * would already have failed identically in resolveTriageTargets above
@@ -207,7 +218,8 @@ async function enrichWithServiceStatus(
   checkServicesImpl?: typeof checkServices,
 ): Promise<string[]> {
   const impl = checkServicesImpl ?? (await import('../../framework/service-status/checker.js')).checkServices;
-  const targets: ServiceTarget[] = services.map((entry) => resolveTarget(entry));
+  const capped = services.slice(0, MAX_ENRICHMENT_SERVICES);
+  const targets: ServiceTarget[] = capped.map((entry) => resolveTarget(entry));
   const reports = await impl(targets, {
     // Triage already probed reachability (layer 6/targets) — this pass is
     // status-fetch only, per the spec's honesty rule against re-asserting a
@@ -215,7 +227,14 @@ async function enrichWithServiceStatus(
     probeImpl: noopProbe,
     statusTimeoutMs: SERVICE_STATUS_TIMEOUT_MS,
   });
-  return serviceStatusEnrichmentLines(reports);
+  const lines = serviceStatusEnrichmentLines(reports);
+  const omitted = services.length - capped.length;
+  if (omitted > 0) {
+    lines.push(
+      `(${omitted} more configured service(s) not checked — showing status for the first ${MAX_ENRICHMENT_SERVICES}.)`,
+    );
+  }
+  return lines;
 }
 
 export async function runTriageCommand(opts: TriageCommandOptions = {}): Promise<number> {
@@ -226,10 +245,22 @@ export async function runTriageCommand(opts: TriageCommandOptions = {}): Promise
   // machine, where naming the culprit service is useful rather than noise.
   let serviceLines: string[] = [];
   if (report.verdict === 'remote' || report.verdict === 'mixed') {
-    const loadServices = opts.loadServices ?? (() => defaultLoadServices(opts.configPath));
-    const services = loadServices();
-    if (services.length > 0) {
-      serviceLines = await enrichWithServiceStatus(services, opts.checkServices);
+    // Enrichment is an annotation on an already-computed report. A failure
+    // here (the dynamic import failing, or resolveTarget throwing on a
+    // malformed services: entry) must never cost the operator the report
+    // itself or its exit code — print nothing and move on.
+    // defaultLoadServices intentionally rethrows ConfigNotFoundError and
+    // ConfigValidationError, but resolveTriageTargets above already loaded
+    // the same configPath and would have thrown those first — reaching this
+    // catch means something else went wrong, not a swallowed config error.
+    try {
+      const loadServices = opts.loadServices ?? (() => defaultLoadServices(opts.configPath));
+      const services = loadServices();
+      if (services.length > 0) {
+        serviceLines = await enrichWithServiceStatus(services, opts.checkServices);
+      }
+    } catch {
+      serviceLines = [];
     }
   }
 
