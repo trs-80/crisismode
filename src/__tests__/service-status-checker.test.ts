@@ -7,6 +7,7 @@ import {
   checkServices,
   combineVerdict,
   verdictDetail,
+  defaultProbe,
   CHECK_CONCURRENCY,
 } from '../framework/service-status/checker.js';
 import type { ServiceVerdict } from '../framework/service-status/types.js';
@@ -155,6 +156,59 @@ describe('checkService', () => {
 
     expect(report.verdict).toBe('down_for_you');
     expect(report.detail).toContain('likely your network, DNS, or config');
+  });
+
+  /**
+   * CodeRabbit wave (Minor): checkService's doc comment promises neither leg
+   * can throw out of the function. defaultOfflineGate already catches
+   * internally, but an injected offlineGate (CheckerDeps.offlineGate) is a
+   * public seam — a rejecting gate must fall through to the normal checks
+   * (like a `null`/false result would), not propagate and (inside
+   * checkServices) fail the whole Promise.all, discarding every report
+   * already computed for other targets.
+   */
+  it('an offlineGate that rejects falls through to the normal checks instead of throwing out of checkService', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ status: { indicator: 'none' }, components: [], incidents: [] }));
+    const probeImpl = vi.fn(async (): Promise<ProbeOutcome> => 'reachable');
+    const offlineGate: OfflineGate = async () => {
+      throw new Error('gate boom');
+    };
+
+    const report = await checkService(
+      { id: 'github' },
+      { fetchImpl, probeImpl, offlineGate },
+    );
+
+    expect(report.verdict).not.toBe('offline_skipped');
+    expect(report.verdict).toBe('healthy');
+    expect(fetchImpl).toHaveBeenCalled();
+    expect(probeImpl).toHaveBeenCalled();
+  });
+});
+
+describe('defaultProbe — bounded DNS phase (Critical: unbounded dns.lookup)', () => {
+  it('a lookup that never resolves classifies as dns_failed within the probe budget, not a real OS resolver timeout', async () => {
+    const neverResolvingLookup = (() => new Promise<never>(() => {})) as unknown as Parameters<typeof defaultProbe>[3];
+    const budgetMs = 100;
+
+    const start = performance.now();
+    const outcome = await defaultProbe('svc.example.invalid', 443, budgetMs, neverResolvingLookup);
+    const elapsed = performance.now() - start;
+
+    expect(outcome).toBe('dns_failed');
+    // Generous margin over the 100ms budget to absorb CI scheduling jitter —
+    // still nowhere close to the seconds-to-tens-of-seconds an actual
+    // black-holed OS resolver timeout would take if unbounded.
+    expect(elapsed).toBeLessThan(2000);
+  });
+
+  it('a lookup that rejects still classifies as dns_failed (unchanged behavior)', async () => {
+    const rejectingLookup = (async () => {
+      throw new Error('ENOTFOUND');
+    }) as unknown as Parameters<typeof defaultProbe>[3];
+
+    const outcome = await defaultProbe('svc.example.invalid', 443, 100, rejectingLookup);
+    expect(outcome).toBe('dns_failed');
   });
 });
 
