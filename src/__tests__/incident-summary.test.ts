@@ -77,6 +77,34 @@ describe('diagnoseCommandFor', () => {
       diagnoseCommandFor(summaryFinding({ service: 'postgresql (v16) (prod-db)' })),
     ).toBe('crisismode diagnose prod-db');
   });
+
+  it('falls back rather than emitting a blank target for an empty group', () => {
+    // `crisismode diagnose ""` is a dead end; the bare command at least
+    // diagnoses the first configured target.
+    expect(diagnoseCommandFor(summaryFinding({ service: 'postgresql ()' })))
+      .toBe('crisismode diagnose');
+    expect(diagnoseCommandFor(summaryFinding({ service: 'postgresql (   )' })))
+      .toBe('crisismode diagnose');
+  });
+
+  it('trims padding around a recoverable target name', () => {
+    expect(diagnoseCommandFor(summaryFinding({ service: 'postgresql ( prod-db )' })))
+      .toBe('crisismode diagnose prod-db');
+  });
+
+  /**
+   * PLUG passthrough is keyed to the whole id, not a prefix: `PLUGIN-1` is not
+   * a plugin finding index, so it must go through target extraction like any
+   * other agent finding.
+   */
+  it('does not treat a PLUG-lookalike id as a plugin index', () => {
+    expect(
+      diagnoseCommandFor(summaryFinding({ id: 'PLUGIN-1', service: 'kafka (prod-kafka)' })),
+    ).toBe('crisismode diagnose prod-kafka');
+    expect(
+      diagnoseCommandFor(summaryFinding({ id: 'PLUG-2A', service: 'kafka (prod-kafka)' })),
+    ).toBe('crisismode diagnose prod-kafka');
+  });
 });
 
 describe('buildIncidentSummary', () => {
