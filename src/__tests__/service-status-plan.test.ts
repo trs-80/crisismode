@@ -13,7 +13,12 @@ import type { AgentContext } from '../types/agent-context.js';
 function setup(state: SimulatorState) {
   const backend = new ServiceStatusSimulator();
   backend.transition(state);
-  const agent = new ServiceStatusAgent(backend);
+  // Null gate — "triage saw nothing", so these plan-per-scenario tests run
+  // regardless of any cached triage report on the host running them (a
+  // cached offline verdict would short-circuit diagnose() to scenario: null
+  // and fail every scenario expectation below). service-status-agent.test.ts
+  // injects the same gate for the same reason.
+  const agent = new ServiceStatusAgent(backend, async () => null);
   const trigger: AgentContext['trigger'] = {
     type: 'health_check',
     source: 'cli-scan',
