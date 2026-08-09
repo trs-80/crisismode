@@ -134,11 +134,52 @@ export function verdictDetail(
   }
 }
 
-/** DNS resolve, then a bounded TCP+TLS connect — the single socket-probe implementation, shared with network-profile.ts and triage. */
-async function defaultProbe(host: string, port: number, timeoutMs: number): Promise<ProbeOutcome> {
+/**
+ * dns.lookup() has no native timeout and delegates to the OS resolver — a
+ * black-holed nameserver can block for the system resolver's timeout and
+ * retry count, commonly several seconds and up to tens of seconds, blowing
+ * the documented total probe budget (CheckerDeps.probeTimeoutMs) by an order
+ * of magnitude. Racing a timer against it restores the deadline CONTRACT for
+ * the caller — it does not cancel the underlying call. dns.lookup() runs on
+ * libuv's threadpool (4 threads by default); a genuinely hung resolver still
+ * occupies that thread until the OS eventually gives up, so enough
+ * concurrent slow lookups (CHECK_CONCURRENCY is 5) can still saturate the
+ * threadpool even though every individual `defaultProbe` call returns on
+ * time. A bounded pool size or a resolver with a real cancel path would
+ * close that residual gap; out of scope here. A timed-out lookup is reported
+ * as `dns_failed`, matching combineVerdict's uniform treatment of
+ * `dns_failed`/`connect_failed`.
+ */
+async function lookupBounded(host: string, timeoutMs: number, lookupImpl: typeof lookup): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('dns lookup timed out')), timeoutMs);
+    timer.unref();
+  });
+  try {
+    await Promise.race([lookupImpl(host), deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * DNS resolve, then a bounded plain TCP connect (no TLS handshake — cert
+ * problems are the tls agent's job) — the single socket-probe
+ * implementation, shared with network-profile.ts and triage.
+ * `lookupImpl` defaults to the real `dns.lookup`; the parameter exists so
+ * tests can inject a lookup that never resolves and assert the DNS phase is
+ * actually bounded, without waiting on a real OS resolver timeout.
+ */
+export async function defaultProbe(
+  host: string,
+  port: number,
+  timeoutMs: number,
+  lookupImpl: typeof lookup = lookup,
+): Promise<ProbeOutcome> {
   const start = performance.now();
   try {
-    await lookup(host);
+    await lookupBounded(host, timeoutMs, lookupImpl);
   } catch {
     return 'dns_failed';
   }
@@ -194,7 +235,22 @@ export async function checkService(
   const label = entry?.label ?? target.id;
   const source: 'catalog' | 'domain' = entry ? 'catalog' : 'domain';
 
-  const offline = await offlineGate();
+  // The doc comment above promises neither leg of this function can throw.
+  // defaultOfflineGate already catches internally, but CheckerDeps.offlineGate
+  // is a public injection point — an injected gate that rejects must not
+  // propagate out of checkService, or (inside checkServices) it fails the
+  // whole Promise.all and discards every report already computed for the
+  // other targets. Treat a gate failure the same way defaultOfflineGate
+  // does: fall through to the normal checks.
+  let offline: Awaited<ReturnType<OfflineGate>> = null;
+  try {
+    offline = await offlineGate();
+  } catch {
+    // A rejected gate call never completes its assignment above, so
+    // `offline` is already `null` here — this branch exists only to
+    // document that a gate failure is deliberately swallowed, not left to
+    // propagate.
+  }
   if (offline) {
     return finishReport({
       id: target.id,
