@@ -61,4 +61,47 @@ describe('parseStatuspageSummary', () => {
     expect(parseStatuspageSummary([])).toBeNull();
     expect(parseStatuspageSummary(undefined)).toBeNull();
   });
+
+  /**
+   * CodeRabbit wave (Major finding): {incidents: []} alone — no status, no
+   * components — used to classify as 'operational' (indicator defaulted to
+   * 'unknown', components defaulted to 0-non-operational), so fetchStatus
+   * (checker.ts) reported 'healthy' for a response that was never actually
+   * confirmed operational. Structural absence/malformation must return null
+   * (-> status_unavailable), not silently pass as good news.
+   */
+  it('returns null for {incidents: []} alone — no status field at all', () => {
+    expect(parseStatuspageSummary({ incidents: [] })).toBeNull();
+  });
+
+  it('returns null when status is present but indicator is missing', () => {
+    expect(parseStatuspageSummary({ status: {}, components: [], incidents: [] })).toBeNull();
+  });
+
+  it('returns null when components is present but not an array', () => {
+    expect(
+      parseStatuspageSummary({ status: { indicator: 'none' }, components: 'nope', incidents: [] }),
+    ).toBeNull();
+  });
+
+  it('does NOT return null when components is simply absent (optional, not malformed)', () => {
+    const parsed = parseStatuspageSummary({ status: { indicator: 'none' }, incidents: [] });
+    expect(parsed).toEqual({ assessment: 'operational', incidents: [], indicator: 'none' });
+  });
+
+  /**
+   * Real Statuspage instances use indicator values this classifier doesn't
+   * special-case (e.g. 'maintenance') — an unknown STRING indicator must be
+   * classified conservatively (falls through to the existing
+   * operational/degraded logic), not rejected as malformed. Only structural
+   * absence/malformation nulls, never an unrecognized indicator string.
+   */
+  it('does not reject an unrecognized (but valid string) indicator like "maintenance"', () => {
+    const parsed = parseStatuspageSummary({
+      status: { indicator: 'maintenance' }, components: [], incidents: [],
+    });
+    expect(parsed).not.toBeNull();
+    expect(parsed?.assessment).toBe('operational');
+    expect(parsed?.indicator).toBe('maintenance');
+  });
 });
