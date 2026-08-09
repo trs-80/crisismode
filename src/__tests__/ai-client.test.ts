@@ -66,7 +66,7 @@ describe('callClaude', () => {
     const [params, options] = createMock.mock.calls[0]!;
     expect(params.messages).toEqual([{ role: 'user', content: 'question' }]);
     expect(params.system).toBe('sys');
-    expect(params.max_tokens).toBe(1024);
+    expect(params.max_tokens).toBe(4096);
     expect(typeof params.model).toBe('string');
     expect(options.signal).toBeInstanceOf(AbortSignal);
   });

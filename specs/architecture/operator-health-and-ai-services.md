@@ -140,7 +140,7 @@ AI services in CrisisMode are:
 
 - **Advisory only.** AI outputs are never executable. They inform diagnosis and explain plans but do not modify system state.
 - **Optional.** All AI services degrade gracefully when no API key is configured. Rule-based fallbacks produce valid, if less insightful, results.
-- **Time-bounded.** Every AI call has a hard timeout (default: 10 seconds) via `AbortController`. During a crisis, blocking on an AI API call is unacceptable.
+- **Time-bounded.** Every AI call has a hard timeout via `AbortController`, set per call site rather than globally: 60 seconds for non-interactive paths that must return a complete structured response (the diagnosis toolkit, evidence-bundle responses), and 8-30 seconds for paths with an operator waiting at a prompt (plan explanation, root-cause synthesis, symptom routing, scan summaries, the `ask` REPL). During a crisis, blocking on an AI API call is unacceptable — but a bound below the model's realistic response time is not a safety property, it just guarantees the fallback.
 - **Input-sanitized.** All inputs to AI models are sanitized: control characters stripped, fields length-limited, to mitigate prompt injection from system telemetry.
 - **Framework-level.** AI services are provided by the framework, not individual agents. This ensures consistent safety properties across all agents.
 
@@ -151,11 +151,22 @@ The AI diagnosis toolkit (`src/framework/ai-diagnosis.ts`) provides a reusable A
 ```ts
 interface AiDiagnosisConfig {
   apiKey?: string;       // defaults to ANTHROPIC_API_KEY env var
-  model?: string;        // defaults to claude-sonnet-4-20250514
-  timeoutMs?: number;    // defaults to 10000
-  maxTokens?: number;    // defaults to 1024
+  model?: string;        // defaults to defaultAiModel() — CRISISMODE_AI_MODEL, else claude-sonnet-5
+  timeoutMs?: number;    // defaults to 60000
+  maxTokens?: number;    // defaults to 6144
 }
+```
 
+The token ceiling is not arbitrary. A complete diagnosis for the standard schema
+(status, scenario, confidence, a root-cause paragraph, findings with evidence,
+ordered recommendations) measured 2259-3742 output tokens across nine live
+claude-sonnet-5 responses to the pg-replication prompt. A ceiling below that
+does not shorten the answer — it truncates the JSON mid-string, `JSON.parse`
+throws, `aiDiagnose()` returns `null`, and the agent silently degrades to its
+rule-based fallback. Any new AI call site that parses structured output MUST
+size its budget against a measured response, not a guess.
+
+```ts
 interface AiDiagnosisRequest {
   systemPrompt: string;  // domain-specific analysis instructions
   userMessage: string;   // structured system state
@@ -210,14 +221,14 @@ The explainer:
 - Uses AI when `ANTHROPIC_API_KEY` is set.
 - Falls back to a structural summary (step type + risk level + blast radius) when no key is available.
 - Never modifies the plan. Explanations are purely informational.
-- Uses the same timeout and sanitization as the diagnosis toolkit.
+- Uses the same sanitization as the diagnosis toolkit, but a tighter 30-second timeout: it runs in the foreground with an operator waiting on the plan, where the structural summary is a better outcome than a long stall. Its budget is 4096 tokens, sized from a measured 1407-1450 output tokens for the 10-step reference plan (~143 tokens per step).
 
 ### 3.5 Safety Model
 
 | Property | Guarantee |
 |---|---|
 | Non-mutating | AI outputs are never fed back as executable commands. |
-| Timeout-bounded | 10-second default. `AbortController`-enforced. |
+| Timeout-bounded | Per-call-site, `AbortController`-enforced: 60s where a complete structured response is required, 8-30s on interactive paths. Never below the model's measured response time for that prompt. |
 | Graceful fallback | All callers have rule-based fallbacks. No AI dependency in the critical path. |
 | Input sanitization | Control characters stripped. Length limits enforced. |
 | Lazy SDK loading | The Anthropic SDK is dynamically imported. It is not required at startup. |

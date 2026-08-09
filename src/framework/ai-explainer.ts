@@ -8,7 +8,7 @@
  * a human-readable explanation. Falls back gracefully when no API key is set.
  *
  * Safety:
- * - 10s timeout via AbortController
+ * - 30s timeout via AbortController (see EXPLAINER_TIMEOUT_MS)
  * - Input sanitization via framework AI toolkit
  * - Advisory only — the explanation never modifies the plan
  */
@@ -22,7 +22,34 @@ import { callClaude, stripCodeFence } from './ai-client.js';
 import { riskExceeds } from './risk.js';
 
 const DEFAULT_MODEL = defaultAiModel();
-const DEFAULT_TIMEOUT_MS = 10_000;
+
+/**
+ * Response budget for one plan explanation.
+ *
+ * Measured live (claude-sonnet-5, the 10-step pg-replication reference plan):
+ * 1407, 1431 and 1450 output tokens at 15.2-16.4s. The previous ceiling of
+ * 1024 could not fit any of those, so the response came back truncated,
+ * `JSON.parse` threw, and `explainPlan` swallowed it into the structural
+ * fallback — the same silent degradation that made aiDiagnose useless. Cost
+ * scales with step count at roughly 143 tokens/step plus ~200 tokens of
+ * summary and risks, so 4096 covers a ~27-step plan against a reference plan
+ * of 10. An unused ceiling costs nothing: responses stop at end_turn.
+ */
+const EXPLAINER_MAX_TOKENS = 4096;
+
+/**
+ * 30s, not the 60s the diagnosis toolkit uses.
+ *
+ * This is an INTERACTIVE path: both callers (src/live.ts, src/cli/interactive.ts)
+ * run it in the foreground immediately after printing the plan table, with an
+ * operator waiting mid-incident. A 60s stall there is worse for that operator
+ * than dropping to the structural summary, which is already a usable answer.
+ * 10s was on the wrong side of the tradeoff though — it is below the measured
+ * floor, so it guaranteed the fallback every time rather than trading off
+ * anything. 30s clears the measured 16.4s with headroom and matches the bound
+ * the `ask` REPL already uses for interactive AI.
+ */
+const EXPLAINER_TIMEOUT_MS = 30_000;
 
 export interface PlanExplanation {
   /** One-paragraph summary of what the plan does and why. */
@@ -130,8 +157,8 @@ ${JSON.stringify(planSummary, null, 2)}`);
     system: systemPrompt,
     user: userMessage,
     model: DEFAULT_MODEL,
-    maxTokens: 1024,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
+    maxTokens: EXPLAINER_MAX_TOKENS,
+    timeoutMs: EXPLAINER_TIMEOUT_MS,
     apiKey,
   });
 

@@ -9,7 +9,7 @@
  *
  * Falls back to rule-based diagnosis if:
  * - ANTHROPIC_API_KEY is not set
- * - The API call fails or times out (10s max)
+ * - The API call fails or times out (60s max — the toolkit default)
  * - The response can't be parsed
  */
 

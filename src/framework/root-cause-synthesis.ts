@@ -51,7 +51,7 @@ import type { RecurringPattern, HealthSnapshot } from './watch-state.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import { defaultAiModel } from './ai-model.js';
-import { AiTimeoutError, callClaude } from './ai-client.js';
+import { AiTimeoutError, callClaude, stripCodeFence } from './ai-client.js';
 
 // ── Types ──
 
@@ -520,6 +520,31 @@ export function synthesizeByRules(evidence: AgentEvidence[]): SynthesisResult {
 
 // ── AI-assisted synthesis ──
 
+/**
+ * Response budget for one synthesis across all degraded agents.
+ *
+ * Measured live (claude-sonnet-5, synthetic scan evidence with health signals,
+ * diagnosis findings and patterns per agent): 804 output tokens for 4 agents,
+ * 749 for 7, and 1522 for 10, at 8.8s / 9.5s / 17.7s. The previous 1024-token
+ * ceiling therefore truncated exactly when synthesis is most valuable — a wide
+ * multi-system cascade — and a truncated response throws in JSON.parse and
+ * falls back to rule-based correlation with no indication why. Cost grows at
+ * roughly 150 tokens per degraded agent, so 4096 covers ~25 simultaneously
+ * degraded targets; a stack in that state has bigger problems than this call.
+ */
+const SYNTHESIS_MAX_TOKENS = 4096;
+
+/**
+ * 30s, up from 20s, and deliberately not the diagnosis toolkit's 60s.
+ *
+ * 20s left almost no margin over the measured 17.7s for a 10-agent cascade.
+ * This is scan-adjacent work with an operator watching, so it keeps an
+ * interactive-scale bound rather than the batch 60s: rule-based correlation is
+ * a genuinely useful answer, so waiting a full minute to maybe do better is
+ * the wrong trade at a terminal.
+ */
+const SYNTHESIS_TIMEOUT_MS = 30_000;
+
 const SYNTHESIS_SYSTEM_PROMPT = `You are a root cause analyst for CrisisMode, an infrastructure recovery framework. You receive evidence from multiple recovery agents that are simultaneously detecting problems.
 
 Your job is to identify shared root causes — failures in one system that cascade to others. For example:
@@ -606,12 +631,17 @@ async function callSynthesisAi(
     system: SYNTHESIS_SYSTEM_PROMPT,
     user: userMessage,
     model: defaultAiModel(),
-    maxTokens: 1024,
-    timeoutMs: 20_000,
+    maxTokens: SYNTHESIS_MAX_TOKENS,
+    timeoutMs: SYNTHESIS_TIMEOUT_MS,
     apiKey,
   });
 
-  const parsed = JSON.parse(text.trim()) as {
+  // stripCodeFence, not a bare trim: the model wraps this response in a ```json
+  // fence often enough that omitting it was the dominant failure mode here —
+  // 2 of 3 live calls came back fenced, threw "Unexpected token '`'", and fell
+  // through to rule-based correlation. Every other JSON-parsing AI call site in
+  // the framework already strips it.
+  const parsed = JSON.parse(stripCodeFence(text)) as {
     clusters?: Array<{
       rootCause: string;
       confidence: number;
