@@ -66,7 +66,7 @@ export const supabaseGuides: RemediationGuide[] = [
     platform: 'supabase',
     title: 'Add an approximate vector index to your pgvector table',
     applicableFindingTypes: ['vector-index-missing', 'ivfflat-lists-mismatch'],
-    url: 'https://supabase.com/docs/guides/database/extensions/pgvector',
+    url: 'https://supabase.com/docs/guides/ai/vector-indexes/hnsw-indexes',
     consoleSteps: [
       'Open the Supabase dashboard → SQL Editor.',
       'Confirm the table and vector column named in the readiness finding.',
