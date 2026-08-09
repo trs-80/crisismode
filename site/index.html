@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300;1,9..40,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/asciinema-player.css">
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -311,14 +312,47 @@
       overflow: hidden;
     }
 
-    .terminal-line {
-      opacity: 0;
-      transform: translateY(4px);
-      animation: line-appear 0.3s ease forwards;
+    /* asciinema player mount — the player supplies its own padding and sizing. */
+    .terminal-body.terminal-player {
+      padding: 0;
+      min-height: 0;
+      line-height: normal;
     }
 
-    @keyframes line-appear {
-      to { opacity: 1; transform: translateY(0); }
+    /* Terminal palette for the player, matched to this page's colors. */
+    .asciinema-player-theme-crisismode {
+      --term-color-background: var(--bg-secondary);
+      --term-color-foreground: var(--text-primary);
+      --term-color-0: #27272a;
+      --term-color-1: var(--red);
+      --term-color-2: var(--green);
+      --term-color-3: var(--amber);
+      --term-color-4: #3b82f6;
+      --term-color-5: #ec4899;
+      --term-color-6: var(--cyan);
+      --term-color-7: var(--text-primary);
+      --term-color-8: #52525b;
+      --term-color-9: #f87171;
+      --term-color-10: #4ade80;
+      --term-color-11: #fbbf24;
+      --term-color-12: #60a5fa;
+      --term-color-13: #f472b6;
+      --term-color-14: #22d3ee;
+      --term-color-15: #fafafa;
+    }
+
+    .terminal-caption {
+      max-width: 860px;
+      margin: 1rem auto 0;
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      color: var(--text-tertiary);
+      text-align: center;
+    }
+
+    .terminal-caption code {
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
     }
 
     .t-dim { color: var(--text-muted); }
@@ -329,21 +363,6 @@
     .t-white { color: var(--text-primary); }
     .t-secondary { color: var(--text-secondary); }
     .t-bold { font-weight: 500; }
-
-    .cursor-blink {
-      display: inline-block;
-      width: 8px;
-      height: 14px;
-      background: var(--amber);
-      margin-left: 2px;
-      vertical-align: middle;
-      animation: blink 1s step-end infinite;
-    }
-
-    @keyframes blink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0; }
-    }
 
     /* ── SECTIONS ── */
     section {
@@ -905,8 +924,26 @@
           <div class="terminal-dot green"></div>
           <span class="terminal-title">crisismode — demo mode (simulator, no infrastructure required)</span>
         </div>
-        <div class="terminal-body" id="terminal-body"></div>
+        <!-- Real recording of `crisismode demo`. Regenerate with scripts/record-demo.sh.
+             Phase 5 of the demo is a live Claude API call, so every re-recording
+             changes the root-cause wording and the confidence figure. When the
+             assets change, update the alt text below to match what the new GIF
+             actually shows — it is both an accessibility surface and a claim
+             about the product. -->
+        <div class="terminal-body terminal-player" id="terminal-player"></div>
+        <!-- Fallback when JavaScript is off. The script below reuses this same
+             markup if the player cannot start, so the GIF lives in exactly one
+             place and is never fetched alongside a working player. -->
+        <noscript id="terminal-fallback">
+          <img src="assets/demo.gif" alt="Opening excerpt of a terminal recording of `crisismode demo`: a Prometheus PostgresReplicationLagCritical alert selects the postgresql-replication-recovery agent, a live AI diagnosis identifies the scenario as replication_lag_cascade at 78% confidence — a primary-side WAL generation spike putting all three replicas behind the same sent_lsn, worst on 10.0.1.52 — and the agent builds a 10-step recovery plan with per-step risk, blast radius and undo notes, which the framework then begins validating. The excerpt ends at plan validation; the full recording continues through a human approval gate into dry-run execution." style="display: block; width: 100%;">
+        </noscript>
       </div>
+      <p class="terminal-caption">
+        An unedited recording of <code>crisismode demo</code> — the simulated PostgreSQL
+        replication-lag cascade. Line timing is paced for readability; the step durations
+        shown are the real measured values. The diagnosis is a real model call, so its
+        reasoning and confidence differ from run to run.
+      </p>
     </div>
   </section>
 
@@ -1341,6 +1378,7 @@
     <p>CrisisMode v0.8.0 &mdash; Recovery Agent Contract Specification v0.3.0-draft &mdash; Apache 2.0</p>
   </footer>
 
+  <script src="assets/asciinema-player.min.js"></script>
   <script>
     // ── Scroll Reveal ──
     const observer = new IntersectionObserver(
@@ -1356,81 +1394,55 @@
 
     document.querySelectorAll('.reveal').forEach((el) => observer.observe(el));
 
-    // ── Terminal Animation ──
-    const terminalLines = [
-      { text: '$ crisismode demo', classes: 't-white t-bold' },
-      { text: '', classes: '' },
-      { text: '════════════════════════════════════════════════════════════', classes: 't-dim' },
-      { text: '  ⚠  CRISISMODE — Recovery Agent Framework', classes: 't-amber t-bold' },
-      { text: '  PostgreSQL Replication Lag Cascade Recovery', classes: 't-dim' },
-      { text: '════════════════════════════════════════════════════════════', classes: 't-dim' },
-      { text: '', classes: '' },
-      { text: '  Phase 1: Trigger', classes: 't-cyan t-bold' },
-      { text: '  ALERT FIRED  alertname=PostgresReplicationLagCritical', classes: 't-amber' },
-      { text: '', classes: '' },
-      { text: '  Phase 5: Diagnosis', classes: 't-cyan t-bold' },
-      { text: '  [CRITICAL] 3 replicas found, 1 severely lagging (342s)', classes: 't-red' },
-      { text: '  ✓ Identified: replication_lag_cascade (92% confidence)', classes: 't-green' },
-      { text: '', classes: '' },
-      { text: '  Phase 9: Execution', classes: 't-cyan t-bold' },
-      { text: '  Step step-004 [system_action]', classes: 't-white t-bold' },
-      { text: '  ◆ Capture: replication_state_snapshot — captured', classes: 't-dim' },
-      { text: '  ✓ Precondition: Replica is connected and streaming', classes: 't-green' },
-      { text: '  ✓ Success: WAL sender terminated', classes: 't-green' },
-      { text: '  ● SUCCESS (1ms)', classes: 't-green' },
-      { text: '', classes: '' },
-      { text: '  Step step-006 [replanning_checkpoint]', classes: 't-white t-bold' },
-      { text: '  ↻ Agent discovered invalid replication slot', classes: 't-cyan' },
-      { text: '  ↻ Revised plan: drop + recreate slot. Fast replan: approved', classes: 't-cyan' },
-      { text: '', classes: '' },
-      { text: '  ┌──────────────────────────────────────────┐', classes: 't-amber' },
-      { text: '  │       HUMAN APPROVAL REQUIRED            │', classes: 't-amber t-bold' },
-      { text: '  └──────────────────────────────────────────┘', classes: 't-amber' },
-      { text: '  Enter your decision (approve/skip/reject): _', classes: 't-white', cursor: true },
-    ];
-
-    const terminalBody = document.getElementById('terminal-body');
-    let lineIndex = 0;
+    // ── Terminal Demo ──
+    // A real recording of `crisismode demo` (site/assets/demo.cast), produced by
+    // scripts/record-demo.sh. Playback starts when the terminal scrolls into view.
+    const terminalMount = document.getElementById('terminal-player');
     let terminalStarted = false;
 
-    function addTerminalLine() {
-      if (lineIndex >= terminalLines.length) return;
-
-      const line = terminalLines[lineIndex];
-      const div = document.createElement('div');
-      div.className = 'terminal-line';
-      div.style.animationDelay = '0s';
-
-      if (line.text === '') {
-        div.innerHTML = '&nbsp;';
-      } else {
-        div.innerHTML = `<span class="${line.classes}">${escapeHtml(line.text)}</span>`;
-        if (line.cursor) {
-          div.querySelector('span').innerHTML =
-            div.querySelector('span').innerHTML.replace('_', '<span class="cursor-blink"></span>');
-        }
-      }
-
-      terminalBody.appendChild(div);
-      terminalBody.scrollTop = terminalBody.scrollHeight;
-      lineIndex++;
-
-      const delay = line.text === '' ? 80 : line.cursor ? 600 : 120;
-      setTimeout(addTerminalLine, delay);
-    }
-
-    function escapeHtml(text) {
-      const d = document.createElement('div');
-      d.textContent = text;
-      return d.innerHTML;
+    // When scripting is enabled a <noscript> element's children are parsed as
+    // raw text, so its textContent is the fallback markup. Reusing it here means
+    // the GIF and its alt text are declared once, and the 2.8MB asset stays
+    // unfetched unless the player genuinely cannot run.
+    function showTerminalFallback() {
+      const fallback = document.getElementById('terminal-fallback');
+      if (fallback) terminalMount.innerHTML = fallback.textContent;
     }
 
     const terminalObserver = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !terminalStarted) {
-          terminalStarted = true;
-          setTimeout(addTerminalLine, 400);
+        if (!entries[0].isIntersecting || terminalStarted) return;
+        terminalStarted = true;
+        terminalObserver.disconnect();
+
+        if (typeof AsciinemaPlayer === 'undefined') {
+          showTerminalFallback();
+          return;
         }
+
+        let player;
+        try {
+          player = AsciinemaPlayer.create('assets/demo.cast', terminalMount, {
+            theme: 'crisismode',
+            fit: 'width',
+            loop: true,
+            // No idleTimeLimit: scripts/pace-cast.mjs assigns every gap and
+            // clamps the longest to 4s, so there is nothing left to trim.
+            // Verified against the current cast: 314 events, 56.2s, max gap 4.0s.
+            // Trimming here would also cut the deliberate pause on the approval
+            // gate, which is the point of that frame.
+            poster: 'npt:0:03',
+            controls: 'auto',
+          });
+        } catch {
+          // A broken vendored player should degrade to the GIF, not an empty box.
+          showTerminalFallback();
+          return;
+        }
+
+        // Autoplay is muted-equivalent (no audio), so browsers allow it. If a
+        // policy blocks it the controls remain, so this stays non-fatal.
+        Promise.resolve(player.play()).catch(() => {});
       },
       { threshold: 0.3 }
     );
