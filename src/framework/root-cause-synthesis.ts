@@ -51,7 +51,7 @@ import type { RecurringPattern, HealthSnapshot } from './watch-state.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import { defaultAiModel } from './ai-model.js';
-import { callClaude } from './ai-client.js';
+import { AiTimeoutError, callClaude } from './ai-client.js';
 
 // ── Types ──
 
@@ -564,7 +564,11 @@ export async function synthesizeByAi(evidence: AgentEvidence[]): Promise<Synthes
   try {
     return await callSynthesisAi(evidence, apiKey);
   } catch (err) {
-    console.error('AI synthesis failed:', err instanceof Error ? err.message : err);
+    if (err instanceof AiTimeoutError) {
+      console.error(`AI synthesis ${err.message}`);
+    } else {
+      console.error('AI synthesis failed:', err instanceof Error ? err.message : err);
+    }
     return synthesizeByRules(evidence);
   }
 }

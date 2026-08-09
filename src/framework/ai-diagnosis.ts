@@ -19,7 +19,7 @@
 import type { DiagnosisResult, DiagnosisFinding } from '../types/diagnosis-result.js';
 import { getNetworkProfile } from './network-profile.js';
 import { defaultAiModel } from './ai-model.js';
-import { callClaude, stripCodeFence } from './ai-client.js';
+import { AiTimeoutError, callClaude, stripCodeFence } from './ai-client.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_FIELD_LENGTH = 10_000;
@@ -143,8 +143,8 @@ export async function aiCallText(
       apiKey,
     });
   } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      console.error(`AI call timed out after ${timeoutMs}ms`);
+    if (err instanceof AiTimeoutError) {
+      console.error(`AI call ${err.message}`);
     } else {
       console.error('AI call failed:', err instanceof Error ? err.message : err);
     }

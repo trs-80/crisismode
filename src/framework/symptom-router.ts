@@ -19,7 +19,7 @@ import { sanitizeInput } from './ai-diagnosis.js';
 import type { StackProfile } from '../cli/autodiscovery.js';
 import { PKG_TO_SERVICE, pkgsForService } from '../config/service-registry.js';
 import { defaultAiModel } from './ai-model.js';
-import { callClaude } from './ai-client.js';
+import { AiTimeoutError, callClaude } from './ai-client.js';
 
 // ── Types ──
 
@@ -495,7 +495,11 @@ export async function routeByAi(
   try {
     return await callRoutingAi(question, stackProfile, apiKey);
   } catch (err) {
-    console.error('AI routing failed:', err instanceof Error ? err.message : err);
+    if (err instanceof AiTimeoutError) {
+      console.error(`AI routing ${err.message}`);
+    } else {
+      console.error('AI routing failed:', err instanceof Error ? err.message : err);
+    }
     return buildAiFallback(question, stackProfile);
   }
 }

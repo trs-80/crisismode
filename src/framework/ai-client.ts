@@ -13,14 +13,39 @@
  *
  * Deliberately narrow: no network-profile gating, no input sanitization, no
  * error-to-fallback translation. Those are caller policy and stay at the call
- * sites so each preserves its own observable behavior. `callClaude` throws on
- * timeout (AbortError) and on API failure; callers decide what that means.
+ * sites so each preserves its own observable behavior. `callClaude` throws
+ * `AiTimeoutError` on timeout and the underlying error on API failure; callers
+ * decide what that means.
  */
 
 import { defaultAiModel } from './ai-model.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_TOKENS = 1024;
+
+/**
+ * Thrown when the request did not complete within `timeoutMs`.
+ *
+ * This exists because a timeout is not detectable from the thrown error alone.
+ * The SDK wraps an aborted request in `APIUserAbortError`, whose `name` is the
+ * inherited "Error" (the SDK never assigns `name`) and whose message is the
+ * cause-free "Request was aborted." — indistinguishable from a caller-initiated
+ * cancellation. Since `callClaude` owns the AbortController, it is the only
+ * layer that knows an abort was its own deadline firing, so it converts that
+ * into a typed error the call sites can report honestly.
+ *
+ * The message is the bare predicate ("timed out after 10000ms") so each call
+ * site can prefix its own subject, e.g. `AI routing ${err.message}`.
+ */
+export class AiTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`timed out after ${timeoutMs}ms`);
+    this.name = 'AiTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
 
 /** A single conversation turn, matching the Anthropic MessageParam shape we use. */
 export interface ClaudeMessage {
@@ -51,7 +76,8 @@ export interface CallClaudeOptions {
  * The returned string is NOT trimmed — callers that need trimming apply it,
  * matching pre-consolidation behavior byte-for-byte.
  *
- * @throws if no API key is available, on timeout (AbortError), or on API error.
+ * @throws if no API key is available, {@link AiTimeoutError} on timeout, or the
+ * underlying SDK error on API failure.
  */
 export async function callClaude(opts: CallClaudeOptions): Promise<string> {
   const apiKey = opts.apiKey ?? process.env.ANTHROPIC_API_KEY;
@@ -93,6 +119,14 @@ export async function callClaude(opts: CallClaudeOptions): Promise<string> {
       .filter((block) => block.type === 'text')
       .map((block) => ('text' in block ? block.text : ''))
       .join('');
+  } catch (err) {
+    // The signal, not the error shape, is the reliable witness: the SDK's abort
+    // error is named "Error" and says only "Request was aborted.". Nothing else
+    // can abort this controller, so `aborted` means our deadline fired.
+    if (controller.signal.aborted) {
+      throw new AiTimeoutError(timeoutMs);
+    }
+    throw err;
   } finally {
     clearTimeout(timeoutId);
   }
