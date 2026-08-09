@@ -96,6 +96,28 @@ describe('parseDownArgs', () => {
     const parsed = parseDownArgs(['stripe', '--bogus']);
     expect(parsed).toEqual({ unknownFlag: '--bogus' });
   });
+
+  /**
+   * CodeRabbit wave: a bare `--config` (nothing after it, or the next token
+   * is itself a flag) used to be consumed unconditionally — `down --config`
+   * silently proceeded with no path, and `down --config --terse` swallowed
+   * `--terse` as a literal config-file path ("Config file not found:
+   * .../--terse"). Both are a missing/flag-like value, a usage error.
+   */
+  it('reports a usage error for a bare --config with nothing after it', () => {
+    const parsed = parseDownArgs(['--config']);
+    expect(parsed).toEqual({ usageError: expect.stringContaining('--config') });
+  });
+
+  it('reports a usage error for --config immediately followed by another flag', () => {
+    const parsed = parseDownArgs(['--config', '--terse']);
+    expect(parsed).toEqual({ usageError: expect.stringContaining('--config') });
+  });
+
+  it('still accepts a well-formed --config <path>', () => {
+    const parsed = parseDownArgs(['stripe', '--config', '/tmp/x.yaml']);
+    expect(parsed).toEqual({ serviceIds: ['stripe'] });
+  });
 });
 
 describe('renderDownHuman / renderDownReportLines', () => {
@@ -311,6 +333,29 @@ describe('runDownCommand', () => {
     const code = await runDownCommand(['example.com', 'github'], { fetchImpl, probeImpl, offlineGate: async () => null });
     spy.mockRestore();
     expect(code).toBe(0);
+  });
+
+  /**
+   * CodeRabbit wave: bare/flag-swallowing `--config` used to silently
+   * proceed (missing value) or eat the next flag as a literal path
+   * (flag-like value) instead of failing usage. Drives the real
+   * runDownCommand surface so a regression here is caught at the command
+   * boundary, not just in parseDownArgs' return shape.
+   */
+  it('exits 2 on a bare --config with nothing after it, naming --config', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runDownCommand(['--config']);
+    const errOut = errSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+    errSpy.mockRestore();
+    expect(code).toBe(2);
+    expect(errOut).toContain('--config');
+  });
+
+  it('exits 2 on --config immediately followed by another flag, never treating the flag as a path', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runDownCommand(['--config', '--terse']);
+    errSpy.mockRestore();
+    expect(code).toBe(2);
   });
 
   it('--json emits one parseable JSON object per service with id/verdict/statusAssessment/probe/detail', async () => {

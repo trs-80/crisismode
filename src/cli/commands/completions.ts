@@ -275,6 +275,9 @@ complete -c crisismode -n '__fish_seen_subcommand_from webhook' -l execute -d 'E
 # watch
 complete -c crisismode -n '__fish_seen_subcommand_from watch' -l interval -d 'Poll interval in seconds' -r
 
+# down
+complete -c crisismode -n '__fish_seen_subcommand_from down' -l terse -d 'Suppress plain-language explanation'
+
 # completions
 complete -c crisismode -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish' -d 'Target shell'
 

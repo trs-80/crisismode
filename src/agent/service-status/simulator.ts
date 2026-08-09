@@ -128,7 +128,12 @@ export class ServiceStatusSimulator implements ServiceStatusBackend {
     if (command.operation === 'query_services') {
       return { reports: await this.queryServices() };
     }
-    return { simulated: true, operation: command.operation, parameters: command.parameters };
+    // Matches ServiceStatusLiveClient.executeCommand: a success-shaped
+    // fallback here would let a simulated plan pass an operation that
+    // throws under live execution — this agent only ever issues
+    // query_services (agent.ts's plan()), so there is no legitimate op this
+    // branch needs to accept permissively.
+    throw new Error(`Unsupported service-status operation: ${command.operation}`);
   }
 
   async evaluateCheck(check: CheckExpression): Promise<boolean> {

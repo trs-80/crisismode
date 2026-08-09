@@ -181,12 +181,27 @@ interface ParsedDownArgs {
  * in this CLI has ever exited 2 before. `down` is the first command to
  * validate its own flags: this scans the raw args index.ts hands it (before
  * that lossy global parse) for a `-`/`--` token outside the known set.
+ *
+ * `--config` needs its own check rather than falling into that generic scan:
+ * previously it unconditionally consumed the next token as its value.
+ * `down --config` (nothing after) silently proceeded with no path — Node's
+ * `util.parseArgs({ strict: false })` doesn't throw for a string option with
+ * a missing value either (it stores `true`), so index.ts's global parser
+ * doesn't catch this — and `down --config --terse` swallowed `--terse` as a
+ * literal filename ("Config file not found: .../--terse") instead of
+ * treating it as a flag. Both are a missing/flag-like value for `--config`,
+ * which the spec calls a usage error (exit 2), not a reachability or
+ * "no services configured" outcome.
  */
-export function parseDownArgs(args: readonly string[]): ParsedDownArgs | { unknownFlag: string } {
+export function parseDownArgs(args: readonly string[]): ParsedDownArgs | { unknownFlag: string } | { usageError: string } {
   const serviceIds: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === '--config') {
+      const value = args[i + 1];
+      if (value === undefined || value.startsWith('-')) {
+        return { usageError: "'--config' requires a path argument" };
+      }
       i++; // skip its value
       continue;
     }
@@ -273,6 +288,12 @@ export async function runDownCommand(args: readonly string[], deps: RunDownComma
   const parsed = parseDownArgs(args);
   if ('unknownFlag' in parsed) {
     console.error(`crisismode down: unrecognized option '${parsed.unknownFlag}'`);
+    console.error('Usage: crisismode down [<service>...] [--config <path>] [--json] [--terse] [--no-color] [--verbose]');
+    process.exitCode = 2;
+    return 2;
+  }
+  if ('usageError' in parsed) {
+    console.error(`crisismode down: ${parsed.usageError}`);
     console.error('Usage: crisismode down [<service>...] [--config <path>] [--json] [--terse] [--no-color] [--verbose]');
     process.exitCode = 2;
     return 2;
