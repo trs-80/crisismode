@@ -28,7 +28,8 @@
  * Usage: node scripts/pace-cast.mjs <in.cast> <out.cast>
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 // ── Pacing model (seconds) ───────────────────────────────────────────────
 const DELAY = {
@@ -141,7 +142,39 @@ for (const rawLine of raw.slice(1)) {
   }
 }
 
-writeFileSync(outPath, out.join('\n') + '\n');
+// Write to a sibling temp file and rename into place only once the byte check
+// below has passed. record-demo.sh passes a committed site asset as outPath, so
+// writing there before verifying would overwrite the good cast with the rejected
+// one — while printing "refusing to ship". The temp file is a sibling so the
+// rename stays on one filesystem and is therefore atomic.
+const tmpPath = join(dirname(outPath), `.${basename(outPath)}.pace-cast.${process.pid}.tmp`);
+
+let tmpPending = false;
+const removeTmp = () => {
+  if (!tmpPending) return;
+  tmpPending = false;
+  try {
+    unlinkSync(tmpPath);
+  } catch {
+    // Already gone: renamed into place, or removed by an earlier handler.
+  }
+};
+
+// Covers every exit path Node can observe — normal return, process.exit(), and
+// uncaught throws. Signals do not run 'exit' handlers by themselves, so they are
+// wired to it explicitly. (SIGKILL is uncatchable and cannot be covered.)
+process.on('exit', removeTmp);
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(signal, () => {
+    removeTmp();
+    process.exit(1);
+  });
+}
+
+// Set before the write, not after: a write that throws part-way through still
+// leaves a partial file to clean up.
+tmpPending = true;
+writeFileSync(tmpPath, out.join('\n') + '\n');
 
 // Verify content is unchanged — pacing must be timing-only.
 const bytesOf = (path) =>
@@ -155,10 +188,15 @@ const bytesOf = (path) =>
     .map((e) => e[2])
     .join('');
 
-if (bytesOf(inPath) !== bytesOf(outPath)) {
+if (bytesOf(inPath) !== bytesOf(tmpPath)) {
   console.error('pace-cast: FAILED — output bytes differ from input; refusing to ship');
+  console.error(`pace-cast: ${outPath} left untouched`);
+  // The 'exit' handler discards the rejected cast.
   process.exit(1);
 }
+
+renameSync(tmpPath, outPath);
+tmpPending = false;
 
 console.log(
   `pace-cast: ${originalWall.toFixed(1)}s -> ${pacedWall.toFixed(1)}s ` +
