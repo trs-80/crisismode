@@ -93,6 +93,30 @@ describe('callClaude', () => {
     expect(params.model).toBe('claude-test');
   });
 
+  /**
+   * Neither `messages` nor `user` set. This is a caller bug, and the point of
+   * pinning it is that `callClaude` does not paper over it with an invented
+   * prompt: it sends one empty user turn, which the API rejects, so the mistake
+   * surfaces at the call site instead of producing a confident answer to a
+   * question nobody asked.
+   */
+  it('sends a single empty user turn when neither user nor messages is given', async () => {
+    createMock.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
+
+    await callClaude({ system: 'sys', apiKey: 'test-key' });
+
+    const [params] = createMock.mock.calls[0]!;
+    expect(params.messages).toEqual([{ role: 'user', content: '' }]);
+  });
+
+  it('returns an empty string when the model replies with no text blocks', async () => {
+    // A stop-at-tool-use or otherwise text-free reply must not throw here; the
+    // JSON-parsing callers turn the empty string into their own fallback.
+    createMock.mockResolvedValue({ content: [] });
+
+    expect(await callClaude({ system: 'sys', user: 'hi', apiKey: 'test-key' })).toBe('');
+  });
+
   it('throws with a clear message when no API key is available', async () => {
     delete process.env.ANTHROPIC_API_KEY;
     await expect(callClaude({ system: 'sys', user: 'hi' })).rejects.toThrow(/API key/i);

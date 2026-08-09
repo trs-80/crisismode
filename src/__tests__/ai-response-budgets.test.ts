@@ -25,6 +25,8 @@ import type * as AnthropicSdk from '@anthropic-ai/sdk';
 import { explainPlan } from '../framework/ai-explainer.js';
 import { synthesizeByAi } from '../framework/root-cause-synthesis.js';
 import type { AgentEvidence } from '../framework/root-cause-synthesis.js';
+import { validatePlan } from '../framework/validator.js';
+import { safetyManifestFor } from './ai-explainer-plan-fixtures.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
 import type { DiagnosisResult } from '../types/diagnosis-result.js';
 
@@ -144,9 +146,19 @@ const EXPLAINER_MEASURED_TOKENS = 1484;
 const EXPLAINER_MEASURED_MS = 16_400;
 
 /**
- * The plan only has to satisfy the fallback builder and the prompt assembly —
- * the SDK is mocked, so the response is EXPLAINER_RESPONSE regardless of what
- * is sent. The fixture itself is the real answer to the 10-step reference plan.
+ * The SDK is mocked, so the response is EXPLAINER_RESPONSE regardless of what
+ * is sent, and this plan only has to satisfy the fallback builder and the
+ * prompt assembly. It still has to obey the repo's safety contract though
+ * (CLAUDE.md "Safety Rules", enforced by src/framework/validator.ts): an
+ * elevated-risk `system_action` carries `statePreservation.before` captures,
+ * and a plan containing one carries a `human_notification`. This fixture had
+ * neither, which made it both unexecutable by the real engine and the wrong
+ * shape to copy — the `passes the real plan validator` test above is what keeps
+ * that from recurring silently.
+ *
+ * The trailing cast covers only plan-envelope fields no code path here reads
+ * (agentName, createdAt, affectedSystems, ...), not anything the validator
+ * inspects.
  */
 function makePlan(): RecoveryPlan {
   return {
@@ -161,18 +173,68 @@ function makePlan(): RecoveryPlan {
         stepId: 'step-001',
         type: 'diagnosis_action',
         name: 'Assess current replication lag across all replicas',
+        executionContext: 'postgresql_read',
+        target: 'prod-db-primary',
         command: { type: 'sql', operation: 'SELECT * FROM pg_stat_replication' },
+      },
+      {
+        stepId: 'step-002',
+        type: 'human_notification',
+        name: 'Notify on-call DBA of replication recovery initiation',
+        recipients: [{ role: 'dba-oncall', urgency: 'high' }],
+        message: {
+          summary: 'Replication recovery starting on prod-db-primary',
+          detail:
+            'The lagging replica 10.0.1.52 will be disconnected and resynced. Reads served from that replica will fail over to the remaining two.',
+          actionRequired: false,
+        },
+        channel: 'slack',
       },
       {
         stepId: 'step-004',
         type: 'system_action',
         name: 'Disconnect lagging replica 10.0.1.52 from replication',
+        executionContext: 'postgresql_write',
+        target: 'prod-db-primary',
         riskLevel: 'elevated',
+        requiredCapabilities: ['db.replica.disconnect'],
         command: { type: 'sql', operation: 'SELECT pg_terminate_backend(pid)' },
-        blastRadius: { directComponents: ['pg-replica-10-0-1-52'] },
+        // Required at elevated risk or higher: the pre-mutation snapshot is
+        // what a rollback and the forensic trail are reconstructed from.
+        statePreservation: {
+          before: [
+            {
+              name: 'replication_state_snapshot',
+              captureType: 'sql_query',
+              statement: 'SELECT * FROM pg_stat_replication;',
+              captureCost: 'negligible',
+              capturePolicy: 'required',
+              retention: 'P30D',
+            },
+          ],
+          after: [
+            {
+              name: 'replication_state_post_disconnect',
+              captureType: 'sql_query',
+              statement: 'SELECT * FROM pg_stat_replication;',
+              captureCost: 'negligible',
+              capturePolicy: 'best_effort',
+              retention: 'P30D',
+            },
+          ],
+        },
+        blastRadius: {
+          directComponents: ['pg-replica-10-0-1-52'],
+          indirectComponents: ['read-pool'],
+          maxImpact: 'single_replica_disconnected',
+          cascadeRisk: 'low',
+        },
       },
     ],
-    rollbackStrategy: { type: 'stepwise' },
+    rollbackStrategy: {
+      type: 'stepwise',
+      description: 'Undo each completed step in reverse order.',
+    },
     impact: {
       dataLossRisk: 'none',
       estimatedUserImpact: 'Read queries may experience elevated latency',
@@ -187,6 +249,30 @@ const DIAGNOSIS: DiagnosisResult = {
   findings: [],
   diagnosticPlanNeeded: false,
 };
+
+/**
+ * The mechanical guard for this fixture. `explainPlan` never validates the plan
+ * it is given, so without this the fixture could drift out of the repo's safety
+ * contract and only a reviewer would notice — which is how it acquired an
+ * elevated-risk action with no `statePreservation.before` captures in the first
+ * place. Asserting the full result (not a hand-picked subset) means a new
+ * validator rule applies here automatically.
+ */
+describe('ai-explainer plan fixture', () => {
+  it('passes the real plan validator', () => {
+    const result = validatePlan(
+      makePlan(),
+      safetyManifestFor({
+        scenario: 'replication_lag_cascade',
+        executionContexts: ['postgresql_read', 'postgresql_write'],
+        maxRiskLevel: 'elevated',
+      }),
+    );
+
+    expect(result.checks.filter((c) => !c.passed)).toEqual([]);
+    expect(result.valid).toBe(true);
+  });
+});
 
 describe('ai-explainer response budget', () => {
   let originalApiKey: string | undefined;
