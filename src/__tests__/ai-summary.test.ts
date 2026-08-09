@@ -22,7 +22,7 @@ function makeIncidentSummary(overrides?: Partial<IncidentSummary>): IncidentSumm
     healthy: [
       { id: 'DNS-001', service: 'dns (local-dns)', status: 'healthy', summary: 'All DNS lookups OK' },
     ],
-    nextSteps: ['Investigate: `crisismode diagnose PG-001`'],
+    nextSteps: ['Investigate: `crisismode diagnose detected-postgresql`'],
     durationMs: 1200,
     ...overrides,
   };

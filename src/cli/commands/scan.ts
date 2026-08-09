@@ -571,7 +571,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   // Hint about check plugins when none are discovered
   if (healthPlugins.length === 0) {
-    printInfo('No check plugins found. Add custom checks in ./checks/ or scaffold one with: crisismode init --plugin my-check');
+    printInfo('No check plugins found. Add custom checks in ./checks/ or scaffold one with: crisismode init --agent my-check');
   }
 
   return result;

@@ -39,6 +39,27 @@ export interface SummaryFinding {
 }
 
 /**
+ * Build a `crisismode diagnose` invocation that actually resolves for a finding.
+ *
+ * `diagnose` takes a **target name**, not a finding id — the one exception is
+ * `PLUG-<n>`, which `runDiagnose` routes to the check plugin's diagnose verb by
+ * index. So suggesting the raw finding id works for plugin findings and fails
+ * with `Target "PG-001" not found in config` for every agent finding.
+ *
+ * Scan builds `service` as `${kind} (${target.name})` (or `plugin (${name})`),
+ * so the addressable target name is the trailing parenthesized group. When it
+ * cannot be recovered, fall back to the bare command, which diagnoses the first
+ * configured target — less specific, but never a copy-pasteable dead end.
+ */
+export function diagnoseCommandFor(finding: SummaryFinding): string {
+  if (/^PLUG-\d+$/i.test(finding.id)) {
+    return `crisismode diagnose ${finding.id}`;
+  }
+  const targetName = finding.service.match(/\(([^()]+)\)\s*$/)?.[1]?.trim();
+  return targetName ? `crisismode diagnose ${targetName}` : 'crisismode diagnose';
+}
+
+/**
  * Build an incident summary from scan results.
  */
 export function buildIncidentSummary(result: ScanResult): IncidentSummary {
@@ -104,7 +125,7 @@ function buildNextSteps(
 
   if (critical.length > 0) {
     const first = critical[0]!;
-    steps.push(`Investigate: \`crisismode diagnose ${first.id}\``);
+    steps.push(`Investigate: \`${diagnoseCommandFor(first)}\``);
     if (critical.length > 1) {
       steps.push(`${critical.length - 1} more unhealthy — diagnose each before attempting recovery`);
     }
