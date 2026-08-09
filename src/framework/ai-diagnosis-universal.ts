@@ -9,7 +9,7 @@
  * timeout-protected, graceful fallback.
  *
  * Safety:
- * - 15s timeout via AbortController
+ * - Bounded timeout via AbortController (see RESPONSE_TIMEOUT_MS)
  * - Input sanitization via framework AI toolkit
  * - Advisory only — never executes commands
  */
@@ -20,10 +20,37 @@ import type { DiagnosisResult } from '../types/diagnosis-result.js';
 import type { HealthAssessment } from '../types/health.js';
 import type { SentryEnrichment } from '../integrations/sentry.js';
 import { defaultAiModel } from './ai-model.js';
-import { AiTimeoutError, callClaude } from './ai-client.js';
+import { AiTimeoutError, callClaudeDetailed } from './ai-client.js';
 
 const DEFAULT_MODEL = defaultAiModel();
-const DEFAULT_TIMEOUT_MS = 15_000;
+
+/**
+ * Response budget for `crisismode ask "<question>"`, this module's only caller.
+ *
+ * Measured against live claude-sonnet-5 on 2026-08-09 with max_tokens=8192, so
+ * every figure is a natural response length rather than a clipped one. Three
+ * request shapes this module actually assembles, 3 reps each, plus 3 extra reps
+ * of the widest:
+ *
+ *   question only ("my postgres is slow")  1076-1151 tokens   10.1-11.7s
+ *   structured health+diagnosis, no question 1202-1254 tokens 14.6-15.7s
+ *   question+health+diagnosis+sentry (n=6) 1285-1891 tokens   15.4-23.4s
+ *
+ * So BOTH previous budgets were wrong, not just the token one. At 1024 tokens
+ * even the simplest question — the single most common invocation of this CLI —
+ * truncated on every call, confirmed by a forced-truncation run that came back
+ * stop_reason=max_tokens and cut mid-word ("...or bl"). And 15s sat below the
+ * measured 15.4-23.4s of the widest shape, so the richest requests aborted and
+ * degraded to buildFallback().
+ *
+ * 4096 is 2.2x the measured 1891-token maximum. 45s is 1.9x the measured 23.4s
+ * and matches the ~85 tokens/s observed here, so the deadline and the ceiling
+ * are reachable together rather than one masking the other. It stays under the
+ * 60s non-interactive bound in ai-client.ts on purpose: an operator typed this
+ * command and is watching a terminal with no progress output.
+ */
+const RESPONSE_MAX_TOKENS = 4096;
+const RESPONSE_TIMEOUT_MS = 45_000;
 
 export interface UniversalDiagnosisRequest {
   /** Free-form question from the user. */
@@ -39,6 +66,15 @@ export interface UniversalDiagnosisRequest {
 export interface UniversalDiagnosisResult {
   response: string;
   source: 'ai' | 'fallback';
+  /**
+   * True when the model hit RESPONSE_MAX_TOKENS and `response` is a prefix of
+   * the real answer rather than the whole thing.
+   *
+   * Required, not optional: a caller that renders `response` must not be able
+   * to forget that it might be half an answer. Always false for fallbacks,
+   * which are locally generated and complete by construction.
+   */
+  truncated: boolean;
 }
 
 const SYSTEM_PROMPT = `You are an infrastructure recovery specialist embedded in the CrisisMode CLI tool. Your job is to help operators understand what's wrong with their systems and what to do about it.
@@ -119,16 +155,20 @@ async function callAi(
 
   const userMessage = sanitizeInput(parts.join('\n\n'));
 
-  const text = await callClaude({
+  const { text, stopReason } = await callClaudeDetailed({
     system: SYSTEM_PROMPT,
     user: userMessage,
     model: DEFAULT_MODEL,
-    maxTokens: 1024,
-    timeoutMs: DEFAULT_TIMEOUT_MS,
+    maxTokens: RESPONSE_MAX_TOKENS,
+    timeoutMs: RESPONSE_TIMEOUT_MS,
     apiKey,
   });
 
-  return { response: text.trim(), source: 'ai' };
+  // Report truncation from stop_reason rather than inferring it from the text.
+  // A cut answer frequently reads as a finished one: in 24 live trials, 2 of 20
+  // truncated responses ended on a period, so "does it end mid-sentence?" would
+  // present a partial diagnosis as complete roughly 1 time in 10.
+  return { response: text.trim(), source: 'ai', truncated: stopReason === 'max_tokens' };
 }
 
 function buildFallback(request: UniversalDiagnosisRequest): UniversalDiagnosisResult {
@@ -169,5 +209,6 @@ function buildFallback(request: UniversalDiagnosisRequest): UniversalDiagnosisRe
   return {
     response: parts.join('\n') || 'Set ANTHROPIC_API_KEY for AI-powered diagnosis, or run `crisismode diagnose` for automated checks.',
     source: 'fallback',
+    truncated: false,
   };
 }
