@@ -83,7 +83,7 @@ describe('Shell completions (6.2)', () => {
     expect(output).toContain('--execute');
     expect(output).toContain('--health-only');
     expect(output).toContain('--interval');
-    expect(output).toContain('--agent');
+    expect(output).toContain('--plugin');
   });
 
   it('zsh completions include descriptions', async () => {

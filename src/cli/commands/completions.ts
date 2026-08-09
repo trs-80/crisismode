@@ -52,7 +52,7 @@ _crisismode_completions() {
       COMPREPLY=( $(compgen -W "--config --terse --json --no-color --verbose -h --help" -- "\${cur}") )
       ;;
     init)
-      COMPREPLY=( $(compgen -W "--agent --json --no-color -h --help" -- "\${cur}") )
+      COMPREPLY=( $(compgen -W "--plugin --json --no-color -h --help" -- "\${cur}") )
       ;;
     demo)
       COMPREPLY=( $(compgen -W "--json --no-color -h --help" -- "\${cur}") )
@@ -178,7 +178,7 @@ _crisismode() {
           ;;
         init)
           _arguments \\
-            '--agent[Scaffold a new check plugin]:agent name' \\
+            '--plugin[Scaffold a new check plugin]:plugin name' \\
             '--json[Machine-readable JSON output]' \\
             '--no-color[Disable colored output]' \\
             {-h,--help}'[Show help]'
@@ -267,7 +267,7 @@ complete -c crisismode -n '__fish_seen_subcommand_from recover' -l execute     -
 complete -c crisismode -n '__fish_seen_subcommand_from recover' -l health-only -d 'Health check only, no diagnosis'
 
 # init
-complete -c crisismode -n '__fish_seen_subcommand_from init' -l agent -d 'Scaffold a new check plugin' -r
+complete -c crisismode -n '__fish_seen_subcommand_from init' -l plugin -d 'Scaffold a new check plugin' -r
 
 # webhook
 complete -c crisismode -n '__fish_seen_subcommand_from webhook' -l execute -d 'Enable mutations'

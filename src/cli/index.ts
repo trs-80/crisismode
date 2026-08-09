@@ -35,7 +35,7 @@ const HELP = `
     crisismode down [<service>...]          Is <service> down, or is it just me? (exit 0/1/2; bare form checks configured services)
     crisismode readiness                    Scale-readiness report (read-only, will-it-break-under-load)
     crisismode init [path]                  Generate crisismode.yaml
-    crisismode init --agent <name>          Scaffold a check plugin
+    crisismode init --plugin <name>         Scaffold a check plugin
     crisismode demo                         Run simulator demo
     crisismode webhook [options]            Start webhook receiver
     crisismode ask "<question>"             Natural language AI diagnosis
@@ -56,7 +56,9 @@ const HELP = `
     crisismode mcp                         Start MCP server on stdio (read-only diagnosis tools)
 
   Options:
-    --agent <name>      Scaffold a new check plugin (init only)
+    --plugin <name>     Scaffold a new check plugin (init only)
+    --agent <name>      Deprecated alias for --plugin (init only); --plugin wins
+                        if both are given
     --config <path>     Path to crisismode.yaml
     --target <name>     Target name from config
     --category <kinds>  Comma-separated service kinds to scan (scan only)
@@ -89,6 +91,9 @@ async function main(): Promise<void> {
         config: { type: 'string' },
         target: { type: 'string' },
         category: { type: 'string' },
+        plugin: { type: 'string' },
+        // Deprecated alias for --plugin; registered so it still consumes its
+        // value instead of being swallowed by `strict: false`.
         agent: { type: 'string' },
         execute: { type: 'boolean', default: false },
         'health-only': { type: 'boolean', default: false },
@@ -208,7 +213,13 @@ async function main(): Promise<void> {
 
     case 'init': {
       const { runInit } = await import('./commands/init.js');
-      await runInit(positionals[0], values.agent as string | undefined);
+      await runInit(positionals[0], {
+        // Passed through as parsed: under `strict: false` a valueless
+        // `--plugin`/`--agent` arrives as `true`, which runInit rejects with a
+        // usage error instead of treating it as a name.
+        plugin: values.plugin as string | boolean | undefined,
+        agent: values.agent as string | boolean | undefined,
+      });
       break;
     }
 
