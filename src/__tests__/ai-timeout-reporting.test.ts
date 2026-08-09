@@ -23,6 +23,16 @@ vi.mock('../framework/ai-client.js', async (importOriginal) => {
 });
 
 const { aiCallText } = await import('../framework/ai-diagnosis.js');
+const { universalAiDiagnosis } = await import('../framework/ai-diagnosis-universal.js');
+const { synthesizeByAi } = await import('../framework/root-cause-synthesis.js');
+const { routeByAi } = await import('../framework/symptom-router.js');
+
+// synthesizeByAi correlates across agents and returns rules for a single item,
+// so two entries are the minimum that reaches the AI call.
+const TWO_AGENTS = [
+  { agentKind: 'pg', targetName: 'pg-primary' },
+  { agentKind: 'redis', targetName: 'redis-cache' },
+];
 
 describe('AI timeout reporting', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
@@ -83,5 +93,59 @@ describe('AI timeout reporting', () => {
     await aiCallText('sys', 'user', { timeoutMs: 2_500 });
 
     expect(logged()).toBe('AI call timed out after 2500ms');
+  });
+
+  // The other three reporters were changed in the same pass. Each names its own
+  // subject and must still fall back to rules rather than propagate.
+  it('universalAiDiagnosis names the timeout and still falls back', async () => {
+    callClaudeMock.mockRejectedValue(new AiTimeoutError(15_000));
+
+    const result = await universalAiDiagnosis({ question: 'why is replication lagging?' });
+
+    expect(logged()).toBe('AI diagnosis timed out after 15000ms');
+    expect(result.source).toBe('fallback');
+  });
+
+  it('universalAiDiagnosis still reports genuine API errors as failures', async () => {
+    callClaudeMock.mockRejectedValue(new Error('overloaded_error'));
+
+    const result = await universalAiDiagnosis({ question: 'why is replication lagging?' });
+
+    expect(logged()).toBe('AI diagnosis failed: overloaded_error');
+    expect(result.source).toBe('fallback');
+  });
+
+  it('synthesizeByAi names the timeout and still falls back', async () => {
+    callClaudeMock.mockRejectedValue(new AiTimeoutError(20_000));
+
+    const result = await synthesizeByAi(TWO_AGENTS);
+
+    expect(logged()).toBe('AI synthesis timed out after 20000ms');
+    expect(result).toBeDefined();
+  });
+
+  it('synthesizeByAi still reports genuine API errors as failures', async () => {
+    callClaudeMock.mockRejectedValue(new Error('overloaded_error'));
+
+    await synthesizeByAi(TWO_AGENTS);
+
+    expect(logged()).toBe('AI synthesis failed: overloaded_error');
+  });
+
+  it('routeByAi names the timeout and still falls back', async () => {
+    callClaudeMock.mockRejectedValue(new AiTimeoutError(10_000));
+
+    const result = await routeByAi('redis keeps running out of memory');
+
+    expect(logged()).toBe('AI routing timed out after 10000ms');
+    expect(result).toBeDefined();
+  });
+
+  it('routeByAi still reports genuine API errors as failures', async () => {
+    callClaudeMock.mockRejectedValue(new Error('overloaded_error'));
+
+    await routeByAi('redis keeps running out of memory');
+
+    expect(logged()).toBe('AI routing failed: overloaded_error');
   });
 });
