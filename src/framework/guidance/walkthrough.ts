@@ -25,8 +25,8 @@ const GUIDES_DIR_LABEL = 'src/framework/guidance/guides';
 /** Display names and login hints per platform, in walk order. */
 export const PLATFORM_INFO: Record<string, { label: string; loginHint: string }> = {
   'anthropic-console': {
-    label: 'Anthropic Console',
-    loginHint: 'Sign in at https://console.anthropic.com with the account your app uses.',
+    label: 'Claude Console (Anthropic)',
+    loginHint: 'Sign in at https://platform.claude.com (formerly console.anthropic.com) with the account your app uses.',
   },
   'openai-platform': {
     label: 'OpenAI Platform',
@@ -57,13 +57,13 @@ export const PLATFORM_INFO: Record<string, { label: string; loginHint: string }>
  */
 const KNOWN_OBSERVATIONS: Record<string, string[]> = {
   'anthropic-console': [
-    'Observed 2026-08-07: every console.anthropic.com URL redirects to platform.claude.com. ' +
-      'While walking these guides, note whether the guide URLs and step wording should adopt the new domain. ' +
-      'A working redirect still counts as DIFFERS — record it once per guide and move on; the fix is a URL edit, not a re-walk.',
+    'Guide URLs and wording adopted platform.claude.com on 2026-08-08 after verifying the redirect live. ' +
+      'The in-console steps have not yet had a signed-in verification — that is the main job here.',
   ],
-  neon: [
-    'Neon guide URLs point at neon.com while the console login hint points at console.neon.tech. ' +
-      'Confirm which domain is current for your account, and record DIFFERS on any guide whose URL should change.',
+  supabase: [
+    'Observed 2026-08-08 (logged out): /project/_/settings/database redirects to /project/_/database/settings, ' +
+      'and earlier liveness checks saw /settings/compute-and-disk redirect to /settings/infrastructure. ' +
+      'While signed in, confirm the menu names the steps use ("Project Settings → Database", "Compute and Disk") still match.',
   ],
 };
 
@@ -410,11 +410,17 @@ export function applyVerdicts(
     const nextIdIndex = content.indexOf("id: '", idIndex + 1);
     const scopeEnd = nextIdIndex === -1 ? content.length : nextIdIndex;
     const scope = content.slice(idIndex, scopeEnd);
-    const updatedScope = scope.replace(/verifiedOn:\s*'[0-9]{4}-[0-9]{2}-[0-9]{2}'/, `verifiedOn: '${date}'`);
-    if (updatedScope === scope) {
+    // Presence and change are separate questions: when the recorded date
+    // already equals the stamp date, replace() returns a byte-identical
+    // string — that is a successful no-op verification, not a missing field.
+    const VERIFIED_ON = /verifiedOn:\s*'[0-9]{4}-[0-9]{2}-[0-9]{2}'/;
+    if (!VERIFIED_ON.test(scope)) {
       throw new Error(`Guide '${v.guideId}' found in ${file} but no verifiedOn field to stamp`);
     }
-    fileCache.set(absPath, content.slice(0, idIndex) + updatedScope + content.slice(scopeEnd));
+    const updatedScope = scope.replace(VERIFIED_ON, `verifiedOn: '${date}'`);
+    if (updatedScope !== scope) {
+      fileCache.set(absPath, content.slice(0, idIndex) + updatedScope + content.slice(scopeEnd));
+    }
     result.stamped.push(v.guideId);
   }
 

@@ -281,6 +281,25 @@ describe('applying verdicts', () => {
     ).toThrow(/ghost-guide.*source file/);
   });
 
+  it('stamps a guide whose verifiedOn already equals the stamp date (no-op replace is success, not a missing field)', () => {
+    // Regression: found live on the first real walk-through — the
+    // dependency-incident-response guide shipped with verifiedOn equal to
+    // the walk date, and replace() returning a byte-identical string was
+    // misdiagnosed as "no verifiedOn field to stamp".
+    const dir = tempGuidesDir();
+    const before = readFileSync(join(dir, 'anthropic.ts'), 'utf8');
+    const dateMatch = /verifiedOn: '([0-9-]+)'/.exec(before);
+    const currentDate = dateMatch![1]!;
+    const result = applyVerdicts(
+      [{ guideId: 'anthropic-rotate-key', verdict: 'MATCHES', notes: undefined }],
+      currentDate,
+      dir,
+      ids,
+    );
+    expect(result.stamped).toEqual(['anthropic-rotate-key']);
+    expect(readFileSync(join(dir, 'anthropic.ts'), 'utf8')).toBe(before);
+  });
+
   it('reports unknown guide ids without touching files', () => {
     const dir = tempGuidesDir();
     const before = readFileSync(join(dir, 'anthropic.ts'), 'utf8');

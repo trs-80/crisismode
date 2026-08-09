@@ -60,7 +60,8 @@ Guide id: `anthropic-rotate-key` · last verified 2026-08-05 · defined in `src/
 curl -s https://api.anthropic.com/v1/models -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01"
 ```
 
-**Verdict:** PENDING <!-- guide:anthropic-rotate-key -->
+**Verdict:** DIFFERS <!-- guide:anthropic-rotate-key -->
+**Notes:** console.anthropic.com now redirects to platform.claude.com (verified live: /settings/keys -> platform.claude.com/login?returnTo=%2Fsettings%2Fkeys; login page branded 'Claude Console' / 'Claude Platform'). Guide URL and 'Anthropic Console' step wording should adopt the new domain/branding. In-console steps NOT verified — this browser is not signed in; needs a logged-in pass.
 
 ### 2. Check and raise your Anthropic rate limits
 
@@ -83,7 +84,8 @@ Guide id: `anthropic-rate-limits` · last verified 2026-08-05 · defined in `src
 curl -s -D - -o /dev/null https://api.anthropic.com/v1/models -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" | grep -i anthropic-ratelimit
 ```
 
-**Verdict:** PENDING <!-- guide:anthropic-rate-limits -->
+**Verdict:** DIFFERS <!-- guide:anthropic-rate-limits -->
+**Notes:** Same platform.claude.com migration as anthropic-rotate-key (redirect verified live). URL/wording fix needed; in-console steps unverified — needs a logged-in pass.
 
 ### 3. Restore Anthropic billing or credit balance
 
@@ -100,7 +102,8 @@ Guide id: `anthropic-billing-credits` · last verified 2026-08-05 · defined in 
 
 **Users are told to expect:** API calls stop failing with billing or credit errors, and the quota/billing check reports healthy.
 
-**Verdict:** PENDING <!-- guide:anthropic-billing-credits -->
+**Verdict:** DIFFERS <!-- guide:anthropic-billing-credits -->
+**Notes:** Same platform.claude.com migration as anthropic-rotate-key (redirect verified live). URL/wording fix needed; in-console steps unverified — needs a logged-in pass.
 
 ---
 
@@ -132,7 +135,8 @@ Guide id: `openai-rotate-key` · last verified 2026-08-05 · defined in `src/fra
 curl -s https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"
 ```
 
-**Verdict:** PENDING <!-- guide:openai-rotate-key -->
+**Verdict:** BLOCKED <!-- guide:openai-rotate-key -->
+**Notes:** platform.openai.com/login reached with next=%2Fapi-keys preserved (path exists behind auth; no domain change). Not signed in in this browser — needs a logged-in pass.
 
 ### 2. Check OpenAI usage tier and rate limits
 
@@ -155,7 +159,8 @@ Guide id: `openai-usage-limits` · last verified 2026-08-05 · defined in `src/f
 curl -s -D - -o /dev/null https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY" | grep -i x-ratelimit
 ```
 
-**Verdict:** PENDING <!-- guide:openai-usage-limits -->
+**Verdict:** BLOCKED <!-- guide:openai-usage-limits -->
+**Notes:** Login page reached, path preserved. Not signed in — needs a logged-in pass.
 
 ### 3. Restore OpenAI billing or credit balance
 
@@ -172,7 +177,8 @@ Guide id: `openai-billing` · last verified 2026-08-05 · defined in `src/framew
 
 **Users are told to expect:** Calls stop failing with `insufficient_quota`, and the quota/billing check reports healthy.
 
-**Verdict:** PENDING <!-- guide:openai-billing -->
+**Verdict:** BLOCKED <!-- guide:openai-billing -->
+**Notes:** Login page reached, path preserved. Not signed in — needs a logged-in pass.
 
 ---
 
@@ -198,7 +204,8 @@ Guide id: `supabase-pooler-mode` · last verified 2026-08-05 · defined in `src/
 
 **Caution shown to users:** Transaction mode does not support session-level features (LISTEN/NOTIFY, session-scoped prepared statements, advisory locks held across statements). Run migrations over the direct connection.
 
-**Verdict:** PENDING <!-- guide:supabase-pooler-mode -->
+**Verdict:** BLOCKED <!-- guide:supabase-pooler-mode -->
+**Notes:** Dashboard session expired (redirects to /dashboard/sign-in with returnTo preserved). Observed en route: /project/_/settings/database now redirects to /project/_/database/settings (path rename; guide URL still works via redirect). Needs a logged-in pass.
 
 ### 2. Fit your app inside the Supabase connection cap
 
@@ -216,7 +223,8 @@ Guide id: `supabase-connection-limits` · last verified 2026-08-05 · defined in
 
 **Users are told to expect:** Peak connection count stays below the cap, and connection-headroom reports ready.
 
-**Verdict:** PENDING <!-- guide:supabase-connection-limits -->
+**Verdict:** BLOCKED <!-- guide:supabase-connection-limits -->
+**Notes:** Reference doc verified current: the compute-and-disk page carries the 'Compute instance connection limits' table with Database Max Connections and Connection Pooler Max Clients columns — exactly what the steps rely on. Dashboard steps unverified — session expired; needs a logged-in pass.
 
 ### 3. Upgrade Supabase compute for a higher connection limit
 
@@ -235,7 +243,8 @@ Guide id: `supabase-upgrade-compute` · last verified 2026-08-05 · defined in `
 
 **Caution shown to users:** Changing compute size restarts the database — connections drop for seconds to minutes. Larger compute bills at a higher hourly rate.
 
-**Verdict:** PENDING <!-- guide:supabase-upgrade-compute -->
+**Verdict:** BLOCKED <!-- guide:supabase-upgrade-compute -->
+**Notes:** Session expired. Note for the logged-in pass: PR #107's liveness check saw /settings/compute-and-disk redirect to /settings/infrastructure — confirm whether the menu is still named 'Compute and Disk'.
 
 ### 4. Add an approximate vector index to your pgvector table
 
@@ -255,7 +264,8 @@ Guide id: `supabase-pgvector-index` · last verified 2026-08-05 · defined in `s
 
 **Caution shown to users:** Building the index on a large table takes time and IO; CONCURRENTLY avoids blocking writes but takes longer. If the operator class does not match the distance operator the query uses (vector_cosine_ops / vector_l2_ops / vector_ip_ops), the planner ignores the index.
 
-**Verdict:** PENDING <!-- guide:supabase-pgvector-index -->
+**Verdict:** DIFFERS <!-- guide:supabase-pgvector-index -->
+**Notes:** Wrong Reference doc: /docs/guides/database/extensions/pgvector contains no HNSW creation or operator-class guidance (indexes appear only in a query-filtering caveat). The content the steps teach lives at /docs/guides/ai/vector-indexes/hnsw-indexes — verified live: CREATE INDEX USING hnsw examples for vector_l2_ops, vector_ip_ops, and vector_cosine_ops. Swap the url field. SQL Editor steps unverified — session expired.
 
 ---
 
@@ -282,7 +292,8 @@ Guide id: `neon-pooled-connection` · last verified 2026-08-05 · defined in `sr
 
 **Caution shown to users:** The pooled endpoint runs PgBouncer in transaction mode: session-level features and some prepared-statement modes are unavailable. Run migrations over the direct endpoint.
 
-**Verdict:** PENDING <!-- guide:neon-pooled-connection -->
+**Verdict:** BLOCKED <!-- guide:neon-pooled-connection -->
+**Notes:** Reference doc verified current: '-pooler' hostname suffix and PgBouncer transaction mode ('Neon uses PgBouncer in transaction mode', pool_mode=transaction) both documented. Domain question resolved: docs live on neon.com; console login is at console.neon.tech (no redirect; verified live) — no URL change needed. Console steps unverified — not signed in.
 
 ### 2. Raise Neon compute size to lift the connection limit
 
@@ -302,7 +313,8 @@ Guide id: `neon-compute-size` · last verified 2026-08-05 · defined in `src/fra
 
 **Caution shown to users:** Compute bills by the hour: the autoscaling minimum sets your floor cost and the maximum sets the ceiling.
 
-**Verdict:** PENDING <!-- guide:neon-compute-size -->
+**Verdict:** BLOCKED <!-- guide:neon-compute-size -->
+**Notes:** Reference doc live and topical (autoscaling overview; min/max CU configuration one click deeper at 'Configure autoscaling'). The step-2 claim that max_connections scales with compute size is NOT on this page — it is documented on the connection-pooling doc; consider citing that page in the step. Console steps unverified — not signed in.
 
 ---
 
@@ -330,7 +342,8 @@ Guide id: `aws-rds-increase-storage` · last verified 2026-08-05 · defined in `
 aws rds modify-db-instance --db-instance-identifier <instance> --allocated-storage <target-storage-gb> --apply-immediately
 ```
 
-**Verdict:** PENDING <!-- guide:aws-rds-increase-storage -->
+**Verdict:** BLOCKED <!-- guide:aws-rds-increase-storage -->
+**Notes:** AWS IAM sign-in page reached (region-pinned us-east-2 in this browser). Not signed in — needs a logged-in pass.
 
 ### 2. Reduce connection saturation on RDS instance <instance>
 
@@ -353,7 +366,8 @@ Guide id: `aws-rds-connection-saturation` · last verified 2026-08-05 · defined
 aws rds modify-db-instance --db-instance-identifier <instance> --db-instance-class <larger-class> --apply-immediately
 ```
 
-**Verdict:** PENDING <!-- guide:aws-rds-connection-saturation -->
+**Verdict:** BLOCKED <!-- guide:aws-rds-connection-saturation -->
+**Notes:** Not signed in to the AWS console — needs a logged-in pass.
 
 ### 3. Open RDS security group ingress on instance <instance>
 
@@ -376,7 +390,8 @@ Guide id: `aws-rds-open-security-group` · last verified 2026-08-05 · defined i
 aws ec2 authorize-security-group-ingress --group-id <security-group-id> --protocol tcp --port <db-port> --source-group <app-security-group-id>
 ```
 
-**Verdict:** PENDING <!-- guide:aws-rds-open-security-group -->
+**Verdict:** BLOCKED <!-- guide:aws-rds-open-security-group -->
+**Notes:** Not signed in to the AWS console — needs a logged-in pass.
 
 ### 4. Bring RDS instance <instance> back to available
 
@@ -400,7 +415,8 @@ Guide id: `aws-rds-instance-not-available` · last verified 2026-08-05 · define
 aws rds describe-db-instances --db-instance-identifier <instance> (then, if stopped: aws rds start-db-instance --db-instance-identifier <instance>)
 ```
 
-**Verdict:** PENDING <!-- guide:aws-rds-instance-not-available -->
+**Verdict:** BLOCKED <!-- guide:aws-rds-instance-not-available -->
+**Notes:** Not signed in to the AWS console — needs a logged-in pass.
 
 ---
 
@@ -424,7 +440,7 @@ Guide id: `dependency-incident-response` · last verified 2026-08-08 · defined 
 
 **Caution shown to users:** This is the provider's incident, not yours to fix — resist the urge to redeploy or roll back your own service while it is open.
 
-**Verdict:** PENDING <!-- guide:dependency-incident-response -->
+**Verdict:** STAMPED 2026-08-08 <!-- guide:dependency-incident-response -->
 
 ---
 

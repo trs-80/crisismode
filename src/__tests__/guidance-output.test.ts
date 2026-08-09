@@ -51,8 +51,8 @@ describe('scan output — guidance', () => {
     printScanSummary(scanResultWithKeyFinding());
     const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
     expect(text).toContain('How to fix it: Rotate your Anthropic API key');
-    expect(text).toContain('1. Open the Anthropic Console');
-    expect(text).toContain('https://console.anthropic.com/settings/keys');
+    expect(text).toContain('1. Open the Claude Console');
+    expect(text).toContain('https://platform.claude.com/settings/keys');
     expect(text).toContain('(path verified 2026-08-05)');
   });
 
@@ -61,8 +61,8 @@ describe('scan output — guidance', () => {
     setOutputOptions({ terse: true });
     printScanSummary(scanResultWithKeyFinding());
     const text = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('\n');
-    expect(text).toContain('How to fix it: Rotate your Anthropic API key — https://console.anthropic.com/settings/keys');
-    expect(text).not.toContain('1. Open the Anthropic Console');
+    expect(text).toContain('How to fix it: Rotate your Anthropic API key — https://platform.claude.com/settings/keys');
+    expect(text).not.toContain('1. Open the Claude Console');
   });
 
   it('pipe mode adds a guide:<id> reference column instead of the block', () => {
