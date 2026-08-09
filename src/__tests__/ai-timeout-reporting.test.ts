@@ -15,11 +15,40 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AiTimeoutError } from '../framework/ai-client.js';
 import type * as AiClientModule from '../framework/ai-client.js';
 
-const { callClaudeMock } = vi.hoisted(() => ({ callClaudeMock: vi.fn() }));
+const { callClaudeMock, callClaudeDetailedMock } = vi.hoisted(() => ({
+  callClaudeMock: vi.fn(),
+  callClaudeDetailedMock: vi.fn(),
+}));
+
+/**
+ * Backstop: no test in this file may construct a real Anthropic client.
+ *
+ * The mock below spreads `...actual`, so it only intercepts the exports it
+ * names. When `callClaudeDetailed` was added to ai-client.ts and
+ * ai-diagnosis-universal.ts switched to it, the spread quietly passed the new
+ * export through to the real implementation and two tests here began making
+ * live calls to api.anthropic.com — they still "passed", because a 401 lands in
+ * the same fallback branch a timeout does.
+ *
+ * Naming the new export in the spread fixes today's break; mocking the SDK
+ * itself is what stops the next added export from reopening the hole. Anything
+ * that slips past the spread fails here, loudly and offline, instead of
+ * silently reaching the network.
+ */
+vi.mock('@anthropic-ai/sdk', () => ({
+  default: class {
+    constructor() {
+      throw new Error(
+        'ai-timeout-reporting.test.ts reached a real Anthropic client. ' +
+          'An ai-client.js export is not covered by the mock below.',
+      );
+    }
+  },
+}));
 
 vi.mock('../framework/ai-client.js', async (importOriginal) => {
   const actual = await importOriginal<typeof AiClientModule>();
-  return { ...actual, callClaude: callClaudeMock };
+  return { ...actual, callClaude: callClaudeMock, callClaudeDetailed: callClaudeDetailedMock };
 });
 
 const { aiCallText } = await import('../framework/ai-diagnosis.js');
@@ -40,6 +69,7 @@ describe('AI timeout reporting', () => {
 
   beforeEach(() => {
     callClaudeMock.mockReset();
+    callClaudeDetailedMock.mockReset();
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     originalApiKey = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = 'test-key';
@@ -97,17 +127,22 @@ describe('AI timeout reporting', () => {
 
   // The other three reporters were changed in the same pass. Each names its own
   // subject and must still fall back to rules rather than propagate.
+  // universalAiDiagnosis reads stop_reason to tell a truncated answer from a
+  // complete one, so it calls callClaudeDetailed rather than callClaude. Its
+  // 45s deadline is measured, not arbitrary: the widest request this path builds
+  // took 15.4-23.4s against live claude-sonnet-5, so the previous 15s bound
+  // aborted the richest requests. See ai-diagnosis-universal.ts for the figures.
   it('universalAiDiagnosis names the timeout and still falls back', async () => {
-    callClaudeMock.mockRejectedValue(new AiTimeoutError(15_000));
+    callClaudeDetailedMock.mockRejectedValue(new AiTimeoutError(45_000));
 
     const result = await universalAiDiagnosis({ question: 'why is replication lagging?' });
 
-    expect(logged()).toBe('AI diagnosis timed out after 15000ms');
+    expect(logged()).toBe('AI diagnosis timed out after 45000ms');
     expect(result.source).toBe('fallback');
   });
 
   it('universalAiDiagnosis still reports genuine API errors as failures', async () => {
-    callClaudeMock.mockRejectedValue(new Error('overloaded_error'));
+    callClaudeDetailedMock.mockRejectedValue(new Error('overloaded_error'));
 
     const result = await universalAiDiagnosis({ question: 'why is replication lagging?' });
 

@@ -69,6 +69,34 @@ export interface ClaudeMessage {
   content: string;
 }
 
+/**
+ * Why the model stopped generating.
+ *
+ * Modelled as a union rather than a passed-through string so a call site that
+ * compares against a typo (`'max-tokens'`) fails to compile instead of silently
+ * never matching. `null` is what the SDK reports for a non-streaming response
+ * with no stop reason.
+ *
+ * Only `'max_tokens'` currently matters to callers: it is the one value that
+ * means the returned text is an incomplete prefix of the real answer.
+ */
+export type ClaudeStopReason =
+  | 'end_turn'
+  | 'max_tokens'
+  | 'stop_sequence'
+  | 'tool_use'
+  | 'pause_turn'
+  | 'refusal'
+  | 'model_context_window_exceeded'
+  | null;
+
+export interface CallClaudeResult {
+  /** Concatenated text of all text content blocks. NOT trimmed. */
+  text: string;
+  /** Why generation stopped. `'max_tokens'` means `text` is truncated. */
+  stopReason: ClaudeStopReason;
+}
+
 export interface CallClaudeOptions {
   /** System prompt. */
   system: string;
@@ -92,10 +120,32 @@ export interface CallClaudeOptions {
  * The returned string is NOT trimmed — callers that need trimming apply it,
  * matching pre-consolidation behavior byte-for-byte.
  *
+ * Callers that render the text to a human should prefer
+ * {@link callClaudeDetailed}: this signature discards `stop_reason`, so a
+ * response truncated at `maxTokens` is indistinguishable from a complete one.
+ *
  * @throws if no API key is available, {@link AiTimeoutError} on timeout, or the
  * underlying SDK error on API failure.
  */
 export async function callClaude(opts: CallClaudeOptions): Promise<string> {
+  return (await callClaudeDetailed(opts)).text;
+}
+
+/**
+ * Same call as {@link callClaude}, but also reports why generation stopped.
+ *
+ * Exists because truncation is otherwise invisible. When the model hits
+ * `maxTokens` the API still returns HTTP 200 with a well-formed partial
+ * response, so a caller holding only the text cannot tell a complete answer
+ * from a prefix of one. That is tolerable for callers that parse JSON (the
+ * parse throws) but not for callers that print prose straight to an operator:
+ * across 24 live forced-truncation trials, 2 of 20 truncated answers ended on a
+ * period and read as finished, so no text heuristic can close the gap.
+ *
+ * @throws if no API key is available, {@link AiTimeoutError} on timeout, or the
+ * underlying SDK error on API failure.
+ */
+export async function callClaudeDetailed(opts: CallClaudeOptions): Promise<CallClaudeResult> {
   const apiKey = opts.apiKey ?? process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -131,10 +181,13 @@ export async function callClaude(opts: CallClaudeOptions): Promise<string> {
       { signal: controller.signal },
     );
 
-    return response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => ('text' in block ? block.text : ''))
-      .join('');
+    return {
+      text: response.content
+        .filter((block) => block.type === 'text')
+        .map((block) => ('text' in block ? block.text : ''))
+        .join(''),
+      stopReason: response.stop_reason,
+    };
   } catch (err) {
     // The signal, not the error shape, is the reliable witness: the SDK's abort
     // error is named "Error" and says only "Request was aborted.". Nothing else
