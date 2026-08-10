@@ -31,7 +31,11 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 # discovery has only /etc/resolv.conf to work with.
 NO_PROBE_BIN="$WORK_DIR/no-probe-bin"
 mkdir -p "$NO_PROBE_BIN"
-for tool in bash cat sed awk grep tr head sort wc date hostname nslookup; do
+# nslookup/host/getent are all acceptable lookup tools — include whichever this
+# host has, so the check still finds a DNS_TOOL and the test exercises the probe
+# path rather than the "no lookup tool at all" early exit. Debian-based images
+# ship only getent; macOS ships nslookup and host.
+for tool in bash cat sed awk grep tr head sort wc date hostname nslookup host getent; do
   tool_path=$(command -v "$tool" 2>/dev/null || true)
   if [ -n "$tool_path" ]; then
     ln -sf "$tool_path" "$NO_PROBE_BIN/$tool"
@@ -58,14 +62,29 @@ chmod +x "$NO_RESOLVER_BIN/grep"
 # A PATH with sysctl but without vm_stat — the shape of a BSD-ish host with no
 # /proc/meminfo. The memory check can read the machine's total RAM there but has
 # no way to measure how much of it is in use.
+#
+# Everything here is pinned rather than inherited: a real `sysctl` is stubbed so
+# the sysctl branch is definitely taken, vm_stat is definitely absent, and the
+# test pairs this with CRISISMODE_MEMINFO_PATH pointing at a nonexistent file.
+# Without all three, a Linux host would take the /proc/meminfo branch and the
+# test would be asserting something other than what it claims.
 NO_VM_STAT_BIN="$WORK_DIR/no-vm-stat-bin"
 mkdir -p "$NO_VM_STAT_BIN"
-for tool in bash cat sed head sysctl; do
+for tool in bash cat sed head printf; do
   tool_path=$(command -v "$tool" 2>/dev/null || true)
   if [ -n "$tool_path" ]; then
     ln -sf "$tool_path" "$NO_VM_STAT_BIN/$tool"
   fi
 done
+cat > "$NO_VM_STAT_BIN/sysctl" <<'EOF'
+#!/bin/sh
+# Stub: report a plausible total RAM for hw.memsize, nothing else.
+case "$*" in
+  *hw.memsize*) echo 17179869184 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$NO_VM_STAT_BIN/sysctl"
 
 # ── Helpers ──
 
@@ -73,6 +92,14 @@ run_check() {
   local check_path="$1" path_override="$2" verb="$3"
   printf '{"verb":"%s","target":{"name":"dns","kind":"network"},"context":{}}' "$verb" \
     | PATH="$path_override" "$check_path"
+}
+
+# Same, with an explicit meminfo path so the branch under test is deterministic
+# on every platform rather than "whatever this host happens to have".
+run_check_meminfo() {
+  local check_path="$1" path_override="$2" verb="$3" meminfo="$4"
+  printf '{"verb":"%s","target":{"name":"memory","kind":"generic"},"context":{}}' "$verb" \
+    | PATH="$path_override" CRISISMODE_MEMINFO_PATH="$meminfo" "$check_path"
 }
 
 # Read a value out of the check's JSON result.
@@ -180,6 +207,28 @@ SUMMARY=$(json_query "$OUT" 'r.summary')
 assert_not_contains 'summary does not claim resolvers are reachable when none were probed' \
   'resolvers reachable' "$SUMMARY"
 
+# The overall verdict stays healthy here on purpose: canary resolution is a real
+# passing measurement, and you cannot resolve dns.google without a working
+# resolver. What is missing is coverage, not health — so it is reported through
+# `confidence` (the contract's field for "how sure am I") rather than by
+# downgrading a working system. See the PR body for the full reasoning.
+OVERALL_STATUS=$(json_query "$OUT" 'r.status')
+CONFIDENCE=$(json_query "$OUT" 'r.confidence')
+
+assert_eq 'overall status stays healthy when the only gap is unprobed resolvers' \
+  'healthy' "$OVERALL_STATUS"
+assert_eq 'exit code agrees with the healthy status' '0' "$RC"
+assert_eq 'confidence is reduced to signal partial verification' \
+  'true' "$(node -e "process.stdout.write(String($CONFIDENCE < 0.9))")"
+
+printf '\ncheck-dns-resolution: diagnose summary with no probe tool\n'
+
+OUT=$(run_check "$DNS_CHECK" "$NO_PROBE_BIN" diagnose) && RC=0 || RC=$?
+
+DIAG_SUMMARY=$(json_query "$OUT" 'r.summary')
+assert_not_contains 'diagnose summary does not claim resolvers are reachable when none were probed' \
+  'resolvers reachable' "$DIAG_SUMMARY"
+
 printf '\ncheck-dns-resolution: diagnose verb with no probe tool\n'
 
 OUT=$(run_check "$DNS_CHECK" "$NO_PROBE_BIN" diagnose) && RC=0 || RC=$?
@@ -203,7 +252,10 @@ assert_ge 'baseline exit code is a valid check exit code' 0 "$RC"
 
 printf '\ncheck-memory-usage: no vm_stat to measure used memory with\n'
 
-OUT=$(run_check "$MEMORY_CHECK" "$NO_VM_STAT_BIN" health) && RC=0 || RC=$?
+OUT=$(run_check_meminfo "$MEMORY_CHECK" "$NO_VM_STAT_BIN" health "$WORK_DIR/no-such-meminfo") && RC=0 || RC=$?
+
+assert_contains 'the sysctl/no-vm_stat branch is the one actually exercised' \
+  'vm_stat' "$(json_query "$OUT" 'r.summary')"
 
 MEM_STATUS=$(json_query "$OUT" 'r.status')
 assert_ne 'memory usage is not reported healthy when it cannot be measured' \
