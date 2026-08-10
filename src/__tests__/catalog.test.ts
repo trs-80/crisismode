@@ -111,6 +111,18 @@ function makeCheckpoint(stepId: string): RecoveryStep {
   return { stepId, type: 'checkpoint', name: `Checkpoint ${stepId}`, stateCaptures: [] };
 }
 
+function makeDiagnosisAction(stepId: string, command: Command): RecoveryStep {
+  return {
+    stepId,
+    type: 'diagnosis_action',
+    name: `Diagnose ${stepId}`,
+    executionContext: 'psql_cli',
+    target: 'pg-primary',
+    command,
+    timeout: 'PT30S',
+  };
+}
+
 function makeNotification(stepId: string): RecoveryStep {
   return {
     stepId,
@@ -537,6 +549,59 @@ const rejectionRows: RejectionRow[] = [
       }
     },
     reason: /step count 16 exceeds maxStepCount 15/i,
+  },
+  {
+    name: 'a forbidden operation class the classifier cannot evaluate fails closed',
+    entry: makeCatalogEntry({
+      matchCriteria: {
+        ...makeCatalogEntry().matchCriteria,
+        forbiddenOperations: ['stored_procedure'],
+      },
+    }),
+    reason: /forbids operation 'stored_procedure', which this classifier cannot evaluate/i,
+  },
+  {
+    name: 'a forbidden command hiding in a diagnosis_action step is rejected',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeDiagnosisAction('step-diag', {
+          type: 'sql',
+          statement: 'DROP TABLE orders',
+        }),
+      );
+    },
+    reason: /step 'step-diag' performs forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a required step pattern with an unsupported position fails closed',
+    entry: makeCatalogEntry({
+      matchCriteria: {
+        ...makeCatalogEntry().matchCriteria,
+        requiredStepPatterns: [{ type: 'checkpoint', position: 'after_last_mutation' }],
+      },
+    }),
+    reason: /unsupported position 'after_last_mutation'/i,
+  },
+  {
+    name: 'a checkpoint that only runs inside a conditional does not satisfy before_first_mutation',
+    mutatePlan: (plan) => {
+      plan.steps = [
+        makeNotification('step-001'),
+        {
+          stepId: 'step-cond-checkpoint',
+          type: 'conditional',
+          name: 'Maybe checkpoint',
+          condition: {
+            description: 'sometimes',
+            check: { type: 'sql', statement: 'SELECT 1', expect: { operator: 'eq', value: 1 } },
+          },
+          thenStep: makeCheckpoint('step-002') as never,
+          elseStep: 'skip',
+        },
+        makeSystemAction('step-003', 'elevated'),
+      ];
+    },
+    reason: /before_first_mutation/i,
   },
   {
     name: 'a plan missing a required checkpoint step is rejected',
