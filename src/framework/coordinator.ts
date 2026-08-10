@@ -55,10 +55,14 @@ export function shouldAutoApprove(
   // catalog short-circuit on purpose: no standing approval may cover them.
   if (riskLevel === 'high' || riskLevel === 'critical') return false;
 
+  // Same reasoning one level down: `requireApprovalForAllElevated` is an
+  // explicit organizational policy, and a standing catalog approval does not
+  // satisfy a policy that says every elevated action is decided live.
+  if (riskLevel === 'elevated' && requireApprovalForAllElevated) return false;
+
   if (catalogCovered) return true;
 
   if (riskLevel === 'elevated') {
-    if (requireApprovalForAllElevated) return false;
     return trustLevel === 'autopilot' || trustLevel === 'full_autonomy';
   }
 

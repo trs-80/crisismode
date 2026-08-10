@@ -73,6 +73,14 @@ const rows: AutoApproveRow[] = [
     expected: true,
   },
   {
+    name: 'requireApprovalForAllElevated beats catalog coverage',
+    riskLevel: 'elevated',
+    trustLevel: 'copilot',
+    catalogCovered: true,
+    requireApprovalForAllElevated: true,
+    expected: false,
+  },
+  {
     name: 'requireApprovalForAllElevated beats autopilot trust',
     riskLevel: 'elevated',
     trustLevel: 'autopilot',
