@@ -542,6 +542,30 @@ assert_exit_one_of "bare down exits 0 or 1, never 2" 0 1
 echo ""
 
 # ══════════════════════════════════════════
+# 6d. watch --interval must never start a hot loop
+# ══════════════════════════════════════════
+
+echo "── watch --interval validation ──"
+
+# `--interval abc` became NaN, survived watch.ts's `?? DEFAULT` (`??` only
+# catches null/undefined), and setTimeout(fn, NaN) clamps to 1ms — a
+# continuous scan loop against already-degraded infrastructure, printing
+# "every NaNs" to the operator. `--interval 1m` silently meant one second.
+# These must all be rejected before the loop starts, so each returns
+# immediately rather than needing a timeout to kill it.
+for BAD in "abc" "1m" "60s" "0" "--interval=-5" "--interval=0" "--interval=abc" "--interval=1.5"; do
+  case "$BAD" in
+    --*) run_cli "watch $BAD"; LABEL="watch $BAD" ;;
+    *)   run_cli "watch --interval $BAD"; LABEL="watch --interval $BAD" ;;
+  esac
+  assert_exit_code "$LABEL exits 2 (usage), never loops" 2
+  assert_stderr_contains "$LABEL names --interval" "--interval"
+  assert_not_contains "$LABEL never prints a NaN/0/negative interval" "every NaN"
+done
+
+echo ""
+
+# ══════════════════════════════════════════
 # 7. Output modes
 # ══════════════════════════════════════════
 

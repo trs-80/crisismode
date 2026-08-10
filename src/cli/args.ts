@@ -171,6 +171,48 @@ function scanTokens(args: readonly string[]): { subcommandIndex: number | undefi
   return { subcommandIndex };
 }
 
+/**
+ * `--interval <seconds>` — a plain positive integer, or a usage error.
+ *
+ * The old expression was `parseInt(intervalStr, 10) * 1000`, and it made
+ * `crisismode watch` a self-inflicted DoS:
+ *
+ * - `--interval abc` → `parseInt` gives `NaN` → `NaN * 1000` is `NaN`.
+ *   `watch.ts`'s `opts.intervalMs ?? DEFAULT_INTERVAL_MS` does *not* catch
+ *   that: `??` only falls back on `null`/`undefined`. `setTimeout(fn, NaN)`
+ *   clamps to 1ms, so the watch loop ran continuously against infrastructure
+ *   that is by definition already degraded — while printing "every NaNs" to
+ *   the operator.
+ * - `--interval 1m` → `parseInt('1m')` is `1` → a one-second loop. The
+ *   operator asked for a minute and got 60x the load.
+ * - `--interval 60s` happened to work, by the same accident. So the natural
+ *   inputs a stressed operator types either work by luck or silently produce
+ *   a hot loop.
+ * - `--interval=0` / `--interval=-5` also clamp to a 1ms timer.
+ *
+ * Unit suffixes are deliberately **rejected** rather than parsed: the flag is
+ * documented as seconds, and accepting `60s` while `1m` means one second is
+ * the trap itself. The error message says what to type instead.
+ *
+ * This is a pre-existing bug — `src/cli/index.ts:260` on main has the
+ * identical expression — fixed here because this is the module that now owns
+ * whether an argument is well-formed.
+ */
+export function parseIntervalSeconds(raw: string): number | { usageError: string } {
+  const reject = {
+    usageError:
+      `'--interval' expects a whole number of seconds greater than 0 (e.g. --interval 30). ` +
+      `Got '${raw}'. Unit suffixes like '30s' or '1m' are not accepted.`,
+  };
+  // Strictly digits only: no whitespace, sign, decimal point, exponent, hex
+  // or suffix. Every one of those forms is something parseInt silently
+  // mangled into a number that then reached a timer.
+  if (!/^\d+$/.test(raw)) return reject;
+  const seconds = Number(raw);
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) return reject;
+  return seconds;
+}
+
 function levenshtein(a: string, b: string): number {
   const rows: number[][] = [Array.from({ length: b.length + 1 }, (_, j) => j)];
   for (let i = 1; i <= a.length; i++) {

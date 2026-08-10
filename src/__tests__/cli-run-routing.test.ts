@@ -144,6 +144,71 @@ describe('runCli — options reach the handler', () => {
     expect(runWatch).toHaveBeenCalledWith(expect.objectContaining({ intervalMs: 60_000 }));
   });
 
+  it('omits intervalMs entirely when --interval is not given', async () => {
+    await runCli(['watch']);
+    expect(runWatch).toHaveBeenCalledWith(expect.objectContaining({ intervalMs: undefined }));
+  });
+});
+
+/**
+ * `watch --interval` was a self-inflicted DoS: a non-numeric value became
+ * NaN, survived `watch.ts`'s `?? DEFAULT_INTERVAL_MS` (`??` only catches
+ * null/undefined), and `setTimeout(fn, NaN)` clamped to 1ms — a continuous
+ * scan loop against already-degraded infrastructure. Inherited from
+ * `src/cli/index.ts:260` on main, fixed here because this is where the
+ * CLI's argument-validation contract now lives.
+ */
+describe('runCli — watch --interval is validated before it can reach a timer', () => {
+  it.each([
+    [['watch', '--interval', 'abc']],
+    [['watch', '--interval', '1m']],
+    [['watch', '--interval', '60s']],
+    [['watch', '--interval', '0']],
+    // The inline form: `--interval -5` is caught only by accident (parseArgs
+    // reads `-5` as an unknown short option); `--interval=-5` bypassed that
+    // entirely and printed "every -5s" while hot-looping.
+    [['watch', '--interval=-5']],
+    [['watch', '--interval=0']],
+    [['watch', '--interval=abc']],
+    [['watch', '--interval=1.5']],
+  ])('%j exits USAGE and never starts the watch loop', async (argv) => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runCli(argv as string[]);
+    const message = err.mock.calls.map((c) => c.join(' ')).join('\n');
+    err.mockRestore();
+    expect(code).toBe(ExitCode.USAGE);
+    // The critical assertion: the command must not run at all.
+    expect(runWatch).not.toHaveBeenCalled();
+    expect(message).toContain('--interval');
+  });
+
+  it.each([
+    [['watch', '--interval', '1'], 1_000],
+    [['watch', '--interval', '30'], 30_000],
+    [['watch', '--interval=45'], 45_000],
+  ])('%j still works, as %i ms', async (argv, expected) => {
+    expect(await runCli(argv as string[])).toBe(ExitCode.OK);
+    expect(runWatch).toHaveBeenCalledWith(expect.objectContaining({ intervalMs: expected }));
+  });
+});
+
+describe('runCliSafely — a CrisisModeError is the user\'s problem, not a crash', () => {
+  it('maps CrisisModeError to USAGE, not INTERNAL', async () => {
+    // `noConfig()` / `missingEnvVar()` (src/cli/errors.ts) are deliberate,
+    // user-actionable errors — the class carries a `suggestion` field. They
+    // were falling through to INTERNAL (70, EX_SOFTWARE), which claims
+    // CrisisMode is broken when the user just needs to export a key.
+    // Verified at the real surface: `crisismode ask` with no
+    // ANTHROPIC_API_KEY exited 70.
+    const { missingEnvVar } = await import('../cli/errors.js');
+    runScan.mockRejectedValueOnce(missingEnvVar('ANTHROPIC_API_KEY', 'required for AI diagnosis'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runCliSafely(['scan']);
+    err.mockRestore();
+    expect(code).toBe(ExitCode.USAGE);
+    expect(code).not.toBe(ExitCode.INTERNAL);
+  });
+
   it('hands down only positionals — never raw flags (its private re-parser is gone)', async () => {
     await runCli(['down', 'stripe', 'github', '--json']);
     expect(runDownCommand).toHaveBeenCalledWith(['stripe', 'github'], expect.anything());

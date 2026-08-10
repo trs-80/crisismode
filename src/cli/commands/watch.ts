@@ -35,7 +35,17 @@ const DEFAULT_INTERVAL_MS = 30_000;
 export async function runWatch(opts: WatchOptions): Promise<void> {
   printBanner();
 
-  const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+  // `?? DEFAULT_INTERVAL_MS` alone is NOT enough: `??` only falls back on
+  // null/undefined, so NaN (from a non-numeric --interval), 0 and negatives
+  // passed straight through to `sleep()` -> `setTimeout`, which clamps them
+  // to 1ms — a continuous scan loop against already-degraded infrastructure,
+  // plus "every NaNs" printed to the operator. The CLI now rejects those at
+  // the boundary (cli/args.ts parseIntervalSeconds); this is defence in
+  // depth so no caller can reintroduce the hot loop.
+  const requested = opts.intervalMs;
+  const intervalMs = typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+    ? requested
+    : DEFAULT_INTERVAL_MS;
 
   // Load config or detect
   const { config } = await loadConfigWithLocalTargets(opts);

@@ -19,7 +19,76 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseCli } from '../cli/args.js';
+import { parseCli, parseIntervalSeconds } from '../cli/args.js';
+
+/**
+ * `--interval` was a self-inflicted DoS, inherited from the pre-fix
+ * `src/cli/index.ts:260` (identical expression on main):
+ *
+ *   intervalMs: intervalStr ? parseInt(intervalStr, 10) * 1000 : undefined
+ *
+ * `parseInt('abc')` is NaN, `NaN * 1000` is NaN, and `watch.ts`'s
+ * `opts.intervalMs ?? DEFAULT_INTERVAL_MS` does NOT catch it — `??` only
+ * falls back on null/undefined. `setTimeout(fn, NaN)` clamps to 1ms, so
+ * `crisismode watch --interval abc` became a continuous scan loop against
+ * infrastructure that is already degraded, while printing "every NaNs" to
+ * the operator. `--interval 1m` silently meant one second; `--interval=0`
+ * and `--interval=-5` hot-looped too.
+ */
+describe('parseIntervalSeconds', () => {
+  it.each([
+    ['30', 30],
+    ['1', 1],
+    ['3600', 3600],
+  ])('accepts a plain positive integer: %s -> %i', (input, expected) => {
+    expect(parseIntervalSeconds(input)).toBe(expected);
+  });
+
+  it.each([
+    // The NaN chain: parseInt gives NaN, which survived `??`.
+    ['abc'],
+    [''],
+    ['  '],
+    // Unit suffixes: `60s` worked only because parseInt tolerates the
+    // suffix, while `1m` silently meant 1 SECOND. Both rejected.
+    ['60s'],
+    ['1m'],
+    ['5min'],
+    // Zero and negatives clamp to a 1ms timer — a hot loop.
+    ['0'],
+    ['-5'],
+    ['-1'],
+    // Fractions silently truncated under parseInt ('1.5' -> 1).
+    ['1.5'],
+    ['0.5'],
+    // Exponent/hex/whitespace forms parseInt mangles.
+    ['1e3'],
+    ['0x10'],
+    ['Infinity'],
+    ['NaN'],
+  ])('rejects %j as a usage error', (input) => {
+    const result = parseIntervalSeconds(input);
+    expect(typeof result).toBe('object');
+    if (typeof result !== 'object') return;
+    // Must name the flag and the accepted form, so a stressed operator can
+    // see what to type instead.
+    expect(result.usageError).toContain('--interval');
+    expect(result.usageError).toContain('seconds');
+  });
+
+  it('never returns a value that could reach setTimeout as NaN or <= 0', () => {
+    for (const bad of ['abc', '0', '-5', '1e3', '']) {
+      const result = parseIntervalSeconds(bad);
+      expect(typeof result).toBe('object');
+    }
+    for (const good of ['1', '30', '600']) {
+      const result = parseIntervalSeconds(good);
+      expect(typeof result).toBe('number');
+      expect(Number.isFinite(result as number)).toBe(true);
+      expect(result as number).toBeGreaterThan(0);
+    }
+  });
+});
 
 describe('parseCli — subcommand detection', () => {
   it.each([

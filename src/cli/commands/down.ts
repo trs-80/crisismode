@@ -109,9 +109,18 @@ function isFailureVerdict(verdict: ServiceVerdict): boolean {
   }
 }
 
-/** 0 when nothing checked looks like a problem, 1 when at least one service does. */
-export function downExitCode(reports: readonly ServiceStatusReport[]): 0 | 1 {
-  return reports.some((r) => isFailureVerdict(r.verdict)) ? 1 : 0;
+/**
+ * OK when nothing checked looks like a problem, UNHEALTHY when at least one
+ * service does.
+ *
+ * Typed as `ExitCode` and returning enum members rather than the bare `0 | 1`
+ * literals it used to: `down` is the command CLAUDE.md cites as already
+ * getting exit codes right, so it should be the exemplar for the single
+ * source of truth, not the one place that bypasses it. The values a shell
+ * sees are unchanged.
+ */
+export function downExitCode(reports: readonly ServiceStatusReport[]): ExitCode {
+  return reports.some((r) => isFailureVerdict(r.verdict)) ? ExitCode.UNHEALTHY : ExitCode.OK;
 }
 
 export function renderDownReportLines(report: ServiceStatusReport): string[] {

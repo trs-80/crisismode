@@ -13,10 +13,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ExitCode } from '../cli/exit-codes.js';
 import { configure } from '../cli/output.js';
+import { CrisisModeError } from '../cli/errors.js';
 import type { CheckRegistryEntry } from '../config/check-registry.js';
 import type { ReadinessReport } from '../readiness/types.js';
 import type * as CheckRegistryModule from '../config/check-registry.js';
@@ -126,6 +128,22 @@ describe('runPlaybook', () => {
     const bad = join(tmp, 'broken.md');
     writeFileSync(bad, '# no frontmatter, not a playbook\n', 'utf-8');
     expect(await runPlaybook({ subcommand, args: [bad] })).toBe(ExitCode.UNHEALTHY);
+  });
+
+  it('dry-run --json emits a JSON error record for a compile failure, like validate does', async () => {
+    const bad = join(tmp, 'broken.md');
+    writeFileSync(bad, '# not a playbook\n', 'utf-8');
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.map(String).join(' ')); });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runPlaybook({ subcommand: 'dry-run', args: [bad], json: true });
+    err.mockRestore();
+    expect(code).toBe(ExitCode.UNHEALTHY);
+    // Machine consumers got nothing at all from this path before.
+    expect(logs.join('')).not.toBe('');
+    expect(JSON.parse(logs.join('')) as { error: string }).toMatchObject({
+      error: expect.any(String) as unknown as string,
+    });
   });
 
   it('reports the compile failure as JSON when --json is set, still exiting UNHEALTHY', async () => {
@@ -291,6 +309,26 @@ describe('runBundle', () => {
   );
 
   it.each(['ingest', 'respond', 'execute'] as const)(
+    '%s on a nonexistent path returns USAGE, matching `playbook validate` and the documented matrix',
+    async (subcommand) => {
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const code = await runBundle({ subcommand, args: [join(tmp, 'does-not-exist.json')] });
+      err.mockRestore();
+      // A path that isn't there is the user naming a file that doesn't
+      // exist — the same class as `playbook validate /nope.md` (USAGE), not
+      // a bundle that loaded and then failed to process (UNHEALTHY).
+      expect(code).toBe(ExitCode.USAGE);
+    },
+  );
+
+  it('a path that is a directory, not a file, returns USAGE', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runBundle({ subcommand: 'ingest', args: [tmp] });
+    err.mockRestore();
+    expect(code).toBe(ExitCode.USAGE);
+  });
+
+  it.each(['ingest', 'respond', 'execute'] as const)(
     '%s on a file that is not JSON returns UNHEALTHY — the work failed, the call was fine',
     async (subcommand) => {
       const path = join(tmp, 'garbage.json');
@@ -307,6 +345,38 @@ describe('runBundle', () => {
     const code = await runBundle({ subcommand: 'bogus', args: [] });
     err.mockRestore();
     expect(code).toBe(ExitCode.USAGE);
+  });
+
+  /**
+   * `bundle respond -` is a documented workflow (pipe a bundle in, pipe the
+   * AdapterResponse out to the judge). The stdin read loop had no coverage.
+   */
+  it('reads the bundle from stdin when the path is `-`', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'stdin')!;
+    const piped = Readable.from([JSON.stringify(minimalBundle())]) as unknown as typeof process.stdin;
+    (piped as unknown as { isTTY: boolean }).isTTY = false;
+    Object.defineProperty(process, 'stdin', { value: piped, configurable: true });
+    try {
+      expect(await runBundle({ subcommand: 'ingest', args: ['-'] })).toBe(ExitCode.OK);
+      expect(ingestEvidenceBundle).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, 'stdin', descriptor);
+    }
+  });
+
+  it('returns UNHEALTHY when stdin carries something that is not JSON', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'stdin')!;
+    const piped = Readable.from(['not json at all']) as unknown as typeof process.stdin;
+    (piped as unknown as { isTTY: boolean }).isTTY = false;
+    Object.defineProperty(process, 'stdin', { value: piped, configurable: true });
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // Data arrived and was unusable: the work failed, the call was fine.
+      expect(await runBundle({ subcommand: 'ingest', args: ['-'] })).toBe(ExitCode.UNHEALTHY);
+    } finally {
+      err.mockRestore();
+      Object.defineProperty(process, 'stdin', descriptor);
+    }
   });
 
   it('`-` with a TTY on stdin returns USAGE — there is nothing to read', async () => {
@@ -462,10 +532,20 @@ describe('runStatus', () => {
     expect(await runStatus()).toBe(ExitCode.OK);
   });
 
-  it('throws (-> USAGE at the boundary) when there is no config and nothing detected', async () => {
+  /**
+   * A generic `rejects.toThrow()` passes for the wrong reason — any failure
+   * anywhere in runStatus satisfies it. Assert the concrete class, and the
+   * exit code it actually maps to at the boundary.
+   *
+   * Note this is `CrisisModeError` (src/cli/errors.ts), NOT `CliUsageError`:
+   * `noConfig()` predates this PR. It carries a user-facing `suggestion`, so
+   * runCliSafely classifies it as USAGE.
+   */
+  it('rejects with a CrisisModeError when there is no config and nothing detected', async () => {
     loadConfigWithDetection.mockReturnValue({ config: null, source: 'none' });
     detectServices.mockResolvedValue([]);
-    await expect(runStatus()).rejects.toThrow();
+    await expect(runStatus()).rejects.toBeInstanceOf(CrisisModeError);
+    await expect(runStatus()).rejects.toThrow(/No configuration found/);
   });
 });
 
