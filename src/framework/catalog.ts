@@ -301,8 +301,11 @@ function coveredLevelsFor(entry: CatalogEntry): RiskLevel[] {
 // --- Step pattern evaluation ----------------------------------------------
 
 interface FlatStep {
+  /** Index of the owning top-level step. */
   index: number;
   step: RecoveryStep;
+  /** True when this step only runs if a conditional branch is taken. */
+  conditional: boolean;
 }
 
 /**
@@ -319,17 +322,26 @@ interface FlatStep {
  */
 function flattenSteps(steps: RecoveryStep[]): FlatStep[] {
   const flat: FlatStep[] = [];
-  const visit = (step: RecoveryStep, index: number): void => {
-    flat.push({ index, step });
+  const visit = (step: RecoveryStep, index: number, conditional: boolean): void => {
+    flat.push({ index, step, conditional });
     if (step.type === 'conditional') {
-      visit(step.thenStep, index);
-      if (step.elseStep !== 'skip') visit(step.elseStep, index);
+      visit(step.thenStep, index, true);
+      if (step.elseStep !== 'skip') visit(step.elseStep, index, true);
     }
   };
-  steps.forEach((step, index) => visit(step, index));
+  steps.forEach((step, index) => visit(step, index, false));
   return flat;
 }
 
+/**
+ * Evaluate `requiredStepPatterns`, including each pattern's declared position.
+ *
+ * Presence is judged over every step, conditional branches included. Position
+ * is not: a `before_first_mutation` guarantee is only a guarantee if the step
+ * always runs, and a checkpoint inside a conditional branch runs only when that
+ * branch is taken. Mutations, by contrast, count wherever they appear — a
+ * mutation that *might* run still has to be preceded by state capture.
+ */
 function evaluateStepPatterns(
   plan: RecoveryPlan,
   patterns: CatalogEntry['matchCriteria']['requiredStepPatterns'],
@@ -348,9 +360,15 @@ function evaluateStepPatterns(
     if (pattern.position === 'any') continue;
     if (pattern.position === 'before_first_mutation') {
       if (firstMutationIndex === null) continue;
-      if (!matches.some((f) => f.index < firstMutationIndex)) {
+      const unconditionalBefore = matches.filter(
+        (f) => !f.conditional && f.index < firstMutationIndex,
+      );
+      if (unconditionalBefore.length === 0) {
+        const conditionalOnly = matches.some((f) => f.conditional && f.index < firstMutationIndex);
         reasons.push(
-          `required step pattern '${pattern.type}' must appear before_first_mutation, but the first '${pattern.type}' step is at index ${matches[0]!.index} and the first mutating step is at index ${firstMutationIndex}`,
+          conditionalOnly
+            ? `required step pattern '${pattern.type}' must appear before_first_mutation unconditionally, but every '${pattern.type}' step before the first mutating step (index ${firstMutationIndex}) is inside a conditional branch and may not run`
+            : `required step pattern '${pattern.type}' must appear before_first_mutation, but the first '${pattern.type}' step is at index ${matches[0]!.index} and the first mutating step is at index ${firstMutationIndex}`,
         );
       }
       continue;
@@ -440,10 +458,30 @@ function commandOf(step: RecoveryStep): Command | null {
   return null;
 }
 
+/**
+ * Operation classes {@link classifyCommand} can derive from a command on its
+ * own. Anything outside this set can only be detected when the plan volunteers
+ * it via `command.subtype` or `command.operation` — which a hostile plan simply
+ * omits — so a catalog that forbids such a class is declaring a criterion this
+ * code cannot enforce.
+ */
+const EVALUABLE_FORBIDDEN_OPERATIONS = new Set(['ddl', 'admin_privilege']);
+
 function evaluateForbiddenOperations(plan: RecoveryPlan, forbidden: string[]): string[] {
   if (forbidden.length === 0) return [];
   const normalized = forbidden.map((op) => op.trim().toLowerCase());
   const reasons: string[] = [];
+
+  // Fail closed on a declared class this classifier cannot evaluate. Returning
+  // "no forbidden operations detected" for an unknown class would make
+  // declaring one *weaken* the catalog — the same defect this check replaced.
+  for (const op of normalized) {
+    if (!EVALUABLE_FORBIDDEN_OPERATIONS.has(op)) {
+      reasons.push(
+        `catalog forbids operation '${op}', which this classifier cannot evaluate (it derives only ${[...EVALUABLE_FORBIDDEN_OPERATIONS].map((c) => `'${c}'`).join(', ')} from a command), so the criterion cannot be enforced`,
+      );
+    }
+  }
 
   for (const { step } of flattenSteps(plan.steps)) {
     const command = commandOf(step);
