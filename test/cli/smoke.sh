@@ -476,6 +476,34 @@ done
 run_cli "scan --config /nonexistent/crisismode.yaml"
 assert_exit_code "missing --config file exits 2 (usage)" 2
 
+# Running `init` twice is a user mistake, not a CrisisMode fault. Both throw
+# sites used a generic Error, which the boundary classified as INTERNAL — so
+# the second run exited 70 (EX_SOFTWARE), telling the operator the tool was
+# broken when they had simply run the command again.
+# `|| VAR=$?` is required, not decorative: `set -e` is on, so an unguarded
+# non-zero exit here would kill the suite before the assertion runs.
+INIT_DIR="$(mktemp -d)"
+INIT_FIRST=0
+( cd "$INIT_DIR" && eval "$CLI init" ) > /dev/null 2>&1 || INIT_FIRST=$?
+INIT_SECOND=0
+( cd "$INIT_DIR" && eval "$CLI init" ) > /dev/null 2>"$INIT_DIR/err" || INIT_SECOND=$?
+if [ "$INIT_FIRST" -eq 0 ]; then
+  pass "init creates crisismode.yaml and exits 0"
+else
+  fail "init creates crisismode.yaml and exits 0" "exit $INIT_FIRST"
+fi
+if [ "$INIT_SECOND" -eq 2 ]; then
+  pass "init on an existing crisismode.yaml exits 2 (usage), not 70"
+else
+  fail "init on an existing crisismode.yaml exits 2 (usage), not 70" "exit $INIT_SECOND"
+fi
+if grep -qF "already exists" "$INIT_DIR/err"; then
+  pass "init says the file already exists"
+else
+  fail "init says the file already exists" "stderr: $(head -1 "$INIT_DIR/err")"
+fi
+rm -rf "$INIT_DIR"
+
 # Object.prototype keys were accepted as command names because the parser used
 # `in` rather than Object.hasOwn: `crisismode toString` reported
 # "COMMAND_OPTIONS[command] is not iterable" (a leaked JS TypeError) instead of
@@ -516,6 +544,7 @@ else
   done
 fi
 chmod 644 "$UNREADABLE" 2>/dev/null || true
+rm -rf "$(dirname "$UNREADABLE")"
 
 # Invalid diagnose target should not crash
 run_cli "diagnose PLUG-999"
@@ -718,7 +747,10 @@ for BAD in "abc" "1m" "60s" "0" "--interval=-5" "--interval=0" "--interval=abc" 
   esac
   assert_exit_code "$LABEL exits 2 (usage), never loops" 2
   assert_stderr_contains "$LABEL names --interval" "--interval"
-  assert_not_contains "$LABEL never prints a NaN/0/negative interval" "every NaN"
+  # No assert_not_contains here: the parser rejects these before the command
+  # runs, so CMD_OUT is empty and "does not contain" would pass vacuously —
+  # the same can't-fail-for-the-right-reason shape as the JSONL check. The
+  # exit code and the stderr message are the real contract.
 done
 
 echo ""

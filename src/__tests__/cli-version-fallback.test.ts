@@ -7,23 +7,23 @@
  * esbuild replaces `process.env.__CRISISMODE_VERSION` in the shipped bundle,
  * so this path only runs from a source checkout — where it reads
  * package.json, and falls back to the literal string "unknown" if that read
- * or parse fails. Isolated in its own file because it mocks `node:fs`.
+ * or parse fails. Isolated in its own file because it mocks `node:fs/promises`.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ExitCode } from '../cli/exit-codes.js';
-import type * as FsModule from 'node:fs';
+import type * as FsPromisesModule from 'node:fs/promises';
 
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof FsModule>();
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof FsPromisesModule>();
   return {
     ...actual,
     default: actual,
-    readFileSync: (path: unknown, ...rest: unknown[]) => {
+    readFile: async (path: unknown, ...rest: unknown[]) => {
       if (typeof path === 'string' && path.endsWith('package.json')) {
         throw new Error('ENOENT: no such file or directory');
       }
-      return (actual.readFileSync as (...a: unknown[]) => unknown)(path, ...rest);
+      return (actual.readFile as (...a: unknown[]) => unknown)(path, ...rest);
     },
   };
 });

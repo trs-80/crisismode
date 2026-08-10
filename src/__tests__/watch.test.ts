@@ -256,9 +256,28 @@ describe('runWatch', () => {
     const registry = new AgentRegistry({} as never);
     vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
 
-    await runWatch({ maxCycles: 1, intervalMs });
+    // Spy on the timer: the printed line alone would not catch a bad value
+    // still reaching setTimeout, which is the actual hot-loop mechanism.
+    // maxCycles: 2 forces one sleep between cycles.
+    const timeouts: unknown[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: () => void, ms?: number) => {
+      timeouts.push(ms);
+      return realSetTimeout(fn, 0);
+    }) as unknown as typeof globalThis.setTimeout);
 
-    // The operator is told a real number of seconds, never "NaN"/"0"/"-5".
+    await runWatch({ maxCycles: 2, intervalMs });
+    spy.mockRestore();
+
+    // Every scheduled delay is the 30s fallback — never NaN, 0 or negative.
+    expect(timeouts.length).toBeGreaterThan(0);
+    for (const ms of timeouts) {
+      expect(ms).toBe(30_000);
+      expect(Number.isFinite(ms as number)).toBe(true);
+      expect(ms as number).toBeGreaterThan(0);
+    }
+
+    // And the operator is told a real number of seconds, never "NaN"/"0"/"-5".
     const observing = vi.mocked(printInfo).mock.calls
       .map((c) => String(c[0]))
       .find((l) => l.includes('observing'));

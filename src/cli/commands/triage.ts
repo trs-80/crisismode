@@ -16,7 +16,7 @@ import { runTriage } from '../../framework/triage.js';
 import { getEscalationInfo } from '../../framework/escalation.js';
 import { getOutputMode, jsonOut, outputOptions, printBanner, printWarning } from '../output.js';
 import { triageVerdictColor } from '../status-presentation.js';
-import type { ExitCode } from '../exit-codes.js';
+import { ExitCode } from '../exit-codes.js';
 import { discoverStack } from '../autodiscovery.js';
 import { ConfigNotFoundError, ConfigValidationError, loadConfigWithDetection } from '../../config/loader.js';
 import { resolveTarget } from '../../framework/service-status/catalog.js';
@@ -50,9 +50,14 @@ const VERDICT_HEADLINE: Record<TriageVerdict, string> = {
   healthy: 'Verdict: healthy — nothing local or network-level is wrong',
 };
 
-/** 0 when this machine is not the problem, 1 when it might be. */
-export function triageExitCode(verdict: TriageVerdict): 0 | 1 {
-  return verdict === 'healthy' || verdict === 'remote' ? 0 : 1;
+/**
+ * OK when this machine is not the problem, UNHEALTHY when it might be.
+ * Typed as `ExitCode` and returning enum members, matching `downExitCode` —
+ * the two verdict-carrying commands should both go through the single source
+ * of truth. Observable contract unchanged (0/1).
+ */
+export function triageExitCode(verdict: TriageVerdict): ExitCode {
+  return verdict === 'healthy' || verdict === 'remote' ? ExitCode.OK : ExitCode.UNHEALTHY;
 }
 
 export function renderTriageReport(report: TriageReport): string[] {

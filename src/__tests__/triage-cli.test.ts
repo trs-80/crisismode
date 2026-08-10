@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import chalk from 'chalk';
 import { renderTriagePipe, renderTriageReport, resolveTriageTargets, runTriageCommand, triageExitCode } from '../cli/commands/triage.js';
@@ -378,22 +377,16 @@ describe('resolveTriageTargets — services/targets name collision surfaces to t
 });
 
 describe('CLI registration', () => {
-  // Routing and the help text moved from index.ts (now a three-line process
-  // boundary) to run.ts when the exit-code contract was centralized.
-  const runSource = readFileSync(
-    fileURLToPath(new URL('../cli/run.ts', import.meta.url)),
-    'utf-8',
-  );
-
-  it('routes the triage subcommand to runTriageCommand', () => {
-    // Behavior, not source text: the parser has to resolve the token.
+  it('resolves the triage subcommand', () => {
     const parsed = parseCli(['triage']);
     expect(parsed.kind).toBe('command');
     if (parsed.kind === 'command') expect(parsed.command).toBe('triage');
-    expect(runSource).toContain("case 'triage':");
-    expect(runSource).toContain("await import('./commands/triage.js')");
-    expect(runSource).toContain('runTriageCommand');
   });
+
+  // Dispatch to runTriageCommand is asserted behaviourally (with the handler
+  // mocked) in cli-run-routing.test.ts, alongside every other command. The
+  // source-text assertions that used to live here duplicated that coverage
+  // while only proving run.ts contains certain characters.
 
   it('documents triage in the help text', () => {
     expect(HELP).toContain('crisismode triage');

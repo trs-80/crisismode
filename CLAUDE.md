@@ -117,7 +117,7 @@ Per command:
 
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
-| `scan` (and bare `crisismode`) | at least one finding `healthy`, none bad | any finding `unhealthy`/`recovering` | usage | every finding `unknown` |
+| `scan` (and bare `crisismode`) | zero findings, or at least one `healthy` and none bad | any finding `unhealthy`/`recovering` | usage | one or more findings, **all** `unknown` |
 | `diagnose` | target healthy | target `unhealthy`/`recovering` | usage; unknown target name or unroutable finding ID | target health `unknown` |
 | `readiness` | verdict `ready` | verdict `at-risk`/`not-ready` | usage | verdict `unknown` (no rule could be evaluated) |
 | `status` | every configured target reachable | any configured target not listening | usage | — (a TCP probe either connected or did not; there is no `unknown` state to report) |
@@ -127,7 +127,11 @@ Per command:
 | `playbook validate` / `dry-run` | valid | fails safety validation | missing/unreadable path | — |
 | `agent`, `bundle`, `registry`, `completions`, `init`, `demo`, `webhook`, `ask`, `watch`, `mcp` | success | the requested work failed | usage | — |
 
-Three boundaries in the health-derived codes are deliberate and tested on both sides (`severityExitCode`, `src/cli/status-presentation.ts`):
+**The governing principle: nothing to check → 0. Tried to check and couldn't → 3.**
+
+Code 3 reports a *failure to observe*, never an absence of things to observe. A scan with no targets, `crisismode down` with no `services:` configured, and `--category` matching nothing all had nothing to look at — that is not a failed observation, and the no-config onboarding path already guides it, so they stay 0. A target that was configured, was reached for, and could not be assessed is a failed observation — that is 3. Apply this rule when adding a code to any new command.
+
+Three boundaries in the health-derived codes follow from it, and are tested on both sides (`severityExitCode`, `src/cli/status-presentation.ts`):
 
 - **A definite answer beats "could not check".** `[unhealthy, unknown]` → 1. Something real was measured and it was bad news.
 - **Partial `unknown` stays 0.** Nine healthy findings plus one `unknown` → 0. Failing a deploy for one unmeasurable signal is the cliff a separate code exists to avoid; 3 means "nothing at all", not "not everything".

@@ -116,12 +116,12 @@ async function printVersion(): Promise<void> {
     console.log(process.env.__CRISISMODE_VERSION);
     return;
   }
-  const { readFileSync } = await import('node:fs');
+  const { readFile } = await import('node:fs/promises');
   const { resolve, dirname } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const here = dirname(fileURLToPath(import.meta.url));
   try {
-    const pkg = JSON.parse(readFileSync(resolve(here, '../../package.json'), 'utf-8')) as { version?: string };
+    const pkg = JSON.parse(await readFile(resolve(here, '../../package.json'), 'utf-8')) as { version?: string };
     console.log(pkg.version ?? 'unknown');
   } catch {
     console.log('unknown');

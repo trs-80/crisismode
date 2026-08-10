@@ -166,7 +166,9 @@ async function runPluginDiagnose(pluginIndex: number): Promise<ExitCode> {
 
   const plugin = diagPlugins[pluginIndex];
   if (!plugin) {
-    printWarning(`No plugin found at index ${pluginIndex + 1}. Run \`crisismode scan\` to see available plugins.`);
+    // printError, not printWarning: this is a usage diagnostic (the ID does
+    // not resolve) and belongs on stderr, matching the unknown-target path.
+    printError(`No plugin found at index ${pluginIndex + 1}. Run \`crisismode scan\` to see available plugins.`);
     // Nothing was checked, so nothing is known to be broken — the ID the
     // user passed does not resolve, which is a usage problem, not a
     // health verdict.
@@ -183,7 +185,11 @@ async function runPluginDiagnose(pluginIndex: number): Promise<ExitCode> {
   const result = execResult.result as CheckDiagnoseResult | null;
   if (!result) {
     printWarning(`Plugin exited with status: ${execResult.exitStatus}. No diagnosis output.`);
-    return ExitCode.OK;
+    // The plugin ran and produced nothing to diagnose from, so CrisisMode
+    // determined nothing — INDETERMINATE, not OK. Returning OK rendered "no
+    // diagnosis at all" as a successful CI status, which is the false green
+    // code 3 exists for.
+    return ExitCode.INDETERMINATE;
   }
 
   let code: ExitCode;

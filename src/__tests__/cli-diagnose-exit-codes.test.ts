@@ -200,10 +200,22 @@ describe('runDiagnose — PLUG-* IDs route to the check plugin', () => {
     expect(await runDiagnose({ targetName: 'PLUG-999' })).toBe(ExitCode.USAGE);
   });
 
-  it('returns OK when the plugin produced no diagnosis output', async () => {
+  /**
+   * A diagnose run that produced no diagnosis at all is the case code 3
+   * exists for: CrisisMode determined nothing. Returning OK rendered that as
+   * a successful CI status — a false green.
+   */
+  it.each([
+    ['ok'],
+    ['warning'],
+    ['critical'],
+    ['unknown'],
+  ])('returns INDETERMINATE when the plugin produced no diagnosis output (exitStatus %s)', async (exitStatus) => {
     discoverCheckPlugins.mockResolvedValue({ plugins: [plugin('check-tls')] });
-    dispatchPluginExecution.mockResolvedValue({ result: null, exitStatus: 'ok' });
-    expect(await runDiagnose({ targetName: 'PLUG-001' })).toBe(ExitCode.OK);
+    dispatchPluginExecution.mockResolvedValue({ result: null, exitStatus });
+    const code = await runDiagnose({ targetName: 'PLUG-001' });
+    expect(code).toBe(ExitCode.INDETERMINATE);
+    expect(code).not.toBe(ExitCode.OK);
   });
 
   it('renders findings and docs without changing the code', async () => {
@@ -228,6 +240,18 @@ describe('runDiagnose — PLUG-* IDs route to the check plugin', () => {
       },
       exitStatus: 'critical',
     });
-    expect(await runDiagnose({ targetName: 'PLUG-001' })).toBe(ExitCode.UNHEALTHY);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.map(String).join(' ')); });
+    const code = await runDiagnose({ targetName: 'PLUG-001' });
+    const printed = logs.join('\n');
+    expect(code).toBe(ExitCode.UNHEALTHY);
+    // The test is named for the *rendering*; asserting only the exit code
+    // would pass with either renderer deleted.
+    expect(printed).toContain('cert expired');
+    expect(printed).toContain('3 days ago');
+    expect(printed).toContain('chain incomplete');
+    expect(printed).toContain('renewal scheduled');
+    expect(printed).toContain('checks certs');
+    expect(printed).toContain('https://example.invalid');
   });
 });

@@ -501,22 +501,21 @@ describe('runDownCommand', () => {
 });
 
 describe('CLI registration', () => {
-  // Routing and the help text moved from index.ts to run.ts when the
-  // exit-code contract was centralized; index.ts is now the process boundary.
-  const runSource = readFileSync(fileURLToPath(new URL('../cli/run.ts', import.meta.url)), 'utf-8');
   const completionsSource = readFileSync(
     fileURLToPath(new URL('../cli/commands/completions.ts', import.meta.url)),
     'utf-8',
   );
 
-  it('routes the down subcommand to runDownCommand', () => {
-    const parsed = parseCli(['down']);
+  it('resolves the down subcommand and its service positionals', () => {
+    const parsed = parseCli(['down', 'stripe']);
     expect(parsed.kind).toBe('command');
-    if (parsed.kind === 'command') expect(parsed.command).toBe('down');
-    expect(runSource).toContain("case 'down':");
-    expect(runSource).toContain("await import('./commands/down.js')");
-    expect(runSource).toContain('runDownCommand');
+    if (parsed.kind !== 'command') return;
+    expect(parsed.command).toBe('down');
+    expect(parsed.positionals).toEqual(['stripe']);
   });
+
+  // Dispatch to runDownCommand — including that it receives positionals only —
+  // is asserted behaviourally in cli-run-routing.test.ts.
 
   it('documents down and its exit codes in the help text', () => {
     expect(HELP).toContain('crisismode down');
