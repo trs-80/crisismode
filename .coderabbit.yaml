@@ -1,0 +1,243 @@
+# CodeRabbit configuration for CrisisMode
+#
+# Read by BOTH review surfaces: the GitHub app and `coderabbit review` (CLI).
+# Schema: https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+# Reference: https://docs.coderabbit.ai/reference/configuration
+#
+# IMPORTANT — precedence caveat (docs.coderabbit.ai/guides/configuration-overview):
+#   "Configuration sources don't merge by default." A repository .coderabbit.yaml is
+#   priority 2 and REPLACES the CodeRabbit UI Repository/Organization settings
+#   (priorities 4/5) wholesale. Anything not stated here falls back to *schema
+#   defaults*, not to whatever is currently set in the web UI. That is why the tool
+#   list below is written out explicitly even where it matches the default — the
+#   file has to be self-sufficient.
+
+# Do not fall back to the CodeRabbit web UI for anything this file omits.
+#
+# Schema default is already false; stated explicitly because it is load-bearing
+# and invisible otherwise. With `false`, unstated values resolve to *schema
+# defaults*, so review behaviour is a function of this file and nothing else —
+# config as code, reproducible from a checkout, and a later web-UI edit cannot
+# silently change how PRs are reviewed. Set to `true` only if this project
+# starts relying on Organization-level settings it should inherit.
+inheritance: false
+
+language: en-US
+
+reviews:
+  # Default is `chill`, which is what PR #115/#118 ran under ("Review profile: CHILL").
+  # `assertive` is the documented setting for "more feedback (which may feel nitpicky)".
+  # Enum is quiet | chill | assertive (schema), not the two the docs prose implies.
+  profile: assertive
+
+  # Post "ignored files, extra context used, suppressed comments" into the review.
+  # Default false. Turned on deliberately: this is the only way to see *why* a
+  # surface stayed quiet, which is exactly the question that produced this config.
+  review_details: true
+
+  auto_review:
+    enabled: true
+    # Default true. Incremental review means a pushed commit is diffed against the
+    # previously reviewed commit, and already-reviewed commits are never re-reviewed
+    # ("CodeRabbit is an incremental review system and does not re-review already
+    # reviewed commits"). That is the single biggest cause of a surface reporting
+    # zero findings on a branch that still has open defects. Setting this to false
+    # makes every push re-review the whole PR diff against the base, so the finding
+    # set is a function of the code rather than of review history.
+    # Cost: every push re-reviews all changed files.
+    auto_incremental_review: false
+
+  # Keep review attention on source, specs, and the test harness.
+  path_filters:
+    - '!**/pnpm-lock.yaml'
+    - '!**/dist/**'
+    - '!**/*.min.js'
+    # Vendored landing-page assets. Same exclusion `.cbmignore` already applies
+    # to the code-intelligence index, for the same reason: the minified
+    # asciinema bundle is not this project's code and reviewing it is noise.
+    - '!site/assets/**'
+
+  path_instructions:
+    # ---------------------------------------------------------------------------
+    # Theme 1: declared-but-unenforced safety metadata.
+    # The recurring defect is a plan/step/manifest that *declares* a safety
+    # property while nothing in the code path checks it.
+    # ---------------------------------------------------------------------------
+    - path: 'src/framework/**/*.ts'
+      instructions: |
+        Safety metadata in this project is only meaningful if some code path
+        rejects a plan that violates it. When reviewing, treat declared-but-
+        unenforced metadata as a defect, not a style issue:
+        - A `system_action` at `elevated` risk or higher REQUIRES
+          `statePreservation.before` captures; a plan containing `elevated+`
+          steps REQUIRES a `human_notification` step; every plan REQUIRES a
+          `rollbackStrategy`; `blastRadius` MUST name affected components.
+          If a field like this is read, defaulted, or logged but never used to
+          fail validation, flag it and name the enforcement point that is missing
+          (normally `src/framework/validator.ts`).
+        - Flag `maxRiskLevel`, `riskLevel`, and capability declarations that are
+          surfaced to operators but not checked before execution.
+        - Flag validation that reports success on a path that skipped a check
+          (early `return true`, a caught-and-swallowed error, an unreachable
+          `default` arm). Fail closed: an unverifiable precondition must block,
+          not pass.
+        - Step ids must be unique within a plan and conditionals must not nest;
+          flag any new construction path that can violate either without erroring.
+
+    # ---------------------------------------------------------------------------
+    # Theme 2: `unknown` collapsing into `healthy`.
+    # A probe that cannot determine state must never render or exit as healthy.
+    # ---------------------------------------------------------------------------
+    - path: 'src/{agent,framework,readiness}/**/*.ts'
+      instructions: |
+        This project distinguishes "healthy", "unhealthy", and "unknown" (could
+        not determine). Collapsing `unknown` into `healthy` is a correctness bug
+        with real operational cost, because it tells an operator a degraded system
+        is fine. When reviewing:
+        - Flag any boolean coercion, `??`/`||` default, truthiness test, or
+          `catch` block that turns an indeterminate probe result into a healthy or
+          passing status. `unknown` must stay distinguishable end to end: health
+          assessment, operator summary, rendered output, and exit code.
+        - Flag a check that returns healthy when the underlying client threw,
+          timed out, returned no rows, or was never called (missing credentials,
+          absent backend, `simulator_only` maturity). The honest result is
+          `unknown` with a reason.
+        - For agents whose manifest maturity is `simulator_only`, flag any path
+          that lets a simulator response be presented as a live-validated result.
+        - Verify the aggregate: a summary over one `unknown` and many `healthy`
+          members must not aggregate to `healthy`.
+
+    # ---------------------------------------------------------------------------
+    # Theme 3: exit codes disagreeing with rendered output.
+    # `ExitCode` is the single source of truth for CLI exit semantics.
+    # ---------------------------------------------------------------------------
+    - path: 'src/cli/**/*.ts'
+      instructions: |
+        The rendered output and the process exit status are two encodings of one
+        verdict and must agree. `src/cli/exit-codes.ts` is the single source of
+        truth; commands *return* an `ExitCode` and only `src/cli/index.ts`
+        assigns `process.exitCode`. When reviewing:
+        - Flag any command that prints an unhealthy, at-risk, failed, or
+          not-ready result while returning `ExitCode.OK`, and any command that
+          returns nonzero while rendering success. Check every branch, including
+          `catch` blocks and early returns, not just the happy path.
+        - Flag a `catch` that re-throws only selected error classes and then falls
+          through to a success return; and a handler that maps *every* unknown
+          error to a health verdict, which hides genuine tool bugs that should
+          surface as `INTERNAL`. Distinguish user error (`USAGE`), target
+          unhealthy (`UNHEALTHY`), and tool bug (`INTERNAL`).
+        - Flag `process.exit()` anywhere outside `src/cli/index.ts`, numeric exit
+          literals or literal unions (`0 | 1`) used in place of `ExitCode`, and
+          any router `switch` over commands with no `default` arm — a fall-through
+          makes the command return `undefined` instead of an `ExitCode`.
+        - Flag argument parsing that accepts a flag the command silently ignores,
+          that validates a value's presence but not its type or range, or that
+          tests membership with `in`/bracket access against an object literal
+          (inherited `Object.prototype` keys such as `toString`, `constructor`,
+          and `__proto__` then pass). Prefer `Object.hasOwn`, a `Map`, or a `Set`.
+        - `--json`/machine mode must emit a structured record on failure paths
+          too, not only on success.
+
+    # ---------------------------------------------------------------------------
+    # Theme 4: multi-statement SQL evading single-statement checks.
+    # ---------------------------------------------------------------------------
+    - path: 'src/{agent,framework}/**/*.ts'
+      instructions: |
+        Several safety checks in this project inspect a SQL string as if it were
+        one statement. Flag any check that can be evaded by submitting more than
+        one:
+        - A guard that classifies SQL by prefix, first keyword, or a single
+          regex/`startsWith` on the whole string is bypassed by
+          `SELECT 1; DROP TABLE ...`, by a leading comment or CTE, or by a
+          trailing statement after `;`. Require that the string is split into
+          statements (or that multi-statement input is rejected outright) before
+          any read-only/risk classification is trusted.
+        - Flag read-only assertions, `db.query.read` capability claims, and
+          dry-run paths that would execute a mutation hidden in a later
+          statement. Dry-run must not mutate under any input.
+        - Flag interpolation of discovered values (hostnames, replica names,
+          slot names) into SQL without parameterization or an identifier quote.
+
+    # ---------------------------------------------------------------------------
+    # Playbooks: same safety infrastructure as code agents, no shortcuts.
+    # ---------------------------------------------------------------------------
+    - path: '{playbooks/**,**/*.playbook.md}'
+      instructions: |
+        Playbooks compile to the same `RecoveryPlan` the execution engine runs, so
+        they are subject to every safety rule that code-based agents are. Flag a
+        playbook whose steps skip `statePreservation.before` at `elevated+` risk,
+        omit a `human_notification` when it contains `elevated+` steps, omit a
+        `rollbackStrategy`, reuse a step id, nest conditionals, or declare a
+        `blastRadius` that does not name affected components. Flag commands that
+        hardcode IPs, hostnames, or other infrastructure identifiers instead of
+        discovering them at diagnosis time, and any step that reports success
+        while ignoring the target's own error channel.
+
+    # ---------------------------------------------------------------------------
+    # Tests: the audit found tests that assert less than their name claims.
+    # ---------------------------------------------------------------------------
+    - path: 'src/__tests__/**/*.test.ts'
+      instructions: |
+        Vitest suites. Flag a test whose assertion is weaker than its name claims
+        — `rejects.toThrow()` where the contract names a specific error class,
+        asserting a call happened without asserting its arguments, or asserting a
+        rendered string without asserting the returned `ExitCode` (and vice
+        versa). Flag a test that would still pass if the behaviour under test
+        were removed. Every exit-code contract change needs a case that pins the
+        code, and every `unknown` path needs a case proving it does not render or
+        exit as healthy.
+
+    - path: 'test/**/*.sh'
+      instructions: |
+        Shell test harness, `set -euo pipefail` expected. Flag assertions that
+        pass vacuously: an empty capture treated as valid output, a loop or guard
+        that skips the only element, a pipeline whose failure is masked, an
+        `if`/`grep` whose non-match silently means success, and `$(...)` results
+        used unquoted. An assertion helper that cannot fail is a defect.
+
+  tools:
+    # Written out explicitly because a repository .coderabbit.yaml replaces the UI
+    # settings rather than merging with them. Every tool below defaults to
+    # enabled: true in the schema, so this section documents intent and pins it —
+    # it does not switch on anything that was previously off.
+    eslint:
+      enabled: true # flat config at eslint.config.js is auto-detected
+    semgrep:
+      enabled: true # SAST; source of the args.ts prototype-key class of finding
+    opengrep:
+      enabled: true
+    ast-grep:
+      enabled: true
+      essential_rules: true
+    shellcheck:
+      enabled: true # test/**/*.sh, test/podman/scripts/*.sh
+    actionlint:
+      enabled: true # .github/workflows/ci.yml
+    yamllint:
+      enabled: true # crisismode.yaml, playbook frontmatter
+    markdownlint:
+      enabled: true # specs/, docs/, playbooks/
+    gitleaks:
+      enabled: true # credentials must come from env/K8s Secrets, never code
+    osvScanner:
+      enabled: true # dependency CVEs; spoke has a 256Mi footprint target
+    # Redundant with ESLint on a TypeScript codebase that already pins one linter;
+    # leaving them on produces duplicate findings under `assertive`.
+    biome:
+      enabled: false
+    oxc:
+      enabled: false
+    # Prose grammar on specs/ and docs/ is noise at `assertive`.
+    languagetool:
+      enabled: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # Default patterns already include **/CLAUDE.md; stated explicitly so this
+    # file remains self-sufficient under the no-merge precedence rule.
+    filePatterns:
+      - '**/CLAUDE.md'
+      - '**/AGENTS.md'
+      - 'CONTRIBUTING.md'
+      - 'specs/foundational/**/*.md'
