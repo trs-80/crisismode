@@ -4,7 +4,7 @@
 import { PgReplicationAgent } from '../agent/pg-replication/agent.js';
 import { assembleContext } from '../framework/context.js';
 import { validatePlan } from '../framework/validator.js';
-import { matchCatalog, configureCatalogSource } from '../framework/catalog.js';
+import { matchCatalog, configureCatalogSource, clearCatalogSource } from '../framework/catalog.js';
 import { DEMO_CATALOG_ENTRY } from './catalog-fixture.js';
 import { ForensicRecorder } from '../framework/forensics.js';
 import { ExecutionEngine, type EngineCallbacks } from '../framework/engine.js';
@@ -19,6 +19,16 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function runDemo(): Promise<void> {
+  try {
+    await runDemoScenario();
+  } finally {
+    // The demo installs a catalog fixture into process-global state. Never let
+    // it outlive the demo in a host process that also runs real recoveries.
+    clearCatalogSource();
+  }
+}
+
+async function runDemoScenario(): Promise<void> {
   // ── Banner ──
   display.banner();
   await sleep(500);

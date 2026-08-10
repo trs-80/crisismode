@@ -356,6 +356,7 @@ export async function runRecovery(options: RecoveryOptions = {}): Promise<void> 
     if (!isJson()) display.phase(7, 'Catalog Match');
     const catalogMatch = matchCatalog(plan, {
       preAuthorizedCatalogs: context.preAuthorizedCatalogs,
+      environment: config.metadata.environment,
     });
     if (!isJson()) {
       display.displayCatalogMatch(catalogMatch);

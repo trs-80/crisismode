@@ -229,6 +229,7 @@ async function handleAlert(alert: AlertManagerAlert): Promise<{
     // Catalog match
     const catalogMatch = matchCatalog(plan, {
       preAuthorizedCatalogs: context.preAuthorizedCatalogs,
+      environment: config.metadata.environment,
     });
 
     // Execute

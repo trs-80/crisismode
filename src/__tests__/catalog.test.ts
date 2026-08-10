@@ -296,6 +296,118 @@ const rejectionRows: RejectionRow[] = [
     reason: /forbidden operation 'admin_privilege'/i,
   },
   {
+    name: 'CREATE ROLE counts as DDL even though it is also a privilege change',
+    entry: makeCatalogEntry({
+      matchCriteria: { ...makeCatalogEntry().matchCriteria, forbiddenOperations: ['ddl'] },
+    }),
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-create-role', 'elevated', {
+          type: 'sql',
+          statement: 'CREATE ROLE recovery_bot LOGIN',
+        }),
+      );
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a DDL statement after a semicolon is still caught',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-multi', 'elevated', {
+          type: 'sql',
+          statement: 'SELECT 1; DROP TABLE orders',
+        }),
+      );
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a DDL statement hidden behind a leading block comment is still caught',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-comment', 'elevated', {
+          type: 'sql',
+          statement: '/* routine cleanup */ DROP TABLE orders',
+        }),
+      );
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a DDL statement hidden behind a leading line comment is still caught',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-line-comment', 'elevated', {
+          type: 'sql',
+          statement: '-- routine cleanup\nDROP TABLE orders',
+        }),
+      );
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a DDL command inside a conditional branch is caught',
+    mutatePlan: (plan) => {
+      plan.steps.push({
+        stepId: 'step-cond',
+        type: 'conditional',
+        name: 'Branch',
+        condition: {
+          description: 'always',
+          check: { type: 'sql', statement: 'SELECT 1', expect: { operator: 'eq', value: 1 } },
+        },
+        thenStep: makeSystemAction('step-cond-then', 'elevated', {
+          type: 'sql',
+          statement: 'TRUNCATE TABLE orders',
+        }),
+        elseStep: 'skip',
+      });
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a DDL command inside a nested conditional branch is caught',
+    mutatePlan: (plan) => {
+      // Nested conditionals are not representable in NonConditionalStep and the
+      // validator rejects them — this guards matchCatalog against plans that
+      // never went through the validator (playbooks, third-party plugins).
+      const inner = {
+        stepId: 'step-inner-cond',
+        type: 'conditional',
+        name: 'Inner branch',
+        condition: {
+          description: 'always',
+          check: { type: 'sql', statement: 'SELECT 1', expect: { operator: 'eq', value: 1 } },
+        },
+        thenStep: makeSystemAction('step-inner-then', 'elevated', {
+          type: 'sql',
+          statement: 'DROP TABLE orders',
+        }),
+        elseStep: 'skip',
+      };
+      plan.steps.push({
+        stepId: 'step-outer-cond',
+        type: 'conditional',
+        name: 'Outer branch',
+        condition: {
+          description: 'always',
+          check: { type: 'sql', statement: 'SELECT 1', expect: { operator: 'eq', value: 1 } },
+        },
+        thenStep: inner,
+        elseStep: 'skip',
+      } as unknown as RecoveryStep);
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a prerelease agent version is rejected with a prerelease-specific reason',
+    mutatePlan: (plan) => {
+      plan.metadata.agentVersion = '1.4.0-rc.1';
+    },
+    reason: /prerelease/i,
+  },
+  {
     name: 'a forbidden operation declared as a command subtype is caught',
     mutatePlan: (plan) => {
       plan.steps.push(

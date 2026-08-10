@@ -51,11 +51,25 @@ export interface CatalogMatchResult {
 
 const NO_MATCH_INPUT: CatalogMatchInput = { preAuthorizedCatalogs: [] };
 
+/**
+ * The catalog entries in force for this process.
+ *
+ * Single-writer by contract: install the source once at process start, before
+ * any recovery runs, and do not mutate it afterwards. `matchCatalog` reads this
+ * global at call time, so a `configureCatalogSource` or `clearCatalogSource`
+ * call made while a recovery is in flight changes the standing approvals that
+ * recovery is executing under — the webhook receiver in particular serves
+ * overlapping HTTP requests, so two alerts can be mid-plan at once. If catalogs
+ * ever need to refresh at runtime (a hub push, a config reload), take an
+ * immutable snapshot and pass it through `CatalogMatchInput` rather than
+ * rewriting this global.
+ */
 let configuredCatalogs: CatalogEntry[] = [];
 
 /**
  * Install the catalog entries in force for this process. Until this is called
- * with a non-empty list, nothing is pre-authorized.
+ * with a non-empty list, nothing is pre-authorized. Call once at startup; see
+ * the single-writer note on `configuredCatalogs`.
  */
 export function configureCatalogSource(entries: readonly CatalogEntry[]): void {
   configuredCatalogs = [...entries];
@@ -203,6 +217,13 @@ function evaluateEntry(
     reject(
       `catalog agentVersionConstraint '${criteria.agentVersionConstraint}' is not a valid semver range`,
     );
+  } else if (semver.prerelease(plan.metadata.agentVersion) !== null) {
+    // semver ranges exclude prereleases by default, so this would otherwise be
+    // rejected with a message that reads like a version-range mismatch. Say the
+    // real reason instead: standing approvals are granted to released builds.
+    reject(
+      `plan agent version '${plan.metadata.agentVersion}' is a prerelease build; a standing catalog approval is only granted to released agent versions`,
+    );
   } else if (!semver.satisfies(plan.metadata.agentVersion, criteria.agentVersionConstraint)) {
     reject(
       `plan agent version '${plan.metadata.agentVersion}' does not satisfy agentVersionConstraint '${criteria.agentVersionConstraint}'`,
@@ -284,16 +305,28 @@ interface FlatStep {
   step: RecoveryStep;
 }
 
-/** Flatten conditional branches, keeping the position of the owning step. */
+/**
+ * Flatten conditional branches, keeping the position of the owning top-level
+ * step so `before_first_mutation` can still be evaluated.
+ *
+ * Recurses: nested conditionals are not representable in `NonConditionalStep`
+ * and the validator rejects them, but `matchCatalog` is a public entry point
+ * that can be handed a plan which never went through the validator (a
+ * playbook, a third-party plugin), and a forbidden command must not hide one
+ * level deeper than the traversal looks. `walkSteps` in `step-walker.ts` is
+ * deliberately not reused here: it descends only one level and carries no step
+ * index, so it cannot answer either question this function is asked.
+ */
 function flattenSteps(steps: RecoveryStep[]): FlatStep[] {
   const flat: FlatStep[] = [];
-  steps.forEach((step, index) => {
+  const visit = (step: RecoveryStep, index: number): void => {
     flat.push({ index, step });
     if (step.type === 'conditional') {
-      flat.push({ index, step: step.thenStep });
-      if (step.elseStep !== 'skip') flat.push({ index, step: step.elseStep });
+      visit(step.thenStep, index);
+      if (step.elseStep !== 'skip') visit(step.elseStep, index);
     }
-  });
+  };
+  steps.forEach((step, index) => visit(step, index));
   return flat;
 }
 
@@ -334,19 +367,51 @@ function evaluateStepPatterns(
 // --- Forbidden operation evaluation ---------------------------------------
 
 const ADMIN_PRIVILEGE_SQL =
-  /^\s*(?:grant|revoke|reassign\s+owned|set\s+role|(?:create|alter|drop)\s+(?:role|user|group)\b)/i;
+  /^(?:grant|revoke|reassign\s+owned|set\s+role|(?:create|alter|drop)\s+(?:role|user|group)\b)/i;
 const DDL_SQL =
-  /^\s*(?:create|alter|drop|truncate|rename|comment\s+on|refresh\s+materialized)\b/i;
+  /^(?:create|alter|drop|truncate|rename|comment\s+on|refresh\s+materialized)\b/i;
 
-/** Operation classes a command performs, used to test `forbiddenOperations`. */
+const SQL_COMMENT = /--[^\n]*|\/\*[\s\S]*?\*\//g;
+
+/**
+ * Split a command into the statements it would execute.
+ *
+ * PostgreSQL's simple query protocol runs every `;`-separated statement in one
+ * string, so classifying only the leading verb would let `SELECT 1; DROP TABLE
+ * orders` through. Comments are stripped first so a leading `-- note` or
+ * `/* note *\/` cannot hide the verb either.
+ *
+ * This is a conservative classifier, not a SQL parser: a `;` inside a string
+ * literal or a dollar-quoted body splits wrongly, which produces extra
+ * fragments and therefore extra classification. It errs toward classifying a
+ * statement as forbidden rather than missing one — the right direction for a
+ * check that gates standing approvals.
+ */
+function splitStatements(statement: string): string[] {
+  return statement
+    .replace(SQL_COMMENT, ' ')
+    .split(';')
+    .map((fragment) => fragment.trim())
+    .filter((fragment) => fragment.length > 0);
+}
+
+/**
+ * Operation classes a command performs, used to test `forbiddenOperations`.
+ *
+ * Classes are tested independently, never `else if`: `CREATE ROLE recovery_bot`
+ * is both DDL and a privilege change, and a catalog forbidding only one of the
+ * two must still reject it.
+ */
 function classifyCommand(command: Command): Set<string> {
   const classes = new Set<string>();
   if (command.subtype) classes.add(command.subtype.trim().toLowerCase());
   if (command.operation) classes.add(command.operation.trim().toLowerCase());
   const statement = command.statement;
   if (statement) {
-    if (ADMIN_PRIVILEGE_SQL.test(statement)) classes.add('admin_privilege');
-    else if (DDL_SQL.test(statement)) classes.add('ddl');
+    for (const fragment of splitStatements(statement)) {
+      if (ADMIN_PRIVILEGE_SQL.test(fragment)) classes.add('admin_privilege');
+      if (DDL_SQL.test(fragment)) classes.add('ddl');
+    }
   }
   return classes;
 }
