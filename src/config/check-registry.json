@@ -44,8 +44,8 @@
       "source": "builtin",
       "url": "https://raw.githubusercontent.com/trs-80/crisismode/main/checks/check-dns-resolution/",
       "files": ["check.sh", "manifest.json"],
-      "sha256": "0ea1222f7d59269bbf0fc666fb2670e46a8d4d40f10010de1e9ef0ddf921a719",
-      "sha256v2": "59925c38e47937ee65e54b3807238b1a52e4bd5cef7bbd56b4ac1ffaaf0d5388"
+      "sha256": "fa69af44c1f8b93fbf1f477d704ee5324447a449109bce54f0991281fc10d262",
+      "sha256v2": "e2523edc2380ec21d464bd65cecf3ad2d8f128735620777bfe34bfc06a5bb9d8"
     },
     {
       "name": "check-http-endpoint",
