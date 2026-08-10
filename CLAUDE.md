@@ -126,7 +126,11 @@ Per command:
 | `playbook validate` / `dry-run` | valid | fails safety validation | missing/unreadable path |
 | `agent`, `bundle`, `registry`, `completions`, `init`, `demo`, `webhook`, `ask`, `watch`, `mcp` | success | the requested work failed | usage |
 
-`unknown` is deliberately **not** a failure: it means "CrisisMode could not check this" (no agent registered for the kind, probe timed out), not "this is broken".
+`unknown` is deliberately **not** a failure: it means "CrisisMode could not check this" (no agent registered for the kind, probe timed out), not "this is broken". Exiting non-zero on it would fail every `crisismode && deploy` chain for a service nobody asked CrisisMode to watch.
+
+**Known edge case — the all-`unknown` run is a false green.** Because `unknown` maps to 0, a stack where CrisisMode could determine *nothing at all* exits 0, and a CI gate reads that as "healthy". This is currently rare but is getting more likely: a misconfigured `kafka`/`etcd`/`ceph`/`flink` target now yields an `unknown` finding rather than a fabricated one, and an unprobeable resolver yields an `unknown` DNS signal.
+
+The condition is cheaply detectable and *not* currently acted on. At the point the code is computed (`src/cli/run.ts`, `case 'scan'`) the full `ScanResult` is in hand, so `result.findings.length > 0 && result.findings.every((f) => f.status === 'unknown')` needs no new plumbing; `readiness` has the same information as `report.evaluated` / `report.unknown`. Deciding what it *should* do — stay 0, become 1, or get a distinct "indeterminate" code — is a product decision, not an implementation one, and it should be made in one go with the `scan` exit-code change rather than shipped as a second behavioral change later.
 
 `recover` returns 0 on completion rather than deriving from health: in its default dry-run mode nothing has been fixed yet, so a health-derived code would report failure for a successful preview. Wiring the real execution outcome means changing `runRecovery` in `src/live.ts`.
 

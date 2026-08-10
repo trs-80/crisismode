@@ -19,7 +19,7 @@ import { platformsForTarget } from '../../framework/guidance/platforms.js';
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 import {
   printBanner, printHealthStatus, printDiagnosis, printOperatorSummary,
-  printInfo, printSuccess, printWarning, printError, printNetworkProfile,
+  printInfo, printSuccess, printWarning, printError, printNetworkProfile, printSpacer,
 } from '../output.js';
 import { severityExitCode } from '../status-presentation.js';
 import { ExitCode } from '../exit-codes.js';
@@ -88,7 +88,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<ExitCode> {
   await AgentRegistry.discoverVersion({ agent, backend, target });
 
   printInfo(`Target: ${target.name} (${target.kind})`);
-  console.log('');
+  printSpacer();
 
   try {
     // Build a trigger context for diagnosis
@@ -169,7 +169,7 @@ async function runPluginDiagnose(pluginIndex: number): Promise<ExitCode> {
   }
 
   printInfo(`Plugin: ${plugin.manifest.name}`);
-  console.log('');
+  printSpacer();
 
   const execOpts = { timeoutMs: plugin.manifest.timeoutMs ?? 10_000, cwd: plugin.pluginDir };
   const request = { verb: 'diagnose' as const, target: { name: 'plugin-diagnose', kind: plugin.manifest.targetKinds[0] ?? 'generic' } };
@@ -194,7 +194,7 @@ async function runPluginDiagnose(pluginIndex: number): Promise<ExitCode> {
   }
 
   if ((result.findings ?? []).length > 0) {
-    console.log('');
+    printSpacer();
     printInfo('Findings:');
     for (const f of result.findings ?? []) {
       const icon = f.severity === 'critical' ? '🔴' : f.severity === 'warning' ? '🟡' : 'ℹ️ ';
@@ -205,10 +205,10 @@ async function runPluginDiagnose(pluginIndex: number): Promise<ExitCode> {
 
   const docs = plugin.manifest.docs;
   if (docs?.explanation || docs?.learnMoreUrl) {
-    console.log('');
+    printSpacer();
     if (docs.explanation) printInfo(`About this check: ${docs.explanation}`);
     if (docs.learnMoreUrl) printInfo(`Learn more: ${docs.learnMoreUrl}`);
   }
-  console.log('');
+  printSpacer();
   return code;
 }
