@@ -78,7 +78,21 @@ function makeSystemAction(
     riskLevel,
     requiredCapabilities: ['db.query.read'],
     command,
-    statePreservation: { before: [], after: [] },
+    // Elevated-and-above actions must carry `before` captures (CLAUDE.md safety
+    // rules), so the conforming baseline is a plan the validator would also
+    // accept — not just one matchCatalog happens to accept.
+    statePreservation: {
+      before: [
+        {
+          name: 'replication-state',
+          captureType: 'sql_query',
+          statement: 'SELECT * FROM pg_stat_replication',
+          captureCost: 'negligible',
+          capturePolicy: 'required',
+        },
+      ],
+      after: [],
+    },
     successCriteria: {
       description: 'OK',
       check: { type: 'sql', statement: 'SELECT 1', expect: { operator: 'eq', value: 1 } },
