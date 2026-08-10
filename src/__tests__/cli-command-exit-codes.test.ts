@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { ExitCode } from '../cli/exit-codes.js';
 import { configure } from '../cli/output.js';
 import { CrisisModeError } from '../cli/errors.js';
+import { CliUsageError } from '../cli/exit-codes.js';
 import type { CheckRegistryEntry } from '../config/check-registry.js';
 import type { ReadinessReport } from '../readiness/types.js';
 import type * as CheckRegistryModule from '../config/check-registry.js';
@@ -377,10 +378,16 @@ describe('runBundle', () => {
   ])('a %s from the bundle framework is rethrown so the boundary reports INTERNAL', async (_name, make) => {
     const path = join(tmp, 'bundle.json');
     writeFileSync(path, JSON.stringify(minimalBundle()), 'utf-8');
-    ingestEvidenceBundle.mockRejectedValueOnce(make());
+    const thrown = make();
+    ingestEvidenceBundle.mockRejectedValue(thrown);
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    // Rethrown, not swallowed into an exit code here.
-    await expect(runBundle({ subcommand: 'ingest', args: [path] })).rejects.toBeInstanceOf(Error);
+    // The concrete class, not the broad `Error` base — every one of these is
+    // an Error, so `toBeInstanceOf(Error)` would pass even if the rethrow
+    // logic misclassified them.
+    await expect(runBundle({ subcommand: 'ingest', args: [path] }))
+      .rejects.toBeInstanceOf(thrown.constructor as ErrorConstructor);
+    await expect(runBundle({ subcommand: 'ingest', args: [path] }))
+      .rejects.not.toBeInstanceOf(CliUsageError);
     err.mockRestore();
   });
 
@@ -542,7 +549,18 @@ describe('runRegistry', () => {
 
   it('list --json reports installed state', async () => {
     getInstalledVersion.mockReturnValue('1.0.0' as unknown as null);
-    expect(await runRegistry({ subcommand: 'list', args: [], json: true })).toBe(ExitCode.OK);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.map(String).join(' ')); });
+    const code = await runRegistry({ subcommand: 'list', args: [], json: true });
+    expect(code).toBe(ExitCode.OK);
+    // The exit code alone would pass even if the installed state were never
+    // rendered — which is the whole point of this test.
+    const entries = JSON.parse(logs.join('')) as Array<{ name: string; installed: boolean; installedVersion: string }>;
+    expect(entries[0]).toMatchObject({
+      name: ENTRY.name,
+      installed: true,
+      installedVersion: '1.0.0',
+    });
   });
 });
 

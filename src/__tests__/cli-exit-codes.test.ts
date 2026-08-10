@@ -21,6 +21,7 @@ import { severityExitCode, readinessExitCode } from '../cli/status-presentation.
 import { exitCodeToStatus, exitStatusToHealth } from '../framework/check-plugin.js';
 import { runCli } from '../cli/run.js';
 import type { HealthStatus } from '../types/health.js';
+import type { ReadinessReport } from '../readiness/types.js';
 
 describe('ExitCode', () => {
   it('is the single named source of truth for the CLI contract', () => {
@@ -109,6 +110,18 @@ describe('severityExitCode', () => {
 });
 
 describe('readinessExitCode', () => {
+  /**
+   * A fail-open default inside the exit-code layer: an unmapped verdict
+   * silently reported success. The Record is exhaustive today, so this is
+   * only reachable if the verdict union grows — which is exactly when a
+   * silent 0 is most dangerous, because nobody would notice.
+   */
+  it('does not fail open for an unmapped verdict', () => {
+    const unmapped = 'a-verdict-added-later' as ReadinessReport['verdict'];
+    expect(readinessExitCode(unmapped)).toBe(ExitCode.INDETERMINATE);
+    expect(readinessExitCode(unmapped)).not.toBe(ExitCode.OK);
+  });
+
   it.each([
     ['ready', ExitCode.OK],
     // Consistent with scan/diagnose: a readiness run where nothing could be
@@ -122,11 +135,28 @@ describe('readinessExitCode', () => {
 });
 
 describe('runCli exit codes', () => {
-  it('returns OK for --help and --version', async () => {
+  it('returns OK for --help and prints the usage text', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    expect(await runCli(['--help'])).toBe(ExitCode.OK);
-    expect(await runCli(['--version'])).toBe(ExitCode.OK);
+    const code = await runCli(['--help']);
+    const printed = log.mock.calls.map((c) => String(c[0])).join('\n');
     log.mockRestore();
+    expect(code).toBe(ExitCode.OK);
+    // Asserting only the code would pass if help printed nothing at all.
+    expect(printed).toContain('Usage:');
+    expect(printed).toContain('Exit codes:');
+  });
+
+  it('returns OK for --version and prints a version string', async () => {
+    const previous = process.env.__CRISISMODE_VERSION;
+    process.env.__CRISISMODE_VERSION = '9.9.9-test';
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const code = await runCli(['--version']);
+    const printed = log.mock.calls.map((c) => String(c[0])).join('');
+    log.mockRestore();
+    if (previous === undefined) delete process.env.__CRISISMODE_VERSION;
+    else process.env.__CRISISMODE_VERSION = previous;
+    expect(code).toBe(ExitCode.OK);
+    expect(printed).toBe('9.9.9-test');
   });
 
   it.each([

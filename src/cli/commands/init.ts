@@ -8,7 +8,7 @@
 import { writeFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { generateTemplate } from '../../config/init.js';
-import { printSuccess, printInfo } from '../output.js';
+import { printSuccess, printInfo, printSpacer } from '../output.js';
 import { CliUsageError, ExitCode } from '../exit-codes.js';
 import type { CheckPluginManifest } from '../../framework/check-plugin.js';
 
@@ -84,12 +84,16 @@ export async function runInit(outputPath?: string, options: InitOptions = {}): P
   const targetPath = resolve(outputPath || 'crisismode.yaml');
 
   if (existsSync(targetPath)) {
-    throw new Error(`File already exists: ${targetPath}\nRemove it first or specify a different path: crisismode init other.yaml`);
+    // CliUsageError, not Error: running `init` twice is a user mistake, and
+    // a generic Error reaches the boundary as INTERNAL (70, EX_SOFTWARE) —
+    // telling the operator CrisisMode is broken when they simply ran the
+    // command again.
+    throw new CliUsageError(`File already exists: ${targetPath}\nRemove it first or specify a different path: crisismode init other.yaml`);
   }
 
   writeFileSync(targetPath, generateTemplate(), 'utf-8');
   printSuccess(`Created ${targetPath}`);
-  console.log('');
+  printSpacer();
   printInfo('Next steps:');
   printInfo('  1. Edit crisismode.yaml with your infrastructure details');
   printInfo('  2. Set environment variables for credentials');
@@ -101,7 +105,7 @@ async function scaffoldCheckPlugin(name: string): Promise<void> {
   const pluginDir = resolve('checks', name);
 
   if (existsSync(pluginDir)) {
-    throw new Error(`Directory already exists: ${pluginDir}\nRemove it first or choose a different name.`);
+    throw new CliUsageError(`Directory already exists: ${pluginDir}\nRemove it first or choose a different name.`);
   }
 
   // Create the plugin directory
@@ -187,11 +191,11 @@ exit 0
   chmodSync(join(pluginDir, 'check.sh'), 0o755);
 
   printSuccess(`Scaffolded check plugin at ${pluginDir}/`);
-  console.log('');
+  printSpacer();
   printInfo('Created files:');
   printInfo(`  ${join(pluginDir, 'manifest.json')}  — plugin manifest`);
   printInfo(`  ${join(pluginDir, 'check.sh')}       — executable check script`);
-  console.log('');
+  printSpacer();
   printInfo('Next steps:');
   printInfo('  1. Edit check.sh with your health/diagnose/plan logic');
   printInfo('  2. Update manifest.json targetKinds to match your system');

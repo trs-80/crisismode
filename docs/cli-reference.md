@@ -80,14 +80,42 @@ This is the complete set — there are no per-command flags beyond these.
 
 ## Exit codes
 
-Most commands exit 0 on success and non-zero when they fail to run. Two
-commands use the exit code to carry a *verdict*, so they can be used in scripts
-and CI:
+Every command reports through the same five codes (`src/cli/exit-codes.ts`).
+Commands return a code; `src/cli/index.ts` is the only place that assigns
+`process.exitCode`.
 
-| Command | 0 | 1 | 2 |
+| Code | Meaning |
+|---|---|
+| `0` | Healthy, or the command did what was asked |
+| `1` | Ran fine, the answer is bad news — an unhealthy target, a service down, a validation failure |
+| `2` | Called wrong — unknown command or flag, a flag missing its value, a malformed flag value, an unreadable file or `--config`, a missing required subcommand |
+| `3` | Nothing could be checked: every finding came back `unknown`. Not a clean bill of health — CrisisMode was blind, not reassured |
+| `70` | Unexpected internal failure (sysexits `EX_SOFTWARE`), so a script can tell "your infra is broken" from "this tool is broken" |
+
+**Nothing to check → 0. Tried to check and couldn't → 3.** Code 3 reports a
+failure to observe, never an absence of things to observe.
+
+The health-carrying commands:
+
+| Command | 0 | 1 | 3 |
 |---|---|---|---|
+| `scan` (and bare `crisismode`) | zero findings, or at least one healthy and none bad | any finding unhealthy or recovering | one or more findings, all `unknown` |
+| `diagnose` | target healthy | target unhealthy or recovering | target health `unknown`, or a plugin produced no diagnosis |
+| `status` | every configured target reachable | any configured target not listening | — (a TCP probe either connected or did not) |
+| `readiness` | verdict `ready` | verdict `at-risk` or `not-ready` | verdict `unknown` — no rule could be evaluated |
 | `triage` | verdict is `healthy` or `remote` | verdict is `local`, `network`, or `mixed` | — |
-| `down` | nothing checked looks like a problem | at least one service does | the command was called wrong (unrecognized flag) — the only CrisisMode command that does this |
+| `down` | nothing checked looks like a problem, including "no services configured" | at least one service does | — |
+
+`triage` and `down` keep a fixed 0/1/2 contract: they are the two commands
+whose exit code was documented as a verdict before the rest of the CLI had
+one, and scripts depend on the narrower range.
+
+`recover` returns 0 when the flow completes. In its default dry-run mode
+nothing has been changed yet, so a health-derived code would report failure
+for a successful preview.
+
+A script that only asks "is it safe to proceed" should test `-eq 0`. One that
+wants to distinguish "broken" from "blind" gets `1` and `3` separately.
 
 ## Output modes
 

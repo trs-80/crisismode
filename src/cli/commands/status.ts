@@ -15,10 +15,12 @@ import type { HealthStatus } from '../../types/health.js';
 
 /**
  * A probe result -> the HealthStatus the exit code is derived from, so
- * `status` speaks the same status vocabulary as `scan`/`diagnose` instead of
- * inventing a second up/down exit table. Raw detection (no config) can only
- * report what it found, so an undetected service there is `unknown`
- * ("nothing listening that we know to look for"), not `unhealthy`.
+ * `status` reuses `severityExitCode` rather than inventing a second up/down
+ * exit table.
+ *
+ * The mapping is binary on purpose: a TCP probe either connected or it did
+ * not, so there is no `unknown` case here and `status` never reports
+ * INDETERMINATE (3). See the exit-code matrix in CLAUDE.md.
  */
 function probeStatus(isUp: boolean): HealthStatus {
   return isUp ? 'healthy' : 'unhealthy';

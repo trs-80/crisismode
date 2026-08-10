@@ -129,6 +129,13 @@ export const READINESS_VERDICT_EXIT_CODE: Record<ReadinessReport['verdict'], Exi
   'not-ready': ExitCode.UNHEALTHY,
 };
 
+/**
+ * The Record above is exhaustive, so the fallback is unreachable today. It
+ * defaults to INDETERMINATE rather than OK deliberately: if the verdict union
+ * ever grows, a code CrisisMode has no mapping for means it does not know how
+ * the run went, and reporting success for that is a fail-open default inside
+ * the exit-code layer itself — the one place it is least likely to be noticed.
+ */
 export function readinessExitCode(verdict: ReadinessReport['verdict']): ExitCode {
-  return READINESS_VERDICT_EXIT_CODE[verdict] ?? ExitCode.OK;
+  return READINESS_VERDICT_EXIT_CODE[verdict] ?? ExitCode.INDETERMINATE;
 }

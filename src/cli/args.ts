@@ -313,9 +313,11 @@ export function parseCli(argv: readonly string[]): ParseResult {
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    return usage(
-      `${detail}` +
-      `\nRun \`crisismode ${command ?? ''} --help\`.`.replace('  ', ' '),
-    );
+    // Build the hint from `command` directly rather than interpolating a
+    // possibly-undefined value and then patching the double space out.
+    const hint = command === undefined
+      ? 'Run `crisismode --help`.'
+      : `Run \`crisismode ${command} --help\`.`;
+    return usage(`${detail}\n${hint}`);
   }
 }

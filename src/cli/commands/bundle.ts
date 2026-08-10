@@ -110,7 +110,19 @@ async function loadBundle(path: string | undefined): Promise<unknown> {
     );
   }
   const text = path === '-' ? await readStdin() : await readFile(path, 'utf-8');
-  return JSON.parse(text);
+  const parsed: unknown = JSON.parse(text);
+  // Valid JSON that is not an object (a bare string, number, null, or an
+  // array) is bad user input, but it would reach ingestEvidenceBundle and
+  // could surface as a TypeError on a property access — which
+  // isProgrammingFault would then rethrow as INTERNAL (70), blaming
+  // CrisisMode for the user's file. Reject the shape here so it stays
+  // UNHEALTHY.
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(
+      `Evidence bundle must be a JSON object, got ${Array.isArray(parsed) ? 'an array' : parsed === null ? 'null' : typeof parsed}`,
+    );
+  }
+  return parsed;
 }
 
 async function readStdin(): Promise<string> {

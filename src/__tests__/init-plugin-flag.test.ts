@@ -14,13 +14,11 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { runInit } from '../cli/commands/init.js';
+import { CliUsageError } from '../cli/exit-codes.js';
 import { parseCli } from '../cli/args.js';
 import { HELP } from '../cli/run.js';
 import { configure } from '../cli/output.js';
 
-// Routing and the help text moved from index.ts to run.ts when the
-// exit-code contract was centralized; index.ts is now the process boundary.
-const RUN_SOURCE = readFileSync(fileURLToPath(new URL('../cli/run.ts', import.meta.url)), 'utf-8');
 const SCAN_SOURCE = readFileSync(
   fileURLToPath(new URL('../cli/commands/scan.ts', import.meta.url)),
   'utf-8',
@@ -113,6 +111,38 @@ describe('crisismode init — plugin scaffolding flags', () => {
 
     expect(existsSync(pluginFiles('same').manifest)).toBe(true);
     expect(stderr.join('')).toContain('--agent is deprecated');
+  });
+
+  /**
+   * Running `init` twice, or scaffolding a plugin whose directory exists, is
+   * a user mistake — they ran the command again. Both threw a generic Error,
+   * which runCliSafely classifies as INTERNAL (70, EX_SOFTWARE): it told the
+   * operator CrisisMode was broken. Verified on the bundle before the fix:
+   *
+   *   $ crisismode init && crisismode init
+   *   first  -> EXIT=0
+   *   second -> EXIT=70   Error: File already exists: ...
+   */
+  it('rejects an existing crisismode.yaml as a usage error, not an internal one', async () => {
+    await runInit();
+    await expect(runInit()).rejects.toBeInstanceOf(CliUsageError);
+    await expect(runInit()).rejects.toThrow(/File already exists/);
+  });
+
+  it('rejects an existing plugin directory as a usage error, not an internal one', async () => {
+    await runInit(undefined, { plugin: 'twice' });
+    await expect(runInit(undefined, { plugin: 'twice' })).rejects.toBeInstanceOf(CliUsageError);
+    await expect(runInit(undefined, { plugin: 'twice' })).rejects.toThrow(/Directory already exists/);
+  });
+
+  it('emits no blank lines in machine mode — init output must not break JSONL', async () => {
+    const logs: string[] = [];
+    configure({ json: true, noColor: true });
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => { logs.push(a.map(String).join(' ')); });
+    await runInit();
+    spy.mockRestore();
+    configure({ json: false, noColor: true, mode: 'human' });
+    expect(logs.filter((l) => l.trim() === '')).toEqual([]);
   });
 
   it('rejects a valueless --plugin with a usage error instead of scaffolding', async () => {
@@ -231,10 +261,10 @@ describe('crisismode init — CLI flag registration', () => {
     if (parsed.kind === 'usage') expect(parsed.message).toContain('--plugin');
   });
 
-  it('forwards both flags from the init route to runInit', () => {
-    expect(RUN_SOURCE).toContain('plugin: values.plugin');
-    expect(RUN_SOURCE).toContain('agent: values.agent');
-  });
+  // Forwarding from the init route to runInit is asserted behaviourally in
+  // cli-run-routing.test.ts ("forwards both --plugin and its deprecated
+  // --agent alias to init"), with runInit mocked. The source-text assertions
+  // that used to live here only proved run.ts contains certain characters.
 });
 
 describe('crisismode init — documented surface matches the real one', () => {

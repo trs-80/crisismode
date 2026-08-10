@@ -89,6 +89,12 @@ vi.mock('../mcp/server.js', () => ({ startMcpServer }));
 
 const { runCli, runCliSafely } = await import('../cli/run.js');
 
+/** Handlers that return an ExitCode; mockReset() clears their implementation. */
+const CODE_RETURNING_HANDLERS: Record<string, ReturnType<typeof vi.fn>> = {
+  runDiagnose, runStatus, runTriageCommand, runDownCommand, runReadinessCommand,
+  runInit, runRegistry, runPlaybook, runAgent, runBundle, runCompletions,
+};
+
 const ALL_HANDLERS: Record<string, ReturnType<typeof vi.fn>> = {
   runScan, runDiagnose, runRecover, runStatus, runTriageCommand, runDownCommand,
   runReadinessCommand, runInit, runDemoCommand, runWebhookCommand, runAsk,
@@ -97,7 +103,14 @@ const ALL_HANDLERS: Record<string, ReturnType<typeof vi.fn>> = {
 };
 
 beforeEach(() => {
-  for (const fn of Object.values(ALL_HANDLERS)) fn.mockClear();
+  // mockReset, not mockClear: mockClear only wipes call history, so a
+  // one-off mockResolvedValue from a previous test leaked into the next one
+  // and each test's isolation depended on ordering.
+  for (const fn of Object.values(ALL_HANDLERS)) fn.mockReset();
+  for (const [name, fn] of Object.entries(CODE_RETURNING_HANDLERS)) {
+    void name;
+    fn.mockResolvedValue(ExitCode.OK);
+  }
   runScan.mockResolvedValue({ findings: [] });
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -170,9 +183,20 @@ describe('runCli — options reach the handler', () => {
     expect(runWatch).toHaveBeenCalledWith(expect.objectContaining({ intervalMs: 60_000 }));
   });
 
-  it('omits intervalMs entirely when --interval is not given', async () => {
+  it('passes no interval value when --interval is not given, so watch uses its default', async () => {
     await runCli(['watch']);
-    expect(runWatch).toHaveBeenCalledWith(expect.objectContaining({ intervalMs: undefined }));
+    const call = runWatch.mock.calls[0] as unknown[] | undefined;
+    expect(call).toBeDefined();
+    const opts = (call ?? [])[0] as Record<string, unknown>;
+    // `objectContaining({ intervalMs: undefined })` was the weaker assertion
+    // this replaces: it passes whether the key is absent or present-and-
+    // undefined. The contract that actually matters is that no *number*
+    // reaches runWatch, so its DEFAULT_INTERVAL_MS applies. The key itself is
+    // present by design — WatchOptions declares `intervalMs?: number |
+    // undefined`, exactOptionalPropertyTypes is off, and run.ts passes
+    // configPath/targetName the same way.
+    expect(opts.intervalMs).toBeUndefined();
+    expect(typeof opts.intervalMs).not.toBe('number');
   });
 });
 
@@ -238,6 +262,19 @@ describe('runCliSafely — a CrisisModeError is the user\'s problem, not a crash
   it('hands down only positionals — never raw flags (its private re-parser is gone)', async () => {
     await runCli(['down', 'stripe', 'github', '--json']);
     expect(runDownCommand).toHaveBeenCalledWith(['stripe', 'github'], expect.anything());
+  });
+
+  it('forwards both --plugin and its deprecated --agent alias to init', async () => {
+    await runCli(['init', '--plugin', 'my-check', '--agent', 'legacy']);
+    expect(runInit).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ plugin: 'my-check', agent: 'legacy' }),
+    );
+  });
+
+  it('forwards an init output path positionally', async () => {
+    await runCli(['init', 'other.yaml']);
+    expect(runInit).toHaveBeenCalledWith('other.yaml', expect.anything());
   });
 
   it('splits a subcommand off the positionals for registry/playbook/agent/bundle', async () => {
@@ -306,7 +343,7 @@ describe('runCli — a handler\'s returned code is passed through unchanged', ()
   ] as const)('%s returning UNHEALTHY exits 1', async (_name, handler, argv) => {
     handler.mockResolvedValue(ExitCode.UNHEALTHY);
     expect(await runCli(argv as unknown as string[])).toBe(ExitCode.UNHEALTHY);
-    handler.mockResolvedValue(ExitCode.OK);
+    // No manual restore — beforeEach resets implementations.
   });
 
   it.each([
@@ -524,6 +561,5 @@ describe('runCli never writes process.exitCode — index.ts is the only place th
     await runCli(argv as string[]);
     err.mockRestore();
     expect(process.exitCode).toBe(before);
-    runDownCommand.mockResolvedValue(ExitCode.OK);
   });
 });
