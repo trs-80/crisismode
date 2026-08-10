@@ -20,26 +20,35 @@ import type * as RuntimeModule from '../cli/runtime.js';
 import type * as NetworkProfileModule from '../framework/network-profile.js';
 import type * as CheckPluginModule from '../framework/check-plugin.js';
 
-const loadConfigWithLocalTargets = vi.fn();
+// vi.hoisted — see the note in cli-router-default-arm.test.ts.
+const {
+  loadConfigWithLocalTargets, probeNetwork, createForTarget, createFirst,
+  discoverCheckPlugins, dispatchPluginExecution,
+} = vi.hoisted(() => ({
+  loadConfigWithLocalTargets: vi.fn(),
+  probeNetwork: vi.fn(async () => ({
+    mode: 'full',
+    internet: { status: 'available', probes: [] },
+    hub: { status: 'unknown' },
+    dns: { available: true, latencyMs: 5 },
+    targets: { status: 'available', probes: [] },
+  })),
+  createForTarget: vi.fn(),
+  createFirst: vi.fn(),
+  discoverCheckPlugins: vi.fn(async () => ({ plugins: [] as unknown[] })),
+  dispatchPluginExecution: vi.fn(),
+}));
+
 vi.mock('../cli/runtime.js', async (importOriginal) => {
   const actual = await importOriginal<typeof RuntimeModule>();
   return { ...actual, loadConfigWithLocalTargets };
 });
 
-const probeNetwork = vi.fn(async () => ({
-  mode: 'full',
-  internet: { status: 'available', probes: [] },
-  hub: { status: 'unknown' },
-  dns: { available: true, latencyMs: 5 },
-  targets: { status: 'available', probes: [] },
-}));
 vi.mock('../framework/network-profile.js', async (importOriginal) => {
   const actual = await importOriginal<typeof NetworkProfileModule>();
   return { ...actual, probeNetwork };
 });
 
-const createForTarget = vi.fn();
-const createFirst = vi.fn();
 class FakeAgentRegistry {
   createForTarget = createForTarget;
   createFirst = createFirst;
@@ -47,8 +56,6 @@ class FakeAgentRegistry {
 }
 vi.mock('../config/agent-registry.js', () => ({ AgentRegistry: FakeAgentRegistry }));
 
-const discoverCheckPlugins = vi.fn(async () => ({ plugins: [] as unknown[] }));
-const dispatchPluginExecution = vi.fn();
 vi.mock('../framework/check-discovery.js', () => ({ discoverCheckPlugins }));
 vi.mock('../framework/check-plugin.js', async (importOriginal) => {
   const actual = await importOriginal<typeof CheckPluginModule>();

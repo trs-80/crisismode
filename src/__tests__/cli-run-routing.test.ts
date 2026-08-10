@@ -22,25 +22,51 @@ import { ExitCode, CliUsageError } from '../cli/exit-codes.js';
 import { ConfigNotFoundError, ConfigValidationError } from '../config/loader.js';
 import type { HealthStatus } from '../types/health.js';
 
-const runScan = vi.fn(async () => ({ findings: [] as Array<{ status: HealthStatus }> }));
-const runDiagnose = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runRecover = vi.fn(async () => undefined);
-const runStatus = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runTriageCommand = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runDownCommand = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runReadinessCommand = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runInit = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runDemoCommand = vi.fn(async () => undefined);
-const runWebhookCommand = vi.fn(async () => undefined);
-const runAsk = vi.fn(async () => undefined);
-const runAskRepl = vi.fn(async () => undefined);
-const runWatch = vi.fn(async () => undefined);
-const runRegistry = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runPlaybook = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runAgent = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runBundle = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const runCompletions = vi.fn(async (): Promise<ExitCode> => ExitCode.OK);
-const startMcpServer = vi.fn(async () => undefined);
+// vi.hoisted: `vi.mock` is hoisted above plain module-scope `const`
+// declarations, so a factory closing over one only works while the factory
+// happens to be evaluated lazily. vi.hoisted runs before static imports are
+// evaluated, which is the documented way to make these safely available.
+const {
+  runScan,
+  runDiagnose,
+  runRecover,
+  runStatus,
+  runTriageCommand,
+  runDownCommand,
+  runReadinessCommand,
+  runInit,
+  runDemoCommand,
+  runWebhookCommand,
+  runAsk,
+  runAskRepl,
+  runWatch,
+  runRegistry,
+  runPlaybook,
+  runAgent,
+  runBundle,
+  runCompletions,
+  startMcpServer,
+} = vi.hoisted(() => ({
+  runScan: vi.fn(async () => ({ findings: [] as Array<{ status: HealthStatus }> })),
+  runDiagnose: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runRecover: vi.fn(async () => undefined),
+  runStatus: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runTriageCommand: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runDownCommand: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runReadinessCommand: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runInit: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runDemoCommand: vi.fn(async () => undefined),
+  runWebhookCommand: vi.fn(async () => undefined),
+  runAsk: vi.fn(async () => undefined),
+  runAskRepl: vi.fn(async () => undefined),
+  runWatch: vi.fn(async () => undefined),
+  runRegistry: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runPlaybook: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runAgent: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runBundle: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  runCompletions: vi.fn(async (): Promise<ExitCode> => ExitCode.OK),
+  startMcpServer: vi.fn(async () => undefined),
+}));
 
 vi.mock('../cli/commands/scan.js', () => ({ runScan }));
 vi.mock('../cli/commands/diagnose.js', () => ({ runDiagnose }));
