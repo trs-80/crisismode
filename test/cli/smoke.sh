@@ -50,11 +50,61 @@ assert_exit_ok() {
   fi
 }
 
-# Assert stdout contains a string
+# Assert an exact exit code.
+#
+# Every negative case below uses this. Before it existed this suite only ever
+# asserted success: `assert_no_crash` merely greps for stack traces, so
+# `crisismode notacommand` could exit 0 and still pass.
+#
+# The contract (src/cli/exit-codes.ts):
+#   0   healthy / the command did what was asked
+#   1   ran fine, the answer is bad news (unhealthy target, service down)
+#   2   called wrong (unknown command/flag, missing flag value, bad config)
+#   70  unexpected internal failure
+assert_exit_code() {
+  local name="$1"
+  local expected="$2"
+  if [ "$CMD_EXIT" -eq "$expected" ]; then
+    pass "$name"
+  else
+    fail "$name" "expected exit $expected, got $CMD_EXIT"
+  fi
+}
+
+# Assert the exit code is one of a set — for commands whose code depends on
+# what they find on this machine (scan, triage, down). The point is that it
+# is never 2 (usage) or 70 (internal).
+assert_exit_one_of() {
+  local name="$1"
+  shift
+  local code
+  for code in "$@"; do
+    if [ "$CMD_EXIT" -eq "$code" ]; then
+      pass "$name"
+      return
+    fi
+  done
+  fail "$name" "expected one of [$*], got $CMD_EXIT"
+}
+
+# Assert stderr contains a string
+assert_stderr_contains() {
+  local name="$1"
+  local needle="$2"
+  if echo "$CMD_ERR" | grep -qF -- "$needle"; then
+    pass "$name"
+  else
+    fail "$name" "stderr missing '$needle'"
+  fi
+}
+
+# Assert stdout contains a string.
+# `--` before the pattern: half the needles here are flag names like
+# "--notaflag", which grep would otherwise try to interpret as its own option.
 assert_contains() {
   local name="$1"
   local needle="$2"
-  if echo "$CMD_OUT" | grep -qF "$needle"; then
+  if echo "$CMD_OUT" | grep -qF -- "$needle"; then
     pass "$name"
   else
     fail "$name" "output missing '$needle'"
@@ -65,7 +115,7 @@ assert_contains() {
 assert_not_contains() {
   local name="$1"
   local needle="$2"
-  if echo "$CMD_OUT" | grep -qF "$needle"; then
+  if echo "$CMD_OUT" | grep -qF -- "$needle"; then
     fail "$name" "output contains '$needle'"
   else
     pass "$name"
@@ -119,8 +169,12 @@ echo ""
 
 echo "── Scan (pipe mode) ──"
 
+# scan's exit code now reflects what it found: 0 when everything checked is
+# healthy/unknown, 1 when anything is unhealthy or recovering. Which one
+# depends on this machine, so assert only that it is a health verdict and
+# never a usage (2) or internal (70) failure.
 run_cli "scan"
-assert_exit_ok "scan exits cleanly"
+assert_exit_one_of "scan exits 0 or 1 (health verdict), never 2 or 70" 0 1
 assert_no_crash "scan has no crashes"
 
 # Pipe mode outputs tab-separated lines: "finding\tID\tService\tStatus\t..."
@@ -159,8 +213,29 @@ echo ""
 echo "── Scan (JSON output) ──"
 
 run_cli "scan --json"
-assert_exit_ok "scan --json exits cleanly"
+assert_exit_one_of "scan --json exits 0 or 1 (health verdict)" 0 1
 assert_no_crash "scan --json has no crashes"
+
+# Every line must be a standalone JSON object (JSONL) — a stray blank line
+# breaks strict consumers.
+JSONL_CHECK=$(printf '%s' "$CMD_OUT" | node -e "
+let d='';
+process.stdin.on('data',c=>d+=c);
+process.stdin.on('end',()=>{
+  const lines=d.split('\n');
+  const bad=[];
+  lines.forEach((l,i)=>{
+    if(l==='' && i===lines.length-1) return;
+    if(l.trim()==='') { bad.push('blank line at '+(i+1)); return; }
+    try { JSON.parse(l); } catch(e) { bad.push('line '+(i+1)+': '+e.message); }
+  });
+  console.log(bad.length?bad.join('; '):'ok');
+})" 2>/dev/null || echo "node error")
+if [ "$JSONL_CHECK" = "ok" ]; then
+  pass "scan --json is strict JSONL (no blank or non-JSON lines)"
+else
+  fail "scan --json is strict JSONL" "$JSONL_CHECK"
+fi
 
 # JSON mode outputs JSONL — one JSON object per line.
 # The scan result line has "type":"scan"
@@ -178,9 +253,11 @@ else
   echo "  (skipped — no JSON scan result)"
   echo ""
   echo "── Error handling ──"
-  run_cli "notacommand" || true
+  run_cli "notacommand"
+  assert_exit_code "unknown command exits 2 (usage)" 2
   assert_no_crash "unknown command has no crashes"
-  run_cli "scan --notaflag" || true
+  run_cli "scan --notaflag"
+  assert_exit_code "unknown flag exits 2 (usage)" 2
   assert_no_crash "invalid flag has no crashes"
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -265,7 +342,7 @@ if [ -n "$FIRST_PLUG" ]; then
 
   # Run diagnose with that ID and verify it references the correct plugin
   run_cli "diagnose $PLUG_ID"
-  assert_exit_ok "diagnose $PLUG_ID exits cleanly"
+  assert_exit_one_of "diagnose $PLUG_ID exits 0 or 1 (health verdict)" 0 1
   assert_no_crash "diagnose $PLUG_ID has no crashes"
   assert_contains "diagnose $PLUG_ID routes to correct plugin" "$PLUG_NAME"
 else
@@ -284,7 +361,14 @@ process.stdin.on('end',()=>{
 })" 2>/dev/null || echo "")
 
 if [ -n "$FIRST_AGENT" ]; then
-  run_cli "diagnose $FIRST_AGENT" || true
+  # Only PLUG-* finding IDs are routable as a `diagnose` argument; an agent
+  # finding ID (PG-001, ...) is matched against *target names* and resolves
+  # to nothing — see the note in src/cli/incident-summary.ts. That is a
+  # usage error (2), not a health verdict. It used to be a bare `exit 1`
+  # from the top-level catch, indistinguishable from "the database is down".
+  run_cli "diagnose $FIRST_AGENT"
+  assert_exit_code "diagnose $FIRST_AGENT (unroutable finding ID) exits 2 (usage)" 2
+  assert_stderr_contains "diagnose $FIRST_AGENT names the unknown target" "$FIRST_AGENT"
   assert_no_crash "diagnose $FIRST_AGENT (agent) has no crashes"
 fi
 
@@ -331,15 +415,97 @@ echo ""
 # 6. Error handling
 # ══════════════════════════════════════════
 
-echo "── Error handling ──"
+echo "── Error handling (exit-code contract) ──"
 
-# Unknown command should not crash
-run_cli "notacommand" || true
+# NOTE: `|| true` used to be appended to these invocations. It was dead code —
+# run_cli already traps the status into CMD_EXIT, so the `||` branch can
+# never fire — and it advertised an intent (tolerate failure) that hid the
+# fact that nothing here checked the exit code at all.
+
+# Unknown command: names the offending token and exits 2.
+run_cli "notacommand"
+assert_exit_code "unknown command exits 2 (usage)" 2
+assert_stderr_contains "unknown command names the token" "notacommand"
 assert_no_crash "unknown command has no crashes"
 
+# A near miss suggests the real command.
+run_cli "diagnos"
+assert_exit_code "near-miss command exits 2 (usage)" 2
+assert_stderr_contains "near-miss command suggests 'diagnose'" "diagnose"
+
+# Unknown flag: rejected rather than silently accepted.
+run_cli "scan --notaflag"
+assert_exit_code "unknown flag exits 2 (usage)" 2
+assert_stderr_contains "unknown flag names the flag" "--notaflag"
+
+# A flag scoped to a different command is a usage error too.
+run_cli "diagnose --category redis"
+assert_exit_code "flag from another command exits 2 (usage)" 2
+
+# A value-taking flag with a missing (or flag-like) value.
+run_cli "--config"
+assert_exit_code "bare --config exits 2 (usage)" 2
+assert_stderr_contains "bare --config names --config" "--config"
+
+# Missing required subcommand. `down --bogusflag` has always exited 2; these
+# were 1 for exactly the same class of mistake.
+for SUB in agent playbook registry bundle completions; do
+  run_cli "$SUB"
+  assert_exit_code "$SUB with no subcommand exits 2 (usage)" 2
+done
+
+# A config file that does not exist is the user calling it wrong.
+run_cli "scan --config /nonexistent/crisismode.yaml"
+assert_exit_code "missing --config file exits 2 (usage)" 2
+
 # Invalid diagnose target should not crash
-run_cli "diagnose PLUG-999" || true
+run_cli "diagnose PLUG-999"
 assert_no_crash "diagnose nonexistent PLUG-999 has no crashes"
+
+echo ""
+
+# ══════════════════════════════════════════
+# 6b. A global flag placed before the subcommand
+# ══════════════════════════════════════════
+
+echo "── Global flag before the subcommand ──"
+
+# These used to run `scan` and exit 0, silently ignoring the command asked for.
+run_cli "--verbose completions bash"
+assert_exit_ok "--verbose completions bash exits cleanly"
+assert_contains "--verbose completions bash runs completions, not scan" "_crisismode_completions"
+assert_not_contains "--verbose completions bash produced no scan output" "finding"
+
+run_cli "--json completions fish"
+assert_contains "--json completions fish runs completions, not scan" "complete -c crisismode"
+
+echo ""
+
+# ══════════════════════════════════════════
+# 6c. Documented contracts this suite never checked
+# ══════════════════════════════════════════
+
+echo "── triage / down contracts ──"
+
+# triage: 1 on local/network/mixed, 0 on healthy/remote. Which one depends on
+# this machine's network; never 2 or 70.
+run_cli "triage"
+assert_exit_one_of "triage exits 0 or 1 (verdict-dependent), never 2" 0 1
+assert_no_crash "triage has no crashes"
+
+# down: 2 on bad usage — the one command that already got this right, and the
+# contract CLAUDE.md documents. Unchanged by the exit-code centralization.
+run_cli "down --bogusflag"
+assert_exit_code "down --bogusflag exits 2 (usage)" 2
+assert_stderr_contains "down --bogusflag names the flag" "--bogusflag"
+
+run_cli "down 'http://api.foo.com/path'"
+assert_exit_code "down with a malformed service arg exits 2 (usage)" 2
+assert_stderr_contains "down names the malformed arg" "http://api.foo.com/path"
+
+# Bare `down` reads the config's services: list — 0 or 1, never a usage error.
+run_cli "down"
+assert_exit_one_of "bare down exits 0 or 1, never 2" 0 1
 
 echo ""
 
@@ -350,7 +516,7 @@ echo ""
 echo "── Output modes ──"
 
 run_cli "scan --no-color"
-assert_exit_ok "scan --no-color exits cleanly"
+assert_exit_one_of "scan --no-color exits 0 or 1 (health verdict)" 0 1
 # Check no ANSI escape sequences (ESC[...)
 if echo "$CMD_OUT" | grep -q $'\033\['; then
   fail "scan --no-color has no ANSI codes" "ANSI escape sequences found"

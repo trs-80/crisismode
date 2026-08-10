@@ -6,11 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   downExitCode,
-  parseDownArgs,
   renderDownHuman,
   renderDownPipeLine,
   runDownCommand,
 } from '../cli/commands/down.js';
+import { parseCli } from '../cli/args.js';
+import { runCli, HELP } from '../cli/run.js';
 import { configure, setOutputOptions } from '../cli/output.js';
 import { getProviderSpec } from '../agent/llm-provider/provider-table.js';
 import { ConfigValidationError } from '../config/loader.js';
@@ -81,20 +82,39 @@ describe('downExitCode', () => {
   });
 });
 
-describe('parseDownArgs', () => {
+/**
+ * `down`'s private re-parser (`parseDownArgs`) is deleted. It existed only
+ * because index.ts's global `parseArgs({ strict: false })` silently accepted
+ * any unrecognized flag, so `down` had to re-validate the raw argv itself —
+ * the fix applied at one call site instead of once, centrally.
+ *
+ * The same guarantees now come from `cli/args.ts` for every command, so the
+ * cases that used to be asserted against `parseDownArgs` are asserted
+ * against the shared parser, at the same `crisismode down ...` argv the user
+ * actually types.
+ */
+describe('down flag validation (now central, in cli/args.ts)', () => {
   it('collects positionals as service ids', () => {
-    const parsed = parseDownArgs(['stripe', 'github']);
-    expect(parsed).toEqual({ serviceIds: ['stripe', 'github'] });
+    const parsed = parseCli(['down', 'stripe', 'github']);
+    expect(parsed.kind).toBe('command');
+    if (parsed.kind !== 'command') return;
+    expect(parsed.command).toBe('down');
+    expect(parsed.positionals).toEqual(['stripe', 'github']);
   });
 
-  it('skips known flags, including --config and its value', () => {
-    const parsed = parseDownArgs(['stripe', '--json', '--config', '/tmp/x.yaml', '--terse']);
-    expect(parsed).toEqual({ serviceIds: ['stripe'] });
+  it('keeps known flags (and --config\'s value) out of the service ids', () => {
+    const parsed = parseCli(['down', 'stripe', '--json', '--config', '/tmp/x.yaml', '--terse']);
+    expect(parsed.kind).toBe('command');
+    if (parsed.kind !== 'command') return;
+    expect(parsed.positionals).toEqual(['stripe']);
+    expect(parsed.values.config).toBe('/tmp/x.yaml');
   });
 
-  it('reports the first unrecognized flag', () => {
-    const parsed = parseDownArgs(['stripe', '--bogus']);
-    expect(parsed).toEqual({ unknownFlag: '--bogus' });
+  it('reports the unrecognized flag', () => {
+    const parsed = parseCli(['down', 'stripe', '--bogus']);
+    expect(parsed.kind).toBe('usage');
+    if (parsed.kind !== 'usage') return;
+    expect(parsed.message).toContain('--bogus');
   });
 
   /**
@@ -104,19 +124,21 @@ describe('parseDownArgs', () => {
    * `--terse` as a literal config-file path ("Config file not found:
    * .../--terse"). Both are a missing/flag-like value, a usage error.
    */
-  it('reports a usage error for a bare --config with nothing after it', () => {
-    const parsed = parseDownArgs(['--config']);
-    expect(parsed).toEqual({ usageError: expect.stringContaining('--config') });
-  });
-
-  it('reports a usage error for --config immediately followed by another flag', () => {
-    const parsed = parseDownArgs(['--config', '--terse']);
-    expect(parsed).toEqual({ usageError: expect.stringContaining('--config') });
+  it.each([
+    [['down', '--config']],
+    [['down', '--config', '--terse']],
+  ])('%j is a usage error naming --config', (argv) => {
+    const parsed = parseCli(argv as string[]);
+    expect(parsed.kind).toBe('usage');
+    if (parsed.kind !== 'usage') return;
+    expect(parsed.message).toContain('--config');
   });
 
   it('still accepts a well-formed --config <path>', () => {
-    const parsed = parseDownArgs(['stripe', '--config', '/tmp/x.yaml']);
-    expect(parsed).toEqual({ serviceIds: ['stripe'] });
+    const parsed = parseCli(['down', 'stripe', '--config', '/tmp/x.yaml']);
+    expect(parsed.kind).toBe('command');
+    if (parsed.kind !== 'command') return;
+    expect(parsed.positionals).toEqual(['stripe']);
   });
 });
 
@@ -288,9 +310,9 @@ describe('runDownCommand', () => {
     expect(code).toBe(0);
   });
 
-  it('exits 2 on an unrecognized flag', async () => {
+  it('exits 2 on an unrecognized flag (rejected by the shared parser, before the command runs)', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const code = await runDownCommand(['stripe', '--bogus']);
+    const code = await runCli(['down', 'stripe', '--bogus']);
     errSpy.mockRestore();
     expect(code).toBe(2);
   });
@@ -344,7 +366,7 @@ describe('runDownCommand', () => {
    */
   it('exits 2 on a bare --config with nothing after it, naming --config', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const code = await runDownCommand(['--config']);
+    const code = await runCli(['down', '--config']);
     const errOut = errSpy.mock.calls.map((c) => c.join(' ')).join('\n');
     errSpy.mockRestore();
     expect(code).toBe(2);
@@ -353,7 +375,7 @@ describe('runDownCommand', () => {
 
   it('exits 2 on --config immediately followed by another flag, never treating the flag as a path', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const code = await runDownCommand(['--config', '--terse']);
+    const code = await runCli(['down', '--config', '--terse']);
     errSpy.mockRestore();
     expect(code).toBe(2);
   });
@@ -404,20 +426,26 @@ describe('runDownCommand', () => {
 });
 
 describe('CLI registration', () => {
-  const indexSource = readFileSync(fileURLToPath(new URL('../cli/index.ts', import.meta.url)), 'utf-8');
+  // Routing and the help text moved from index.ts to run.ts when the
+  // exit-code contract was centralized; index.ts is now the process boundary.
+  const runSource = readFileSync(fileURLToPath(new URL('../cli/run.ts', import.meta.url)), 'utf-8');
   const completionsSource = readFileSync(
     fileURLToPath(new URL('../cli/commands/completions.ts', import.meta.url)),
     'utf-8',
   );
 
   it('routes the down subcommand to runDownCommand', () => {
-    expect(indexSource).toContain("case 'down':");
-    expect(indexSource).toContain("await import('./commands/down.js')");
-    expect(indexSource).toContain('runDownCommand');
+    const parsed = parseCli(['down']);
+    expect(parsed.kind).toBe('command');
+    if (parsed.kind === 'command') expect(parsed.command).toBe('down');
+    expect(runSource).toContain("case 'down':");
+    expect(runSource).toContain("await import('./commands/down.js')");
+    expect(runSource).toContain('runDownCommand');
   });
 
   it('documents down and its exit codes in the help text', () => {
-    expect(indexSource).toContain('crisismode down');
+    expect(HELP).toContain('crisismode down');
+    expect(HELP).toContain('exit 0/1/2');
   });
 
   it('lists down alongside triage in the completion scripts', () => {

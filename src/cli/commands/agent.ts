@@ -13,6 +13,7 @@ import { builtinAgents } from '../../config/builtin-agents.js';
 import { discoverAgentPlugins } from '../../framework/registry/local.js';
 import type { DiscoveredAgentPlugin } from '../../framework/registry/types.js';
 import { printInfo, printError } from '../output.js';
+import { ExitCode } from '../exit-codes.js';
 import { agentMaturity, bestEffortHint } from '../../framework/agent-maturity.js';
 import type { AgentMaturity } from '../../framework/agent-maturity.js';
 
@@ -22,7 +23,7 @@ export interface AgentCommandOptions {
   json?: boolean;
 }
 
-export async function runAgent(opts: AgentCommandOptions): Promise<void> {
+export async function runAgent(opts: AgentCommandOptions): Promise<ExitCode> {
   switch (opts.subcommand) {
     case 'list':
       return runList(opts);
@@ -31,13 +32,13 @@ export async function runAgent(opts: AgentCommandOptions): Promise<void> {
     default:
       printError(`Unknown subcommand: ${opts.subcommand}`);
       console.error('Usage: crisismode agent list|info <name>');
-      process.exit(1);
+      return ExitCode.USAGE;
   }
 }
 
 // ── list ──
 
-async function runList(opts: AgentCommandOptions): Promise<void> {
+async function runList(opts: AgentCommandOptions): Promise<ExitCode> {
   const { plugins, warnings } = await discoverAgentPlugins();
 
   if (opts.json) {
@@ -63,7 +64,7 @@ async function runList(opts: AgentCommandOptions): Promise<void> {
       })),
     ];
     console.log(JSON.stringify(entries, null, 2));
-    return;
+    return ExitCode.OK;
   }
 
   const totalCount = builtinAgents.length + plugins.length;
@@ -117,15 +118,16 @@ async function runList(opts: AgentCommandOptions): Promise<void> {
       printError(`Warning: ${w.path} — ${w.reason}`);
     }
   }
+  return ExitCode.OK;
 }
 
 // ── info ──
 
-async function runInfo(opts: AgentCommandOptions): Promise<void> {
+async function runInfo(opts: AgentCommandOptions): Promise<ExitCode> {
   const name = opts.args[0];
   if (!name) {
     printError('Usage: crisismode agent info <name>');
-    process.exit(1);
+    return ExitCode.USAGE;
   }
 
   // Search builtin agents first
@@ -144,10 +146,10 @@ async function runInfo(opts: AgentCommandOptions): Promise<void> {
         tags: builtin.manifest.metadata.tags,
         license: builtin.manifest.metadata.license,
       }, null, 2));
-      return;
+      return ExitCode.OK;
     }
     printBuiltinInfo(builtin);
-    return;
+    return ExitCode.OK;
   }
 
   // Search discovered plugins
@@ -164,14 +166,16 @@ async function runInfo(opts: AgentCommandOptions): Promise<void> {
         pluginDir: plugin.pluginDir,
         source: plugin.source,
       }, null, 2));
-      return;
+      return ExitCode.OK;
     }
     printPluginInfo(plugin);
-    return;
+    return ExitCode.OK;
   }
 
+  // The name resolves to nothing — the invocation is wrong, not the
+  // infrastructure. Matches `down`'s 2-for-usage convention.
   printError(`Agent not found: ${name}`);
-  process.exit(1);
+  return ExitCode.USAGE;
 }
 
 // ── Helpers ──

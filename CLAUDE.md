@@ -70,10 +70,10 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 
 | Command | Description |
 |---|---|
-| `scan` | Zero-config health scan with scored summary (default when no command given) |
-| `diagnose` | Health check + AI-powered diagnosis (read-only) |
+| `scan` | Zero-config health scan with scored summary (default when no command given); exit 1 when anything is unhealthy/recovering |
+| `diagnose` | Health check + AI-powered diagnosis (read-only); exit 1 when the target is unhealthy/recovering |
 | `recover` | Full recovery flow with execution planning |
-| `status` | Quick health probe |
+| `status` | Quick health probe; exit 1 when a configured target is not listening |
 | `triage` | Offline localization: is the problem this machine, its network, or the remote services? (exit 1 on local/network/mixed) |
 | `down` | Is it down for everyone, or just me? Ad-hoc third-party service check (Stripe, GitHub, an LLM provider, ...); bare invocation uses the config's `services:` list (exit 0/1, 2 on bad usage) |
 | `ask` | Natural language AI diagnosis |
@@ -81,7 +81,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `init` | Generate `crisismode.yaml` configuration |
 | `webhook` | Start webhook receiver for AlertManager |
 | `watch` | Continuous shadow observation |
-| `readiness` | Scale-readiness report (read-only): will this stack break under load? |
+| `readiness` | Scale-readiness report (read-only): will this stack break under load? (exit 1 on at-risk/not-ready) |
 | `playbook validate` | Validate a playbook file |
 | `playbook list` | List discovered playbooks |
 | `playbook dry-run` | Preview compiled recovery plan |
@@ -100,6 +100,39 @@ Three output modes are supported:
 - **human** (default for TTY): colored, interactive, emoji severity indicators; plain-language explanations on by default (suppress with --terse)
 - **pipe** (auto-detected when stdout is not a TTY): plain text, no ANSI, tab-separated
 - **machine** (`--json`): structured JSON/JSONL with metadata
+
+### Exit Codes
+
+`src/cli/exit-codes.ts` is the single source of truth. Commands **return** an `ExitCode`; `src/cli/index.ts` is the only place that assigns `process.exitCode`. `process.exit()` is not used anywhere in `src/cli/**` — it truncates buffered stdout mid-write.
+
+| Code | Name | Meaning |
+|---|---|---|
+| 0 | `OK` | Healthy, or the command did what was asked |
+| 1 | `UNHEALTHY` | Ran correctly, the answer is bad news (unhealthy/recovering target, service down, validation failed) |
+| 2 | `USAGE` | Called wrong: unknown command or flag, flag missing its value, missing required subcommand, unknown target name, config file missing or invalid |
+| 70 | `INTERNAL` | Unexpected failure inside CrisisMode (sysexits `EX_SOFTWARE`) — distinct from 1 so a script can tell "your infra is broken" from "this tool is broken" |
+
+Per command:
+
+| Command | 0 | 1 | 2 |
+|---|---|---|---|
+| `scan` (and bare `crisismode`) | every finding `healthy`/`unknown` | any finding `unhealthy`/`recovering` | usage |
+| `diagnose` | target healthy | target `unhealthy`/`recovering` | usage; unknown target name or unroutable finding ID |
+| `status` | every configured target reachable | any configured target not listening | usage |
+| `readiness` | verdict `ready`/`unknown` | verdict `at-risk`/`not-ready` | usage |
+| `triage` | verdict `healthy`/`remote` | verdict `local`/`network`/`mixed` | usage |
+| `down` | no failure verdict | ≥1 failure verdict | usage |
+| `recover` | the flow completed (dry-run or execute) | — | usage |
+| `playbook validate` / `dry-run` | valid | fails safety validation | missing/unreadable path |
+| `agent`, `bundle`, `registry`, `completions`, `init`, `demo`, `webhook`, `ask`, `watch`, `mcp` | success | the requested work failed | usage |
+
+`unknown` is deliberately **not** a failure: it means "CrisisMode could not check this" (no agent registered for the kind, probe timed out), not "this is broken".
+
+`recover` returns 0 on completion rather than deriving from health: in its default dry-run mode nothing has been fixed yet, so a health-derived code would report failure for a successful preview. Wiring the real execution outcome means changing `runRecovery` in `src/live.ts`.
+
+### Argument Parsing
+
+`src/cli/args.ts` (`parseCli`) is the only parser. The subcommand is the **first positional that is neither a flag nor a flag's value** — so `crisismode --json diagnose` runs `diagnose`, not `scan`. The remainder is parsed with `strict: true` scoped to that subcommand's option set, so an unknown flag, a flag belonging to a different command, or a value-taking flag with a missing/flag-like value is a `USAGE` error naming the token (with the nearest valid command suggested for a near miss).
 
 ### Escalation Levels
 
@@ -200,7 +233,10 @@ These are enforced by the validator (`src/framework/validator.ts`).
 | `src/framework/service-status/` | Third-party service status checker — combines a provider's status page with a reachability probe into one verdict, never conflating the two; catalog of known services (`catalog.ts`) and Statuspage v2 parsing (`statuspage.ts`); consumed by `down`, the service-status agent, and triage enrichment |
 | `src/types/step-types.ts` | All 7 recovery step types |
 | `src/types/recovery-plan.ts` | RecoveryPlan structure |
-| `src/cli/index.ts` | Unified CLI entry point |
+| `src/cli/index.ts` | CLI process boundary — the one place `process.exitCode` is assigned |
+| `src/cli/run.ts` | CLI routing: argv in, `ExitCode` out (`runCli`), plus the help text |
+| `src/cli/args.ts` | The single argument parser — subcommand detection + per-command strict option sets |
+| `src/cli/exit-codes.ts` | `ExitCode` enum — single source of truth for the CLI's exit contract |
 | `src/cli/commands/` | CLI subcommands (scan, diagnose, recover, status, ask, demo, init, webhook, watch, readiness, triage, agent, playbook, bundle, registry, completions) |
 | `src/mcp/server.ts` | MCP server — 8 read-only diagnosis tools exposed via `crisismode mcp` |
 | `src/readiness/` | Scale-readiness rule registry + capacity ceilings/weak-link (readiness command + MCP tool) |

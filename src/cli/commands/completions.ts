@@ -10,6 +10,8 @@
  *   crisismode completions fish > ~/.config/fish/completions/crisismode.fish
  */
 
+import { ExitCode } from '../exit-codes.js';
+
 const BASH_COMPLETION = `
 _crisismode_completions() {
   local cur prev
@@ -296,7 +298,7 @@ const COMPLETION_SCRIPTS: Record<Shell, string> = {
   fish: FISH_COMPLETION,
 };
 
-export async function runCompletions(shell: string): Promise<void> {
+export async function runCompletions(shell: string): Promise<ExitCode> {
   if (!SHELLS.has(shell as Shell)) {
     process.stderr.write(`crisismode completions: unsupported shell "${shell}"\n`);
     process.stderr.write('Supported shells: bash, zsh, fish\n');
@@ -304,8 +306,9 @@ export async function runCompletions(shell: string): Promise<void> {
     process.stderr.write('  crisismode completions bash   # Bash\n');
     process.stderr.write('  crisismode completions zsh    # Zsh\n');
     process.stderr.write('  crisismode completions fish   # Fish\n');
-    process.exit(1);
+    return ExitCode.USAGE;
   }
 
   process.stdout.write(COMPLETION_SCRIPTS[shell as Shell]);
+  return ExitCode.OK;
 }

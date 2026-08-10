@@ -9,9 +9,11 @@
  */
 
 import chalk, { type ChalkInstance } from 'chalk';
+import { ExitCode } from './exit-codes.js';
 import type { HealthStatus, HealthSignalStatus } from '../types/health.js';
 import type { DiagnosisFinding } from '../types/diagnosis-result.js';
 import type { TriageVerdict } from '../framework/triage.js';
+import type { ReadinessReport } from '../readiness/types.js';
 
 export const HEALTH_STATUS_COLOR: Record<HealthStatus, ChalkInstance> = {
   healthy: chalk.green,
@@ -55,4 +57,52 @@ export const TRIAGE_VERDICT_COLOR: Record<TriageVerdict, ChalkInstance> = {
 
 export function triageVerdictColor(verdict: TriageVerdict): ChalkInstance {
   return TRIAGE_VERDICT_COLOR[verdict] ?? chalk.dim;
+}
+
+/**
+ * Exhaustive: a health status → the exit code a command reporting it must
+ * return. It lives here, next to the color/label maps, because it is the
+ * same kind of thing — one more presentation of a `HealthStatus`, for the
+ * one consumer that is a shell rather than a human — and because adding a
+ * status must fail compilation in every place a presentation is missing.
+ *
+ * `unknown` is deliberately OK: it means "CrisisMode could not check this"
+ * (no agent registered for the kind, a probe that timed out), not "this is
+ * broken". Exiting non-zero on it would make every `crisismode && deploy`
+ * chain fail for a service nobody asked CrisisMode to watch.
+ */
+export const HEALTH_STATUS_EXIT_CODE: Record<HealthStatus, ExitCode> = {
+  healthy: ExitCode.OK,
+  recovering: ExitCode.UNHEALTHY,
+  unhealthy: ExitCode.UNHEALTHY,
+  unknown: ExitCode.OK,
+};
+
+/**
+ * The exit code for a set of findings: OK unless something is actually
+ * wrong. Worst status wins.
+ */
+export function severityExitCode(statuses: Iterable<HealthStatus>): ExitCode {
+  for (const status of statuses) {
+    if (HEALTH_STATUS_EXIT_CODE[status] === ExitCode.UNHEALTHY) return ExitCode.UNHEALTHY;
+  }
+  return ExitCode.OK;
+}
+
+/**
+ * Exhaustive: readiness's own verdict vocabulary → the same contract.
+ * `at-risk` maps to UNHEALTHY for the same reason `recovering` does — the
+ * report is telling you something will break, and a CI gate asking "is this
+ * stack ready" wants that to fail. `unknown` (nothing could be evaluated)
+ * is OK, matching the health mapping above.
+ */
+export const READINESS_VERDICT_EXIT_CODE: Record<ReadinessReport['verdict'], ExitCode> = {
+  ready: ExitCode.OK,
+  unknown: ExitCode.OK,
+  'at-risk': ExitCode.UNHEALTHY,
+  'not-ready': ExitCode.UNHEALTHY,
+};
+
+export function readinessExitCode(verdict: ReadinessReport['verdict']): ExitCode {
+  return READINESS_VERDICT_EXIT_CODE[verdict] ?? ExitCode.OK;
 }

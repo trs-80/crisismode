@@ -9,6 +9,7 @@ import { writeFileSync, existsSync, mkdirSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { generateTemplate } from '../../config/init.js';
 import { printSuccess, printInfo } from '../output.js';
+import { CliUsageError, ExitCode } from '../exit-codes.js';
 import type { CheckPluginManifest } from '../../framework/check-plugin.js';
 
 export interface InitOptions {
@@ -36,10 +37,10 @@ function pluginNameFrom(flag: 'plugin' | 'agent', value: string | boolean | unde
   // error rather than silently falling through to writing crisismode.yaml.
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`--${flag} requires a plugin name, e.g. crisismode init --${flag} my-check`);
+    throw new CliUsageError(`--${flag} requires a plugin name, e.g. crisismode init --${flag} my-check`);
   }
   if (!PLUGIN_NAME_PATTERN.test(value)) {
-    throw new Error(
+    throw new CliUsageError(
       `Invalid plugin name "${value}". Use letters, digits, ".", "_", or "-" — the name becomes a directory under checks/.`,
     );
   }
@@ -55,7 +56,7 @@ function printDeprecation(msg: string): void {
   process.stderr.write(`  ! ${msg}\n`);
 }
 
-export async function runInit(outputPath?: string, options: InitOptions = {}): Promise<void> {
+export async function runInit(outputPath?: string, options: InitOptions = {}): Promise<ExitCode> {
   const plugin = pluginNameFrom('plugin', options.plugin);
   const agent = pluginNameFrom('agent', options.agent);
 
@@ -77,7 +78,7 @@ export async function runInit(outputPath?: string, options: InitOptions = {}): P
   const pluginName = plugin ?? agent;
   if (pluginName) {
     await scaffoldCheckPlugin(pluginName);
-    return;
+    return ExitCode.OK;
   }
 
   const targetPath = resolve(outputPath || 'crisismode.yaml');
@@ -93,6 +94,7 @@ export async function runInit(outputPath?: string, options: InitOptions = {}): P
   printInfo('  1. Edit crisismode.yaml with your infrastructure details');
   printInfo('  2. Set environment variables for credentials');
   printInfo('  3. Run: crisismode diagnose');
+  return ExitCode.OK;
 }
 
 async function scaffoldCheckPlugin(name: string): Promise<void> {

@@ -10,6 +10,8 @@ import { runReadiness } from '../../readiness/run.js';
 import { attachGuidesByRuleId } from '../../framework/guidance/attach.js';
 import { renderGuidesLines } from '../../framework/guidance/render.js';
 import { printBanner, printInfo, jsonOut, getOutputMode, outputOptions } from '../output.js';
+import { readinessExitCode } from '../status-presentation.js';
+import type { ExitCode } from '../exit-codes.js';
 import type { ReadinessReport } from '../../readiness/types.js';
 
 const STATUS_ICON: Record<string, string> = {
@@ -67,13 +69,16 @@ export function renderReadinessReport(
   return lines;
 }
 
-export async function runReadinessCommand(): Promise<void> {
+export async function runReadinessCommand(): Promise<ExitCode> {
   const raw = await runReadiness();
   const report: ReadinessReport = { ...raw, findings: raw.findings.map((f) => attachGuidesByRuleId(f)) };
   if (getOutputMode() === 'machine') {
     jsonOut('readiness', report);
-    return;
+    return readinessExitCode(report.verdict);
   }
   printBanner();
   for (const line of renderReadinessReport(report, { terse: outputOptions.terse })) printInfo(line);
+  // C8a: a report that says the stack will break under load exited 0, so it
+  // could not gate anything. at-risk/not-ready -> 1.
+  return readinessExitCode(report.verdict);
 }

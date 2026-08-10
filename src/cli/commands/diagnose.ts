@@ -19,8 +19,10 @@ import { platformsForTarget } from '../../framework/guidance/platforms.js';
 import type { DiscoveredPlugin } from '../../framework/check-discovery.js';
 import {
   printBanner, printHealthStatus, printDiagnosis, printOperatorSummary,
-  printInfo, printSuccess, printWarning, printNetworkProfile,
+  printInfo, printSuccess, printWarning, printError, printNetworkProfile,
 } from '../output.js';
+import { severityExitCode } from '../status-presentation.js';
+import { ExitCode } from '../exit-codes.js';
 import type { AgentContext } from '../../types/agent-context.js';
 import type { CheckDiagnoseResult } from '../../framework/check-plugin.js';
 import type { ExplanationContext } from '../../framework/signal-explanations.js';
@@ -30,7 +32,7 @@ export interface DiagnoseOptions {
   targetName?: string | undefined;
 }
 
-export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
+export async function runDiagnose(opts: DiagnoseOptions): Promise<ExitCode> {
   printBanner();
 
   const explanationCtx: ExplanationContext = {
@@ -41,8 +43,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
   if (opts.targetName) {
     const plugMatch = opts.targetName.match(/^PLUG-(\d+)$/i);
     if (plugMatch) {
-      await runPluginDiagnose(parseInt(plugMatch[1]!, 10) - 1);
-      return;
+      return runPluginDiagnose(parseInt(plugMatch[1]!, 10) - 1);
     }
   }
 
@@ -62,6 +63,18 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     ...(hubEndpoint !== undefined ? { hubEndpoint } : {}),
     targets: targetProbes,
   });
+
+  // A target name that matches nothing is the user naming something that
+  // does not exist — a usage error (2), the same class as an unknown flag.
+  // Checked here rather than letting AgentRegistry.createForTarget throw,
+  // because a throw is indistinguishable from a real connection failure and
+  // would surface as an internal error (70).
+  if (opts.targetName !== undefined && !config.targets.some((t) => t.name === opts.targetName)) {
+    printError(
+      `Target "${opts.targetName}" not found in config. Available: ${config.targets.map((t) => t.name).join(', ')}`,
+    );
+    return ExitCode.USAGE;
+  }
 
   const registry = new AgentRegistry(config);
   const { agent, backend, target } = opts.targetName
@@ -105,7 +118,7 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
         mode: 'dry-run',
         healthCheckOnly: true,
       }));
-      return;
+      return ExitCode.OK;
     }
 
     // Diagnosis (read-only)
@@ -134,19 +147,25 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<void> {
     } else if (health.status === 'recovering') {
       printInfo('Monitor progress: `crisismode watch`');
     }
+
+    // C8a: diagnose reported `unhealthy` and exited 0.
+    return severityExitCode([health.status]);
   } finally {
     await backend.close();
   }
 }
 
-async function runPluginDiagnose(pluginIndex: number): Promise<void> {
+async function runPluginDiagnose(pluginIndex: number): Promise<ExitCode> {
   const { plugins } = await discoverCheckPlugins();
   const diagPlugins = plugins.filter((p: DiscoveredPlugin) => p.manifest.verbs.includes('diagnose'));
 
   const plugin = diagPlugins[pluginIndex];
   if (!plugin) {
     printWarning(`No plugin found at index ${pluginIndex + 1}. Run \`crisismode scan\` to see available plugins.`);
-    return;
+    // Nothing was checked, so nothing is known to be broken — the ID the
+    // user passed does not resolve, which is a usage problem, not a
+    // health verdict.
+    return ExitCode.USAGE;
   }
 
   printInfo(`Plugin: ${plugin.manifest.name}`);
@@ -159,15 +178,19 @@ async function runPluginDiagnose(pluginIndex: number): Promise<void> {
   const result = execResult.result as CheckDiagnoseResult | null;
   if (!result) {
     printWarning(`Plugin exited with status: ${execResult.exitStatus}. No diagnosis output.`);
-    return;
+    return ExitCode.OK;
   }
 
+  let code: ExitCode;
   if (result.healthy) {
     printSuccess(`Healthy: ${result.summary}`);
+    code = ExitCode.OK;
   } else if (execResult.exitStatus === 'warning') {
     printWarning(`Recovering: ${result.summary}`);
+    code = severityExitCode(['recovering']);
   } else {
     printWarning(`Unhealthy: ${result.summary}`);
+    code = severityExitCode(['unhealthy']);
   }
 
   if ((result.findings ?? []).length > 0) {
@@ -187,4 +210,5 @@ async function runPluginDiagnose(pluginIndex: number): Promise<void> {
     if (docs.learnMoreUrl) printInfo(`Learn more: ${docs.learnMoreUrl}`);
   }
   console.log('');
+  return code;
 }
