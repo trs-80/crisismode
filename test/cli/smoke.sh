@@ -137,6 +137,12 @@ assert_strict_jsonl() {
 let d='';
 process.stdin.on('data',c=>d+=c);
 process.stdin.on('end',()=>{
+  // Empty output is a FAILURE, not a vacuous pass. Without this, a command
+  // that emitted nothing at all satisfied every JSONL assertion below —
+  // which is precisely how 'diagnose --json emits no output' was once
+  // reported as a known limitation when it was in fact emitting correctly.
+  // A --json surface asserted here must produce at least one record.
+  if(d===''){ console.log('no output at all (expected at least one JSON record)'); return; }
   const lines=d.split('\n');
   const bad=[];
   lines.forEach((l,i)=>{

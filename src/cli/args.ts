@@ -82,7 +82,10 @@ const COMMAND_OPTIONS = {
   init: ['plugin', 'agent'],
   demo: [],
   webhook: ['config', 'execute'],
-  ask: ['config'],
+  // No `config`: runAsk/runAskRepl never load a config file (they only need
+  // ANTHROPIC_API_KEY), so accepting --config would silently ignore it.
+  // Matches completions.ts, which advertises no flags for `ask`.
+  ask: [],
   watch: ['config', 'target', 'interval'],
   registry: ['local', 'force'],
   playbook: [],
