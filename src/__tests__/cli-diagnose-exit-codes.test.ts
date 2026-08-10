@@ -127,6 +127,27 @@ describe('runDiagnose — health verdict becomes the exit code', () => {
 });
 
 describe('runDiagnose — an unknown target name is a usage error, not an internal one', () => {
+  /**
+   * The validation used to sit *after* `probeNetwork(...)` was called, so a
+   * typo'd target name fired real network probes against every configured
+   * target before erroring. Under pressure a typo should fail in
+   * milliseconds, not after a network round-trip.
+   */
+  it('fails before any network probe is started', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runDiagnose({ targetName: 'PG-001' });
+    err.mockRestore();
+    expect(code).toBe(ExitCode.USAGE);
+    expect(probeNetwork).not.toHaveBeenCalled();
+    expect(FakeAgentRegistry.discoverVersion).not.toHaveBeenCalled();
+  });
+
+  it('still probes the network for a target that does exist', async () => {
+    createForTarget.mockResolvedValue(agentInstance('healthy'));
+    await runDiagnose({ targetName: 'main-pg' });
+    expect(probeNetwork).toHaveBeenCalled();
+  });
+
   it('returns USAGE and names the target plus the available ones', async () => {
     // printError writes to stderr, not stdout.
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});

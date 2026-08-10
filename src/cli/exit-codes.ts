@@ -10,8 +10,10 @@
  * 1, and `scan`/`diagnose`/`recover`/`status`/`readiness` never set an exit
  * code at all, so a scan of a dead database exited 0.
  *
- * Commands *return* one of these; `run.ts` is the only place that turns a
- * returned code into `process.exitCode`.
+ * Commands *return* one of these. `run.ts` routes argv to a command and
+ * returns its code; `index.ts` is the only place that turns a returned code
+ * into `process.exitCode`. Nothing in `src/cli/**` calls `process.exit()` —
+ * it truncates buffered stdout mid-write.
  */
 export const ExitCode = {
   /** Everything checked looks fine, or the command did what was asked. */
@@ -42,10 +44,10 @@ export type ExitCode = (typeof ExitCode)[keyof typeof ExitCode];
 /**
  * "You called this wrong" raised from somewhere that cannot return a code —
  * a helper several call sites deep, or argument validation inside a command.
- * `run.ts`'s error boundary maps it to `ExitCode.USAGE`; anything else that
- * escapes is `ExitCode.INTERNAL`. This is what lets a nested helper stop
- * calling `process.exit()` without inventing a return-code channel through
- * every caller.
+ * `runCliSafely`'s error boundary (in `run.ts`) maps it to
+ * `ExitCode.USAGE`; anything else that escapes is `ExitCode.INTERNAL`. This
+ * is what lets a nested helper stop calling `process.exit()` without
+ * inventing a return-code channel through every caller.
  */
 export class CliUsageError extends Error {
   override readonly name = 'CliUsageError';

@@ -80,7 +80,7 @@ The `crisismode` CLI (`src/cli/index.ts`) provides a unified interface with the 
 | `demo` | Simulator demo mode |
 | `init` | Generate `crisismode.yaml` configuration |
 | `webhook` | Start webhook receiver for AlertManager |
-| `watch` | Continuous shadow observation |
+| `watch` | Continuous shadow observation; `--interval <seconds>` must be a positive integer (no unit suffixes — exit 2) |
 | `readiness` | Scale-readiness report (read-only): will this stack break under load? (exit 1 on at-risk/not-ready) |
 | `playbook validate` | Validate a playbook file |
 | `playbook list` | List discovered playbooks |
@@ -109,7 +109,7 @@ Three output modes are supported:
 |---|---|---|
 | 0 | `OK` | Healthy, or the command did what was asked |
 | 1 | `UNHEALTHY` | Ran correctly, the answer is bad news (unhealthy/recovering target, service down, validation failed) |
-| 2 | `USAGE` | Called wrong: unknown command or flag, flag missing its value, missing required subcommand, unknown target name, config file missing or invalid |
+| 2 | `USAGE` | Called wrong: unknown command or flag, flag missing its value, a malformed flag value (e.g. `--interval abc`), missing required subcommand, unknown target name, unreadable file argument, config file missing or invalid, or any `CrisisModeError` (`src/cli/errors.ts` — the class carries a user-facing `suggestion`, e.g. "no config found", "`ANTHROPIC_API_KEY` not set") |
 | 70 | `INTERNAL` | Unexpected failure inside CrisisMode (sysexits `EX_SOFTWARE`) — distinct from 1 so a script can tell "your infra is broken" from "this tool is broken" |
 
 Per command:
@@ -137,6 +137,10 @@ The condition is cheaply detectable and *not* currently acted on. At the point t
 ### Argument Parsing
 
 `src/cli/args.ts` (`parseCli`) is the only parser. The subcommand is the **first positional that is neither a flag nor a flag's value** — so `crisismode --json diagnose` runs `diagnose`, not `scan`. The remainder is parsed with `strict: true` scoped to that subcommand's option set, so an unknown flag, a flag belonging to a different command, or a value-taking flag with a missing/flag-like value is a `USAGE` error naming the token (with the nearest valid command suggested for a near miss).
+
+**Flag values are validated before the command runs.** `--interval <seconds>` (watch) requires a plain positive integer: `parseIntervalSeconds` rejects `abc`, `0`, `-5`, `1.5`, `1e3` and unit suffixes (`30s`, `1m`) with a `USAGE` error. Suffixes are rejected deliberately rather than parsed — the flag is documented in seconds, and the old `parseInt` made `--interval 1m` silently mean *one second* while `--interval abc` produced `NaN`, which survived `watch.ts`'s `?? DEFAULT_INTERVAL_MS` (`??` only falls back on null/undefined) and reached `setTimeout(fn, NaN)`, clamping to 1ms — a continuous scan loop against infrastructure that is already degraded. `runWatch` additionally floors any non-finite or non-positive `intervalMs` to the default, so no caller can reintroduce the hot loop.
+
+Any new numeric flag should go through the same validate-then-convert path in `run.ts` rather than an inline `parseInt`.
 
 ### Escalation Levels
 

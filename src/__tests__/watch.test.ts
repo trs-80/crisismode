@@ -234,6 +234,39 @@ describe('runWatch', () => {
     expect(vi.mocked(printInfo)).toHaveBeenCalledWith(expect.stringContaining('Total cycles'));
   });
 
+  /**
+   * Defence in depth for the `--interval` DoS. `intervalMs` is validated at
+   * the CLI boundary (cli/args.ts), but `opts.intervalMs ?? DEFAULT` does
+   * NOT protect this function from a bad value: `??` only falls back on
+   * null/undefined, so NaN, 0 and negatives passed straight through to
+   * `setTimeout`, which clamps them to 1ms — a continuous scan loop against
+   * infrastructure that is already degraded. It also printed "every NaNs" to
+   * the operator. Any caller (a test, a future embedder) must not be able to
+   * cause that.
+   */
+  it.each([
+    [NaN],
+    [0],
+    [-5000],
+    [Infinity],
+    [-Infinity],
+  ])('falls back to the default interval for a non-finite or non-positive intervalMs (%p)', async (intervalMs) => {
+    setupConfigSuccess();
+    const instance = makeAgentInstance('healthy');
+    const registry = new AgentRegistry({} as never);
+    vi.mocked(registry.createFirst).mockResolvedValue(instance as never);
+
+    await runWatch({ maxCycles: 1, intervalMs });
+
+    // The operator is told a real number of seconds, never "NaN"/"0"/"-5".
+    const observing = vi.mocked(printInfo).mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('observing'));
+    expect(observing).toBeDefined();
+    expect(observing).toContain('every 30s');
+    expect(observing).not.toMatch(/NaN|every 0s|every -/);
+  });
+
   it('uses targetName when provided', async () => {
     setupConfigSuccess();
     const instance = makeAgentInstance('healthy');

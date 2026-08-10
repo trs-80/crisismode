@@ -45,13 +45,34 @@ export async function runBundle(options: BundleOptions): Promise<ExitCode> {
 }
 
 /**
- * Report a failed bundle run. A missing/unreadable argument is a usage
- * error (2, matching `down`); a bundle that loaded but could not be
- * processed is a real failure of the requested work (1).
+ * Filesystem errno codes that mean "the path you named is not a readable
+ * file" — the user naming something that isn't there, not a processing
+ * failure. ENOTDIR covers `a/file/that/is/not/a/dir/x.json`.
+ */
+const UNREADABLE_PATH_CODES = new Set(['ENOENT', 'EACCES', 'EISDIR', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG']);
+
+function isUnreadablePath(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const code = (err as NodeJS.ErrnoException).code;
+  return code !== undefined && UNREADABLE_PATH_CODES.has(code);
+}
+
+/**
+ * Report a failed bundle run.
+ *
+ * USAGE (2) when the argument itself was wrong: missing, or a path that is
+ * not a readable file. That matches `playbook validate /nope.md` and the
+ * documented matrix ("missing/unreadable path" -> 2); it previously returned
+ * UNHEALTHY, which told a script the *bundle* was bad when the file was
+ * simply not there.
+ *
+ * UNHEALTHY (1) stays for a bundle that loaded and then failed — malformed
+ * JSON, schema violations, a diagnosis that could not complete. The call was
+ * correct; the work failed.
  */
 function reportFailure(verb: string, err: unknown): ExitCode {
   printError(`bundle ${verb} failed: ${err instanceof Error ? err.message : String(err)}`);
-  return err instanceof CliUsageError ? ExitCode.USAGE : ExitCode.UNHEALTHY;
+  return err instanceof CliUsageError || isUnreadablePath(err) ? ExitCode.USAGE : ExitCode.UNHEALTHY;
 }
 
 async function loadBundle(path: string | undefined): Promise<unknown> {

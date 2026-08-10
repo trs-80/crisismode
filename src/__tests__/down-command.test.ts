@@ -11,6 +11,7 @@ import {
   runDownCommand,
 } from '../cli/commands/down.js';
 import { parseCli } from '../cli/args.js';
+import { ExitCode } from '../cli/exit-codes.js';
 import { runCli, HELP } from '../cli/run.js';
 import { configure, setOutputOptions } from '../cli/output.js';
 import { getProviderSpec } from '../agent/llm-provider/provider-table.js';
@@ -79,6 +80,20 @@ describe('downExitCode', () => {
     expect(downExitCode([makeReport('degraded_upstream')])).toBe(1);
     expect(downExitCode([makeReport('unreachable_unverified')])).toBe(1);
     expect(downExitCode([makeReport('unreachable_probe_only')])).toBe(1);
+  });
+
+  /**
+   * `down` is the command CLAUDE.md cites as already getting exit codes
+   * right, so it should be the exemplar for the enum this PR exists to
+   * create — not the one place still returning bare numeric literals.
+   */
+  it('returns ExitCode members, not bare numeric literals', () => {
+    expect(downExitCode([makeReport('healthy')])).toBe(ExitCode.OK);
+    expect(downExitCode([makeReport('confirmed_incident')])).toBe(ExitCode.UNHEALTHY);
+    expect(downExitCode([])).toBe(ExitCode.OK);
+    // The values a shell sees are unchanged.
+    expect(ExitCode.OK).toBe(0);
+    expect(ExitCode.UNHEALTHY).toBe(1);
   });
 });
 

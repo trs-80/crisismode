@@ -206,7 +206,15 @@ async function runDryRun(opts: PlaybookOptions): Promise<ExitCode> {
     return ExitCode.OK;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    printError(`Failed to compile playbook: ${message}`);
+    // Machine consumers got nothing at all from this path — runValidate
+    // emits a {valid:false,error} record for the same failure, so --json
+    // dry-run was the only compile-error surface that returned an exit code
+    // with no structured output to explain it.
+    if (opts.json) {
+      console.log(JSON.stringify({ valid: false, error: message }));
+    } else {
+      printError(`Failed to compile playbook: ${message}`);
+    }
     return ExitCode.UNHEALTHY;
   }
 }

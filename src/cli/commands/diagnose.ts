@@ -50,6 +50,23 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<ExitCode> {
   // Load config or detect (injects local health agents, prints Config: line)
   const { config } = await loadConfigWithLocalTargets(opts);
 
+  // A target name that matches nothing is the user naming something that
+  // does not exist — a usage error (2), the same class as an unknown flag.
+  //
+  // Checked here rather than letting AgentRegistry.createForTarget throw,
+  // because a throw is indistinguishable from a real connection failure and
+  // would surface as an internal error (70). And checked *immediately after
+  // the config load*, before probeNetwork is kicked off: this used to sit
+  // below the probe, so a typo'd target name fired real network probes
+  // against every configured target before erroring. Under pressure a typo
+  // must fail in milliseconds, not after a network round-trip.
+  if (opts.targetName !== undefined && !config.targets.some((t) => t.name === opts.targetName)) {
+    printError(
+      `Target "${opts.targetName}" not found in config. Available: ${config.targets.map((t) => t.name).join(', ')}`,
+    );
+    return ExitCode.USAGE;
+  }
+
   // Probe network connectivity (runs in parallel with agent setup)
   const targetProbes = config.targets
     .filter((t) => t.primary)
@@ -63,18 +80,6 @@ export async function runDiagnose(opts: DiagnoseOptions): Promise<ExitCode> {
     ...(hubEndpoint !== undefined ? { hubEndpoint } : {}),
     targets: targetProbes,
   });
-
-  // A target name that matches nothing is the user naming something that
-  // does not exist — a usage error (2), the same class as an unknown flag.
-  // Checked here rather than letting AgentRegistry.createForTarget throw,
-  // because a throw is indistinguishable from a real connection failure and
-  // would surface as an internal error (70).
-  if (opts.targetName !== undefined && !config.targets.some((t) => t.name === opts.targetName)) {
-    printError(
-      `Target "${opts.targetName}" not found in config. Available: ${config.targets.map((t) => t.name).join(', ')}`,
-    );
-    return ExitCode.USAGE;
-  }
 
   const registry = new AgentRegistry(config);
   const { agent, backend, target } = opts.targetName

@@ -10,11 +10,11 @@
  * `process.exitCode` — index.ts does that, once.
  */
 
-import { parseCli } from './args.js';
+import { parseCli, parseIntervalSeconds } from './args.js';
 import { CliUsageError, ExitCode } from './exit-codes.js';
 import { severityExitCode } from './status-presentation.js';
 import { configure, setOutputOptions } from './output.js';
-import { formatError } from './errors.js';
+import { formatError, CrisisModeError } from './errors.js';
 import { ConfigNotFoundError, ConfigValidationError } from '../config/loader.js';
 
 export const HELP = `
@@ -252,12 +252,21 @@ export async function runCli(argv: readonly string[]): Promise<ExitCode> {
     }
 
     case 'watch': {
+      // Validated BEFORE the command is imported or run: an unparseable
+      // interval used to become NaN, survive watch.ts's `?? DEFAULT`, and
+      // clamp setTimeout to 1ms — a continuous scan loop against degraded
+      // infrastructure. See parseIntervalSeconds in args.ts.
+      let intervalMs: number | undefined;
+      if (values.interval !== undefined) {
+        const seconds = parseIntervalSeconds(values.interval);
+        if (typeof seconds !== 'number') return usageError(seconds.usageError);
+        intervalMs = seconds * 1000;
+      }
       const { runWatch } = await import('./commands/watch.js');
-      const intervalStr = values.interval;
       await runWatch({
         configPath,
         targetName: values.target,
-        intervalMs: intervalStr ? parseInt(intervalStr, 10) * 1000 : undefined,
+        intervalMs,
       });
       return ExitCode.OK;
     }
@@ -328,11 +337,21 @@ export async function runCli(argv: readonly string[]): Promise<ExitCode> {
 }
 
 /**
- * `runCli` with the top-level error boundary applied. A config file that
- * does not exist or does not parse is the user calling CrisisMode wrong
- * (USAGE, matching an unknown flag); anything else that escapes is a bug in
- * CrisisMode (INTERNAL), which a script can tell apart from "your
- * infrastructure is unhealthy".
+ * `runCli` with the top-level error boundary applied.
+ *
+ * USAGE (2) for the errors that describe how CrisisMode was invoked or
+ * configured:
+ * - `CliUsageError` — raised by a helper too deep to return a code.
+ * - `ConfigNotFoundError` / `ConfigValidationError` — the config file is
+ *   missing or does not parse.
+ * - `CrisisModeError` (`errors.ts`) — the class exists precisely to carry a
+ *   user-facing `suggestion` ("Run `crisismode init`...", "Set
+ *   ANTHROPIC_API_KEY..."). Those were reaching INTERNAL, so `crisismode
+ *   ask` with no API key exited 70 — claiming CrisisMode is broken when the
+ *   user just needs to export a key.
+ *
+ * Anything else that escapes is a genuine bug in CrisisMode: INTERNAL (70),
+ * which a script can tell apart from "your infrastructure is unhealthy" (1).
  */
 export async function runCliSafely(argv: readonly string[]): Promise<ExitCode> {
   try {
@@ -343,6 +362,7 @@ export async function runCliSafely(argv: readonly string[]): Promise<ExitCode> {
       err instanceof CliUsageError
       || err instanceof ConfigNotFoundError
       || err instanceof ConfigValidationError
+      || err instanceof CrisisModeError
     ) {
       return ExitCode.USAGE;
     }
