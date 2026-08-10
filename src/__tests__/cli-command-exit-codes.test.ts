@@ -27,16 +27,32 @@ import type * as RespondModule from '../framework/evidence-bundle-respond.js';
 import type * as BundleToPlanModule from '../framework/bundle-to-plan.js';
 import type * as LoaderModule from '../config/loader.js';
 
-const fetchRegistry = vi.fn();
-const installCheck = vi.fn();
-const getInstalledVersion = vi.fn(() => null);
+// vi.hoisted: `vi.mock` is hoisted above plain module-scope `const`
+// declarations, so a factory closing over one only works while the factory
+// happens to be evaluated lazily. vi.hoisted runs before static imports are
+// evaluated, which is the documented way to make these safely available.
+const {
+  fetchRegistry, installCheck, getInstalledVersion, runReadiness,
+  ingestEvidenceBundle, respondToEvidenceBundle, adapterResponseToPlan,
+  detectServices, loadConfigWithDetection,
+} = vi.hoisted(() => ({
+  fetchRegistry: vi.fn(),
+  installCheck: vi.fn(),
+  getInstalledVersion: vi.fn(() => null),
+  runReadiness: vi.fn(),
+  ingestEvidenceBundle: vi.fn(),
+  respondToEvidenceBundle: vi.fn(),
+  adapterResponseToPlan: vi.fn(),
+  detectServices: vi.fn(),
+  loadConfigWithDetection: vi.fn(),
+}));
+
 vi.mock('../config/check-registry.js', async (importOriginal) => {
   const actual = await importOriginal<typeof CheckRegistryModule>();
   return { ...actual, fetchRegistry };
 });
 vi.mock('../framework/check-installer.js', () => ({ installCheck, getInstalledVersion }));
 
-const runReadiness = vi.fn();
 vi.mock('../readiness/run.js', () => ({ runReadiness }));
 
 // bundle's ingest/respond reach a live Claude call; what is under test here
@@ -44,9 +60,6 @@ vi.mock('../readiness/run.js', () => ({ runReadiness }));
 // (covered by evidence-bundle-ingest.test.ts). The JSON.parse and
 // missing-path failures below happen before these are reached, so the
 // UNHEALTHY/USAGE arms still exercise the real code path.
-const ingestEvidenceBundle = vi.fn();
-const respondToEvidenceBundle = vi.fn();
-const adapterResponseToPlan = vi.fn();
 vi.mock('../framework/evidence-bundle-ingest.js', async (importOriginal) => {
   const actual = await importOriginal<typeof IngestModule>();
   return { ...actual, ingestEvidenceBundle };
@@ -60,10 +73,8 @@ vi.mock('../framework/bundle-to-plan.js', async (importOriginal) => {
   return { ...actual, adapterResponseToPlan };
 });
 
-const detectServices = vi.fn();
 vi.mock('../cli/detect.js', () => ({ detectServices }));
 
-const loadConfigWithDetection = vi.fn();
 vi.mock('../config/loader.js', async (importOriginal) => {
   const actual = await importOriginal<typeof LoaderModule>();
   return { ...actual, loadConfigWithDetection };

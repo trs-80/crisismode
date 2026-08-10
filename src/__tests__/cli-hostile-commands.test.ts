@@ -30,7 +30,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ExitCode } from '../cli/exit-codes.js';
 import { parseCli } from '../cli/args.js';
 
-const runScan = vi.fn(async () => ({ findings: [] as Array<{ status: string }> }));
+// vi.hoisted — see the note in cli-router-default-arm.test.ts: vi.mock is
+// hoisted above plain const declarations.
+const { runScan } = vi.hoisted(() => ({
+  runScan: vi.fn(async () => ({ findings: [] as Array<{ status: string }> })),
+}));
 vi.mock('../cli/commands/scan.js', () => ({ runScan }));
 
 const { runCli } = await import('../cli/run.js');

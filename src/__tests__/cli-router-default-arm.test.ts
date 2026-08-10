@@ -22,13 +22,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ExitCode } from '../cli/exit-codes.js';
 import type * as ArgsModule from '../cli/args.js';
 
-const parseCli = vi.fn();
+// vi.hoisted: `vi.mock` calls are hoisted above these declarations, so a
+// factory that closes over a plain module-scope `const` only works while the
+// factory happens to be evaluated lazily (on first import of the mocked
+// module). Anything that pulls `args.js` into the graph earlier would hit a
+// TDZ ReferenceError instead. vi.hoisted runs before static imports are
+// evaluated, which is the documented way to make these safely available.
+const { parseCli, runScan } = vi.hoisted(() => ({
+  parseCli: vi.fn(),
+  runScan: vi.fn(async () => ({ findings: [] as Array<{ status: string }> })),
+}));
+
 vi.mock('../cli/args.js', async (importOriginal) => {
   const actual = await importOriginal<typeof ArgsModule>();
   return { ...actual, parseCli };
 });
-
-const runScan = vi.fn(async () => ({ findings: [] as Array<{ status: string }> }));
 vi.mock('../cli/commands/scan.js', () => ({ runScan }));
 
 const { runCli } = await import('../cli/run.js');

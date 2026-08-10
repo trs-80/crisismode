@@ -31,15 +31,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CrisisModeError } from '../cli/errors.js';
 import type * as LoaderModule from '../config/loader.js';
 
-/** Simulates the swallow: an unexpected fault surfaces as a null config. */
-const loadConfig = vi.fn();
-const loadConfigWithDetection = vi.fn();
+/**
+ * Simulates the swallow: an unexpected fault surfaces as a null config.
+ *
+ * vi.hoisted — see the note in cli-router-default-arm.test.ts: vi.mock is
+ * hoisted above plain module-scope const declarations.
+ */
+const { loadConfig, loadConfigWithDetection, detectServices } = vi.hoisted(() => ({
+  loadConfig: vi.fn(),
+  loadConfigWithDetection: vi.fn(),
+  detectServices: vi.fn(async () => []),
+}));
+
 vi.mock('../config/loader.js', async (importOriginal) => {
   const actual = await importOriginal<typeof LoaderModule>();
   return { ...actual, loadConfig, loadConfigWithDetection };
 });
-
-const detectServices = vi.fn(async () => []);
 vi.mock('../cli/detect.js', () => ({ detectServices }));
 
 const { loadConfigWithLocalTargets } = await import('../cli/runtime.js');
