@@ -30,6 +30,12 @@ NO_RESOLVERS="none found"
 # a reachable resolver.
 PROBE_UNAVAILABLE=2
 
+# Where the configured resolver list is read from. Overridable only so tests can
+# pin resolver discovery to a fixture instead of depending on whatever the host
+# happens to have; the plugin environment allowlist (src/framework/check-plugin.ts)
+# does not forward this variable, so it cannot be set through the CLI.
+RESOLV_CONF_PATH="${CRISISMODE_RESOLV_CONF:-/etc/resolv.conf}"
+
 # Find a DNS lookup tool
 DNS_TOOL=""
 if command -v dig >/dev/null 2>&1; then
@@ -86,8 +92,8 @@ resolve_dns() {
 # Get configured resolvers from resolv.conf (or scutil on macOS)
 get_resolvers() {
   RESOLVERS=""
-  if [ -f /etc/resolv.conf ]; then
-    RESOLVERS=$(grep '^nameserver' /etc/resolv.conf | awk '{print $2}' | tr '\n' ',' | sed 's/,$//' || true)
+  if [ -f "$RESOLV_CONF_PATH" ]; then
+    RESOLVERS=$(grep '^nameserver' "$RESOLV_CONF_PATH" | awk '{print $2}' | tr '\n' ',' | sed 's/,$//' || true)
   fi
   if [ -z "$RESOLVERS" ] && command -v scutil >/dev/null 2>&1; then
     RESOLVERS=$(scutil --dns 2>/dev/null | grep 'nameserver\[' | awk '{print $3}' | sort -u | tr '\n' ',' | sed 's/,$//' || true)
