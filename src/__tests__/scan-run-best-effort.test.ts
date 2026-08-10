@@ -28,20 +28,24 @@ vi.mock('../framework/check-discovery.js', () => ({
 
 import { runScan } from '../cli/commands/scan.js';
 
-const CONFIG_YAML = [
-  'apiVersion: crisismode/v1',
-  'kind: SiteConfig',
-  'metadata:',
-  '  name: test-site',
-  '  environment: development',
-  'targets:',
-  '  - name: test-kafka',
-  '    kind: kafka',
-  '    primary:',
-  '      host: simulator',
-  '      port: 9092',
-  '',
-].join('\n');
+function configYaml(host: string): string {
+  return [
+    'apiVersion: crisismode/v1',
+    'kind: SiteConfig',
+    'metadata:',
+    '  name: test-site',
+    '  environment: development',
+    'targets:',
+    '  - name: test-kafka',
+    '    kind: kafka',
+    '    primary:',
+    `      host: ${host}`,
+    '      port: 9092',
+    '',
+  ].join('\n');
+}
+
+const CONFIG_YAML = configYaml('simulator');
 
 describe('runScan — end-to-end best-effort marking', () => {
   let tmpDir: string;
@@ -83,5 +87,52 @@ describe('runScan — end-to-end best-effort marking', () => {
     const watching = result.visibility!.watching.find((e) => e.label === 'kafka');
     expect(watching).toBeDefined();
     expect(watching!.maturity).toBe('simulator_only');
+  });
+
+  /**
+   * The caller-level half of the "refuse to fabricate" contract.
+   *
+   * simulator-only-honest-failure.test.ts proves `createAgent` THROWS for a
+   * real host. That only protects the operator if `checkTargetHealth`
+   * (cli/commands/scan.ts) converts the throw into an honest finding — and
+   * scan.test.ts covers that conversion with a hand-stubbed registry that
+   * rejects, so it would stay green even if the refusal itself were deleted.
+   *
+   * This test wires the two halves together through the real stack: real
+   * config file -> real AgentRegistry -> real kafka registration -> real
+   * refusal -> real rendered finding. It fails if either half regresses:
+   * remove the throw and the finding becomes fabricated `unhealthy`; break
+   * scan's per-target catch and `runScan` rejects instead of returning.
+   */
+  it('renders a simulator-only agent pointed at a real host as an honest unknown finding', async () => {
+    writeFileSync(configPath, configYaml('kafka-1.prod.internal'), 'utf-8');
+
+    const result = await runScan({ configPath, category: ['kafka'] });
+
+    expect(result.findings).toHaveLength(1);
+    const finding = result.findings[0]!;
+
+    // 1. Honest status — not a verdict CrisisMode did not earn.
+    expect(finding.status).toBe('unknown');
+    expect(finding.confidence).toBe(0);
+
+    // 2. The operator is told WHY, and which endpoint was refused.
+    expect(finding.summary).toContain('No live client for kafka');
+    expect(finding.summary).toContain('kafka-1.prod.internal:9092');
+
+    // 3. Not a healthy result. `scan` has no exit-code contract on main
+    //    today (cli/index.ts's `case 'scan'` sets no process.exitCode), so
+    //    the score is the available non-healthy signal: `unknown` weighs 0.3
+    //    in computeHealthScore, and this is the only finding. Tighten to
+    //    ExitCode.INDETERMINATE (3) once PR #118 lands.
+    expect(result.score).toBeLessThan(100);
+    expect(result.findings.some((f) => f.status === 'healthy')).toBe(false);
+
+    // 4. None of the simulator's invented telemetry reached the operator.
+    //    These are the literals in agent/kafka/simulator.ts that the old
+    //    unconditional-simulator path would have surfaced for this host.
+    const rendered = JSON.stringify(result);
+    expect(rendered).not.toContain('10.0.1.10');
+    expect(rendered).not.toContain('order-processor');
   });
 });
