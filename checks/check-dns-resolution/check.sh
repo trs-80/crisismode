@@ -285,7 +285,15 @@ run_health() {
     *)        health_status="unknown"; summary_parts="DNS status unknown" ;;
   esac
 
+  # Confidence, not status, carries "how much of this did I actually measure".
+  # An unprobed resolver set does not make a resolving system unhealthy — the
+  # canary lookups are real measurements, and they cannot succeed without a
+  # working resolver — but it does mean a dead secondary resolver would go
+  # unnoticed. That is reduced coverage, so it lowers confidence.
   local confidence="0.9"
+  if [ "$resolver_unprobed" -gt 0 ]; then
+    confidence="0.5"
+  fi
 
   printf '{"status":"%s","summary":"%s","confidence":%s,"signals":%s,"recommendedActions":%s}\n' \
     "$health_status" "$summary_parts" "$confidence" "$signals" "$actions"
@@ -300,6 +308,7 @@ run_diagnose() {
   local finding_count=0
   local healthy=true
   local summary=""
+  local resolvers_unverified=0
 
   # 1. Configured resolvers
   get_resolvers
@@ -325,7 +334,9 @@ run_diagnose() {
       if [ "$probe_rc" -eq 0 ]; then
         findings="$findings{\"id\":\"$resolver_id\",\"severity\":\"info\",\"title\":\"Resolver $resolver\",\"detail\":\"Reachable\"}"
       elif [ "$probe_rc" -eq "$PROBE_UNAVAILABLE" ]; then
-        # Not measured — must never be reported as reachable.
+        # Not measured — must never be reported as reachable, and must not let
+        # the closing summary claim resolver reachability either.
+        resolvers_unverified=$((resolvers_unverified + 1))
         findings="$findings{\"id\":\"$resolver_id\",\"severity\":\"info\",\"title\":\"Resolver $resolver\",\"detail\":\"Unverified — neither dig nor nc is available to probe this resolver\"}"
       else
         findings="$findings{\"id\":\"$resolver_id\",\"severity\":\"warning\",\"title\":\"Resolver $resolver\",\"detail\":\"Unreachable\"}"
@@ -413,7 +424,11 @@ run_diagnose() {
   findings="$findings]"
 
   if [ "$healthy" = true ]; then
-    summary="DNS infrastructure healthy — resolvers reachable, canary resolution OK"
+    if [ "$resolvers_unverified" -gt 0 ]; then
+      summary="DNS infrastructure healthy — canary resolution OK; $resolvers_unverified resolver(s) not verified (no dig or nc to probe with)"
+    else
+      summary="DNS infrastructure healthy — resolvers reachable, canary resolution OK"
+    fi
   else
     summary="DNS issues detected — see findings for details"
   fi

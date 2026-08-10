@@ -9,17 +9,23 @@ set -euo pipefail
 INPUT=$(cat)
 VERB=$(printf '%s' "$INPUT" | sed -n 's/.*"verb" *: *"\([^"]*\)".*/\1/p' | head -1)
 
+# Where Linux memory statistics are read from. Overridable only so tests can
+# exercise the non-Linux branches deterministically on a Linux host; the plugin
+# environment allowlist (src/framework/check-plugin.ts) does not forward this
+# variable, so it cannot be set through the CLI.
+MEMINFO_PATH="${CRISISMODE_MEMINFO_PATH:-/proc/meminfo}"
+
 # Cross-platform memory info
 get_memory_info() {
-  if [ -f /proc/meminfo ]; then
+  if [ -f "$MEMINFO_PATH" ]; then
     # Linux
-    TOTAL_KB=$(sed -n 's/^MemTotal: *\([0-9]*\).*/\1/p' /proc/meminfo)
-    AVAIL_KB=$(sed -n 's/^MemAvailable: *\([0-9]*\).*/\1/p' /proc/meminfo)
+    TOTAL_KB=$(sed -n 's/^MemTotal: *\([0-9]*\).*/\1/p' "$MEMINFO_PATH")
+    AVAIL_KB=$(sed -n 's/^MemAvailable: *\([0-9]*\).*/\1/p' "$MEMINFO_PATH")
     if [ -z "$AVAIL_KB" ]; then
       # Older kernels without MemAvailable
-      FREE_KB=$(sed -n 's/^MemFree: *\([0-9]*\).*/\1/p' /proc/meminfo)
-      BUFFERS_KB=$(sed -n 's/^Buffers: *\([0-9]*\).*/\1/p' /proc/meminfo)
-      CACHED_KB=$(sed -n 's/^Cached: *\([0-9]*\).*/\1/p' /proc/meminfo)
+      FREE_KB=$(sed -n 's/^MemFree: *\([0-9]*\).*/\1/p' "$MEMINFO_PATH")
+      BUFFERS_KB=$(sed -n 's/^Buffers: *\([0-9]*\).*/\1/p' "$MEMINFO_PATH")
+      CACHED_KB=$(sed -n 's/^Cached: *\([0-9]*\).*/\1/p' "$MEMINFO_PATH")
       AVAIL_KB=$((FREE_KB + BUFFERS_KB + CACHED_KB))
     fi
     TOTAL_MB=$((TOTAL_KB / 1024))
@@ -114,9 +120,9 @@ case "$VERB" in
       done <<< "$(ps aux --sort=-%mem 2>/dev/null | head -6 | tail -5 || ps aux -m 2>/dev/null | head -6 | tail -5 || echo 'unable to list processes')"
     fi
 
-    if [ -f /proc/meminfo ]; then
-      SWAP_TOTAL=$(sed -n 's/^SwapTotal: *\([0-9]*\).*/\1/p' /proc/meminfo)
-      SWAP_FREE=$(sed -n 's/^SwapFree: *\([0-9]*\).*/\1/p' /proc/meminfo)
+    if [ -f "$MEMINFO_PATH" ]; then
+      SWAP_TOTAL=$(sed -n 's/^SwapTotal: *\([0-9]*\).*/\1/p' "$MEMINFO_PATH")
+      SWAP_FREE=$(sed -n 's/^SwapFree: *\([0-9]*\).*/\1/p' "$MEMINFO_PATH")
       SWAP_TOTAL="${SWAP_TOTAL:-0}"
       SWAP_FREE="${SWAP_FREE:-0}"
       SWAP_USED=$((SWAP_TOTAL - SWAP_FREE))
