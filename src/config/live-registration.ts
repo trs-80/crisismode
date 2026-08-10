@@ -17,6 +17,7 @@ import type { AgentManifest } from '../types/manifest.js';
 import type { RecoveryAgent } from '../agent/interface.js';
 import type { ExecutionBackend } from '../framework/backend.js';
 import type { ResolvedTarget } from './schema.js';
+import { isSimulatorTarget } from './simulator-target.js';
 
 export function createLiveRegistration(opts: {
   kind: string;
@@ -35,9 +36,8 @@ export function createLiveRegistration(opts: {
     async createAgent(target): Promise<AgentInstance> {
       const AgentClass = await opts.loadAgent();
 
-      const isSimulatorTarget = !target.primary || target.primary.host === 'simulator';
       let backend: ExecutionBackend;
-      if (isSimulatorTarget) {
+      if (isSimulatorTarget(target)) {
         const SimulatorClass = await opts.loadSimulator();
         backend = new SimulatorClass();
       } else {
