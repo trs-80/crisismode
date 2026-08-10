@@ -156,6 +156,12 @@ describe('parseCli — usage errors', () => {
     // --health-only is recover-only.
     [['diagnose', '--category', 'redis'], '--category'],
     [['status', '--health-only'], '--health-only'],
+    // `ask` never loads config — runAsk/runAskRepl take no config path, and
+    // completions.ts advertises no flags for it — so accepting --config
+    // would silently ignore it, the exact thing the per-command option sets
+    // exist to prevent.
+    [['ask', '--config', 'x.yaml'], '--config'],
+    [['ask', 'why', 'is', 'pg', 'slow', '--config', 'x.yaml'], '--config'],
   ])('%j is a usage error naming %s', (argv, token) => {
     const result = parseCli(argv as string[]);
     expect(result.kind).toBe('usage');
