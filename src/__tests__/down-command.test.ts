@@ -16,6 +16,7 @@ import { runCli, HELP } from '../cli/run.js';
 import { configure, setOutputOptions } from '../cli/output.js';
 import { getProviderSpec } from '../agent/llm-provider/provider-table.js';
 import { ConfigValidationError } from '../config/loader.js';
+import type * as LoaderModule from '../config/loader.js';
 import type { CheckerDeps } from '../framework/service-status/checker.js';
 import type { ProbeOutcome, ServiceStatusReport, ServiceVerdict } from '../framework/service-status/types.js';
 
@@ -379,6 +380,65 @@ describe('runDownCommand', () => {
    * runDownCommand surface so a regression here is caught at the command
    * boundary, not just in parseDownArgs' return shape.
    */
+  /**
+   * An unexpected config-loader fault (EACCES on the file, a YAML library
+   * crash) is swallowed one level down in `config/loader.ts:454`, which
+   * rethrows only ConfigNotFoundError/ConfigValidationError and otherwise
+   * returns `{config: null}`. `down` then fell through to the
+   * "no services configured" banner and returned OK — a script got exit 0
+   * and no diagnostic for a real failure.
+   *
+   * The swallow predates this PR and its root is outside this PR's scope
+   * (src/config/**), so the fix is at the CLI boundary, where the outcome
+   * becomes observable: if the user explicitly named a --config path and no
+   * config came back, that is an error, not an empty services list.
+   */
+  it('does not return OK when an explicitly named --config yields no config', async () => {
+    const loadConfig = vi.fn(() => ({ config: null, source: 'none' as const }));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchImpl = vi.fn();
+    const probeImpl = vi.fn();
+    const code = await runDownCommand([], {
+      loadConfig: loadConfig as unknown as typeof LoaderModule.loadConfigWithDetection,
+      configPath: '/tmp/unreadable.yaml',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      probeImpl,
+    });
+    const errOut = err.mock.calls.map((c) => c.join(' ')).join('\n');
+    err.mockRestore();
+    expect(code).not.toBe(ExitCode.OK);
+    expect(code).toBe(ExitCode.USAGE);
+    // And it must say something — silence with a non-zero code is barely
+    // better than silence with a zero one.
+    expect(errOut).toContain('/tmp/unreadable.yaml');
+    // Never probes anything on a config failure.
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(probeImpl).not.toHaveBeenCalled();
+  });
+
+  it('still returns OK for a loadable config that simply lists no services', async () => {
+    const loadConfig = vi.fn(() => ({ config: { targets: [] }, source: 'file' as const }));
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const code = await runDownCommand([], {
+      loadConfig: loadConfig as unknown as typeof LoaderModule.loadConfigWithDetection,
+      configPath: '/tmp/valid.yaml',
+    });
+    spy.mockRestore();
+    // The file loaded fine; it just has no `services:` list.
+    expect(code).toBe(ExitCode.OK);
+  });
+
+  it('bare `down` with no --config still falls through to the usage banner and OK', async () => {
+    const loadConfig = vi.fn(() => ({ config: null, source: 'none' as const }));
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const code = await runDownCommand([], {
+      loadConfig: loadConfig as unknown as typeof LoaderModule.loadConfigWithDetection,
+    });
+    spy.mockRestore();
+    // Zero-config is a supported mode, not an error.
+    expect(code).toBe(ExitCode.OK);
+  });
+
   it('exits 2 on a bare --config with nothing after it, naming --config', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const code = await runCli(['down', '--config']);

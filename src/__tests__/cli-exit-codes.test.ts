@@ -18,6 +18,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ExitCode } from '../cli/exit-codes.js';
 import { severityExitCode, readinessExitCode } from '../cli/status-presentation.js';
+import { exitCodeToStatus, exitStatusToHealth } from '../framework/check-plugin.js';
 import { runCli } from '../cli/run.js';
 import type { HealthStatus } from '../types/health.js';
 
@@ -26,32 +27,93 @@ describe('ExitCode', () => {
     expect(ExitCode.OK).toBe(0);
     expect(ExitCode.UNHEALTHY).toBe(1);
     expect(ExitCode.USAGE).toBe(2);
+    expect(ExitCode.INDETERMINATE).toBe(3);
     expect(ExitCode.INTERNAL).toBe(70);
+  });
+
+  /**
+   * 3 is not a novel number: `framework/check-plugin.ts`'s EXIT_CODE_MAP
+   * already ships 3 = unknown to plugin authors. Only that row is mirrored —
+   * the plugin contract's 1 and 2 mean warning/critical, which answer a
+   * different question than the CLI's UNHEALTHY/USAGE.
+   */
+  it('borrows 3 = unknown from the check-plugin contract the project already ships', () => {
+    expect(exitCodeToStatus(3)).toBe('unknown');
+    expect(exitStatusToHealth(exitCodeToStatus(3))).toBe('unknown');
+    expect(ExitCode.INDETERMINATE).toBe(3);
   });
 });
 
 describe('severityExitCode', () => {
   it.each([
-    [[], ExitCode.OK],
     [['healthy'], ExitCode.OK],
     [['healthy', 'healthy'], ExitCode.OK],
-    // `unknown` is "we could not check", not "it is broken" — a kind with no
-    // registered agent must not flip a green stack red.
-    [['unknown'], ExitCode.OK],
-    [['healthy', 'unknown'], ExitCode.OK],
     [['unhealthy'], ExitCode.UNHEALTHY],
     [['healthy', 'unhealthy'], ExitCode.UNHEALTHY],
     [['recovering'], ExitCode.UNHEALTHY],
-    [['healthy', 'unknown', 'recovering'], ExitCode.UNHEALTHY],
   ])('%j -> %i', (statuses, expected) => {
     expect(severityExitCode(statuses as HealthStatus[])).toBe(expected);
+  });
+
+  /**
+   * A single unmeasurable signal must not fail someone's deploy — that cliff
+   * is the whole reason INDETERMINATE is a separate code rather than folding
+   * `unknown` into UNHEALTHY. Both sides of the boundary are pinned.
+   */
+  describe('partial unknown stays OK', () => {
+    it.each([
+      [['healthy', 'unknown'], ExitCode.OK],
+      [['unknown', 'healthy'], ExitCode.OK],
+      [Array(9).fill('healthy').concat(['unknown']), ExitCode.OK],
+      [['unknown', 'unknown', 'healthy'], ExitCode.OK],
+    ])('%j -> %i', (statuses, expected) => {
+      expect(severityExitCode(statuses as HealthStatus[])).toBe(expected);
+    });
+  });
+
+  /**
+   * Every evaluated finding unknown = CrisisMode determined nothing at all.
+   * That used to exit 0, which a CI gate read as "healthy" — a false green of
+   * exactly the shape C8a was about.
+   */
+  describe('all unknown -> INDETERMINATE', () => {
+    it.each([
+      [['unknown'], ExitCode.INDETERMINATE],
+      [['unknown', 'unknown'], ExitCode.INDETERMINATE],
+      [Array(12).fill('unknown'), ExitCode.INDETERMINATE],
+    ])('%j -> %i', (statuses, expected) => {
+      expect(severityExitCode(statuses as HealthStatus[])).toBe(expected);
+    });
+
+    it('never reports INDETERMINATE when something real was measured', () => {
+      // Bad news beats "could not check": an unhealthy finding is a definite
+      // answer and must win.
+      expect(severityExitCode(['unhealthy', 'unknown'])).toBe(ExitCode.UNHEALTHY);
+      expect(severityExitCode(['unknown', 'unhealthy'])).toBe(ExitCode.UNHEALTHY);
+      expect(severityExitCode(['recovering', 'unknown'])).toBe(ExitCode.UNHEALTHY);
+      expect(severityExitCode(['unknown', 'unknown', 'unhealthy'])).toBe(ExitCode.UNHEALTHY);
+    });
+  });
+
+  /**
+   * `[].every()` is vacuously true, so a naive all-unknown check would report
+   * INDETERMINATE for a scan with no findings at all. That is a different
+   * situation — nothing was *asked* for, rather than nothing being
+   * observable — and the no-config onboarding path already guides it. Guarded
+   * explicitly rather than left to vacuous truth.
+   */
+  it('an empty finding set is OK, not INDETERMINATE (no vacuous truth)', () => {
+    expect(severityExitCode([])).toBe(ExitCode.OK);
+    expect(severityExitCode([])).not.toBe(ExitCode.INDETERMINATE);
   });
 });
 
 describe('readinessExitCode', () => {
   it.each([
     ['ready', ExitCode.OK],
-    ['unknown', ExitCode.OK],
+    // Consistent with scan/diagnose: a readiness run where nothing could be
+    // evaluated is indeterminate, not ready.
+    ['unknown', ExitCode.INDETERMINATE],
     ['at-risk', ExitCode.UNHEALTHY],
     ['not-ready', ExitCode.UNHEALTHY],
   ] as const)('%s -> %i', (verdict, expected) => {

@@ -43,6 +43,26 @@ export function noConfig(): CrisisModeError {
   );
 }
 
+/**
+ * A config file the operator explicitly named exists (or at least was
+ * reachable enough to try) but could not be read or parsed for a reason
+ * `loadConfig` does not classify — EACCES, EISDIR, a YAML library fault.
+ *
+ * `config/loader.ts` swallows those and reports "no config", which used to
+ * make `diagnose --config <unreadable>` exit 0 and `scan --config
+ * <unreadable>` exit 1, both with no diagnostic, silently working against
+ * auto-detected services instead. A CrisisModeError maps to USAGE (2) at the
+ * boundary, which is the right class: the operator named something CrisisMode
+ * cannot use.
+ */
+export function unreadableConfig(path: string, cause?: unknown): CrisisModeError {
+  const detail = cause instanceof Error ? `: ${cause.message}` : '';
+  return new CrisisModeError(
+    `Could not read the config file '${path}'${detail}`,
+    'Check the file\'s permissions and YAML syntax. Omit --config to let CrisisMode auto-detect instead.',
+  );
+}
+
 export function missingEnvVar(name: string, purpose: string): CrisisModeError {
   return new CrisisModeError(
     `Missing environment variable: ${name}`,

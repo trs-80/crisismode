@@ -174,11 +174,37 @@ describe('parseCli — usage errors', () => {
     [['--config', '--json']],
     [['down', '--config']],
     [['down', '--config', '--terse']],
+    // Inline empty value: the `=` form skipped the missing-value check
+    // entirely, so `--config=` set config to '' and handed the loader an
+    // empty path instead of erroring.
+    [['--config=']],
+    [['down', '--config=']],
+    [['diagnose', '--config=']],
   ])('%j is a usage error: --config needs a value that is not another flag', (argv) => {
     const result = parseCli(argv as string[]);
     expect(result.kind).toBe('usage');
     if (result.kind !== 'usage') return;
     expect(result.message).toContain('--config');
+  });
+
+  it.each([
+    [['scan', '--category='], '--category'],
+    [['diagnose', '--target='], '--target'],
+    [['watch', '--interval='], '--interval'],
+    [['init', '--plugin='], '--plugin'],
+    [['bundle', 'ingest', 'x.json', '--output='], '--output'],
+  ])('%j is a usage error — every value-taking flag rejects an empty inline value', (argv, flag) => {
+    const result = parseCli(argv as string[]);
+    expect(result.kind).toBe('usage');
+    if (result.kind !== 'usage') return;
+    expect(result.message).toContain(flag);
+  });
+
+  it('still accepts a non-empty inline value', () => {
+    const result = parseCli(['--config=a.yaml', 'scan']);
+    expect(result.kind).toBe('command');
+    if (result.kind !== 'command') return;
+    expect(result.values.config).toBe('a.yaml');
   });
 
   it('suggests the nearest valid command for a near miss', () => {

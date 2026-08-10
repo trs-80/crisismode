@@ -476,6 +476,47 @@ done
 run_cli "scan --config /nonexistent/crisismode.yaml"
 assert_exit_code "missing --config file exits 2 (usage)" 2
 
+# Object.prototype keys were accepted as command names because the parser used
+# `in` rather than Object.hasOwn: `crisismode toString` reported
+# "COMMAND_OPTIONS[command] is not iterable" (a leaked JS TypeError) instead of
+# an unknown-command message, and the router had no default arm to fall back on.
+for PROTO in toString constructor __proto__ valueOf hasOwnProperty; do
+  run_cli "$PROTO"
+  assert_exit_code "'$PROTO' is an unknown command, exit 2" 2
+  assert_stderr_contains "'$PROTO' gets an unknown-command message" "unknown command"
+  assert_stderr_contains "'$PROTO' never leaks a JS internal" "crisismode"
+  if echo "$CMD_ERR" | grep -qF "is not iterable"; then
+    fail "'$PROTO' does not leak 'is not iterable'" "JS TypeError leaked to the operator"
+  else
+    pass "'$PROTO' does not leak 'is not iterable'"
+  fi
+done
+
+# An empty inline flag value is a missing value, not an empty string.
+run_cli "down --config="
+assert_exit_code "--config= (empty inline value) exits 2 (usage)" 2
+assert_stderr_contains "--config= names the flag" "--config"
+
+# A --config the operator explicitly named but that cannot be read must never
+# look like success. config/loader.ts swallows unexpected faults (EACCES, a
+# YAML crash) and reports "no config", so these used to exit 0 (diagnose, down)
+# or 1 with no diagnostic (scan), silently working against auto-detected
+# services instead.
+UNREADABLE="$(mktemp -d)/locked.yaml"
+printf 'apiVersion: crisismode/v1\nkind: SiteConfig\nmetadata:\n  name: x\ntargets: []\n' > "$UNREADABLE"
+chmod 000 "$UNREADABLE"
+if [ -r "$UNREADABLE" ]; then
+  # Running as root, or a filesystem that ignores the mode bits.
+  echo "  (skipped unreadable-config checks — file still readable after chmod 000)"
+else
+  for CMD in down scan diagnose; do
+    run_cli "$CMD --config $UNREADABLE"
+    assert_exit_code "$CMD with an unreadable --config exits 2, not 0" 2
+    assert_stderr_contains "$CMD says which file it could not read" "$UNREADABLE"
+  done
+fi
+chmod 644 "$UNREADABLE" 2>/dev/null || true
+
 # Invalid diagnose target should not crash
 run_cli "diagnose PLUG-999"
 assert_no_crash "diagnose nonexistent PLUG-999 has no crashes"
@@ -544,6 +585,117 @@ assert_stderr_contains "down names the malformed arg" "http://api.foo.com/path"
 # Bare `down` reads the config's services: list — 0 or 1, never a usage error.
 run_cli "down"
 assert_exit_one_of "bare down exits 0 or 1, never 2" 0 1
+
+echo ""
+
+# ══════════════════════════════════════════
+# 6c-bis. Exit 3 (INDETERMINATE) — nothing could be checked
+# ══════════════════════════════════════════
+
+echo "── INDETERMINATE (exit 3) ──"
+
+# An all-unknown scan used to exit 0, which a CI gate reads as "healthy" — a
+# false green of the same shape as the always-0 scan this contract replaced.
+#
+# Producing one from what is on main: `redis` connects inside
+# createForTarget(), so a target pointing at a dead port makes that throw,
+# and checkTargetHealth's catch path yields status 'unknown' (as opposed to
+# postgresql, whose agent handles a refused connection and reports a definite
+# 'unhealthy'). --category narrows the scan to that one target so the
+# always-injected local agents (DNS, disk) do not contribute healthy findings.
+#
+# NOTE: the kafka-target-at-a-real-host shape from PR #115 is a more natural
+# way to generate this once #115 lands; this deliberately avoids depending on
+# an unmerged branch.
+INDET_DIR="$(mktemp -d)"
+cat > "$INDET_DIR/indeterminate.yaml" <<'YAML'
+apiVersion: crisismode/v1
+kind: SiteConfig
+metadata:
+  name: smoke-indeterminate
+  environment: development
+execution:
+  mode: dry-run
+targets:
+  - name: unobservable-redis
+    kind: redis
+    primary:
+      host: 127.0.0.1
+      port: 59998
+YAML
+
+# The exit code is derived from the finding set, so the assertion derives the
+# expectation the same way and compares. That is stronger than hard-coding a
+# number — it checks the contract against whatever this machine actually
+# observed — and it cannot go flaky when the environment contributes extra
+# findings (check plugins in ./checks/ are discovered regardless of
+# --category, so a fixed "expect 3" only holds where none are installed).
+assert_exit_matches_findings() {
+  local name="$1"
+  local expected
+  expected=$(echo "$CMD_OUT" | node -e "
+let d='';
+process.stdin.on('data',c=>d+=c);
+process.stdin.on('end',()=>{
+  for (const l of d.split('\n').filter(Boolean)) {
+    let o; try { o = JSON.parse(l); } catch { continue; }
+    if (o.type !== 'scan') continue;
+    const s = o.findings.map(f=>f.status);
+    if (s.some(x=>x==='unhealthy'||x==='recovering')) { console.log('1|'+s.join(',')); return; }
+    if (s.length>0 && s.every(x=>x==='unknown')) { console.log('3|'+s.join(',')); return; }
+    console.log('0|'+s.join(','));
+    return;
+  }
+  console.log('none|no scan record');
+})" 2>/dev/null || echo "err|node error")
+  local want="${expected%%|*}"
+  local statuses="${expected#*|}"
+  if [ "$want" = "none" ] || [ "$want" = "err" ]; then
+    fail "$name" "could not read findings ($statuses)"
+  elif [ "$CMD_EXIT" -eq "$want" ]; then
+    pass "$name (statuses: $statuses -> $want)"
+  else
+    fail "$name" "findings [$statuses] imply exit $want, got $CMD_EXIT"
+  fi
+}
+
+run_cli "scan --config $INDET_DIR/indeterminate.yaml --category redis --json"
+assert_exit_matches_findings "scan --category redis: exit code matches its findings"
+assert_strict_jsonl "all-unknown scan --json is strict JSONL"
+# assert_no_crash is deliberately NOT applied here. ioredis prints its own
+# "[ioredis] Unhandled error event: ... \n    at TCPConnectWrap.afterConnect"
+# to stderr when the connection is refused, which matches assert_no_crash's
+# `^\s+at\s+` pattern. That is a third-party library's noise during a probe
+# that is *supposed* to fail, not a CrisisMode stack trace — and the two
+# assertions above already prove the scan ran and produced a valid record.
+# The stderr noise itself is a pre-existing rough edge in the redis live
+# client (src/agent/redis/**, outside this PR's scope) worth filing
+# separately: a machine-mode consumer should not see a library trace.
+
+# Where nothing else contributes findings, that case really is all-unknown and
+# really does exit 3. Reported rather than asserted when the environment adds
+# findings, so the suite states what it verified instead of passing vacuously.
+INDET_STATUSES=$(echo "$CMD_OUT" | node -e "
+let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{
+  for (const l of d.split('\n').filter(Boolean)) {
+    let o; try { o=JSON.parse(l); } catch { continue; }
+    if (o.type==='scan') { console.log(o.findings.map(f=>f.status).join(',')); return; }
+  }
+  console.log('');
+})" 2>/dev/null || echo "")
+if [ "$INDET_STATUSES" = "unknown" ]; then
+  assert_exit_code "a genuinely all-unknown scan exits 3 (INDETERMINATE), not 0" 3
+else
+  echo "  ℹ️  all-unknown case not isolated here (findings: $INDET_STATUSES) — contract still checked above"
+fi
+
+# The boundary that matters most: one unmeasurable signal among healthy ones
+# must NOT fail a deploy. Without --category, the always-injected local agents
+# (DNS, disk) report healthy alongside the unknown redis target.
+run_cli "scan --config $INDET_DIR/indeterminate.yaml --json"
+assert_exit_matches_findings "partial unknown among healthy findings stays 0"
+
+rm -rf "$INDET_DIR"
 
 echo ""
 

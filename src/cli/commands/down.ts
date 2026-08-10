@@ -268,8 +268,10 @@ export async function runDownCommand(serviceIds: readonly string[], deps: RunDow
   } else {
     const loadConfigFn = deps.loadConfig ?? loadConfigWithDetection;
     let configured: ServiceConfigEntry[] = [];
+    let loaded = false;
     try {
       const { config } = loadConfigFn(deps.configPath !== undefined ? { configPath: deps.configPath } : {});
+      loaded = config !== null && config !== undefined;
       configured = config?.services ?? [];
     } catch (err) {
       // A config file that doesn't exist, or one that exists but is
@@ -278,6 +280,28 @@ export async function runDownCommand(serviceIds: readonly string[], deps: RunDow
       // triage.ts for the not-found case).
       if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
     }
+
+    // An unexpected loader fault — EACCES on the file, a YAML library crash —
+    // is swallowed one level down in `config/loader.ts`, which rethrows only
+    // the two classes above and otherwise returns `{ config: null }`. So it
+    // never reaches the catch here, and execution used to fall straight
+    // through to the "no services configured" banner and return OK: a script
+    // got exit 0 and no diagnostic for a real failure.
+    //
+    // The swallow predates this PR and its root is outside this PR's scope
+    // (`src/config/**`), so the guard sits here, at the boundary where the
+    // outcome becomes observable: if the operator explicitly named a
+    // `--config` path and no config came back, that is a failure, not an
+    // empty services list. Zero-config (`crisismode down` with no --config)
+    // is a supported mode and still falls through.
+    if (!loaded && deps.configPath !== undefined) {
+      console.error(
+        `crisismode down: could not read the config file '${deps.configPath}' — it exists but could not be loaded ` +
+        '(check file permissions and YAML syntax).',
+      );
+      return ExitCode.USAGE;
+    }
+
     if (configured.length === 0) {
       printDownUsage();
       return ExitCode.OK;

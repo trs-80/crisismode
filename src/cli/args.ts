@@ -157,7 +157,16 @@ function scanTokens(args: readonly string[]): { subcommandIndex: number | undefi
     if (token === '--') break;
     if (token.startsWith('--')) {
       const name = token.slice(2).split('=', 1)[0]!;
-      if (token.includes('=')) continue; // value is inline
+      if (token.includes('=')) {
+        // `--config=` (nothing after the `=`) is a missing value, same as
+        // `--config` with nothing after it. Skipping the check for any token
+        // containing `=` let it through as the empty string, so the config
+        // loader received an empty path instead of a usage error.
+        if (VALUE_FLAGS.has(name) && token.slice(name.length + 3) === '') {
+          return { usageError: `option '--${name}' requires a value` };
+        }
+        continue; // value is inline
+      }
       if (VALUE_FLAGS.has(name)) {
         const value = args[i + 1];
         if (value === undefined || value.startsWith('-')) {
@@ -267,7 +276,14 @@ export function parseCli(argv: readonly string[]): ParseResult {
 
   let command: CommandName | undefined;
   if (token !== undefined) {
-    if (!(token in COMMAND_OPTIONS)) {
+    // Object.hasOwn, NOT `in`: `in` also matches inherited Object.prototype
+    // keys, so `crisismode toString` / `constructor` / `__proto__` were
+    // accepted as commands and cast to CommandName. `optionsFor` then spread
+    // `COMMAND_OPTIONS['toString']` — a function — and the operator got
+    // "COMMAND_OPTIONS[command] is not iterable" instead of an unknown-command
+    // message. Own-property-only means they take the branch below and get a
+    // suggestion like any other typo.
+    if (!Object.hasOwn(COMMAND_OPTIONS, token)) {
       const suggestion = nearestCommand(token);
       return usage(
         `unknown command '${token}'` +

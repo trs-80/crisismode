@@ -32,6 +32,25 @@ export const ExitCode = {
    */
   USAGE: 2,
   /**
+   * CrisisMode could not determine anything: every finding it evaluated came
+   * back `unknown`.
+   *
+   * Distinct from OK because a run that measured nothing is not evidence of
+   * health — a CI gate reading 0 there gets a false green, the same shape as
+   * the always-0 `scan` this contract replaced. Distinct from UNHEALTHY
+   * because "I could not check" is not "it is broken", and folding the two
+   * together would fail a deploy for one unmeasurable signal.
+   *
+   * 3 is not a novel number. `src/framework/check-plugin.ts`'s
+   * `EXIT_CODE_MAP` already ships `3: 'unknown'` to plugin authors, and
+   * `exitStatusToHealth` maps it to the `unknown` HealthStatus — so this
+   * reuses a meaning the project already publishes rather than inventing a
+   * fifth concept. Only that row is mirrored: the plugin contract's 1 and 2
+   * mean warning/critical, which answer "how severe is this check" rather
+   * than "how did this invocation go".
+   */
+  INDETERMINATE: 3,
+  /**
    * An unexpected failure inside CrisisMode. Distinct from UNHEALTHY so a
    * script can tell "your infrastructure is broken" from "this tool is
    * broken". 70 is sysexits.h's EX_SOFTWARE.

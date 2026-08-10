@@ -15,6 +15,7 @@ import { assembleContext } from '../../framework/context.js';
 import { AgentRegistry } from '../../config/agent-registry.js';
 import { loadConfigWithDetection, ConfigNotFoundError, ConfigValidationError } from '../../config/loader.js';
 import { discoverStack, printOnboardingMessage, type StackProfile } from '../autodiscovery.js';
+import { unreadableConfig, CrisisModeError } from '../errors.js';
 import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
@@ -303,7 +304,7 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
   printInfo('Scanning for services...');
   const [stackProfile, configDetection, triageReport] = await Promise.all([
     discoverStack(),
-    loadConfigWithDetectionSafe(opts.configPath),
+    loadConfigForScan(opts.configPath),
     opts.triageReport !== undefined
       ? Promise.resolve(opts.triageReport)
       : runTriage({ timeoutMs: SCAN_PROBE_TIMEOUT_MS }),
@@ -698,15 +699,28 @@ export function computeHealthScore(findings: Array<Pick<ScanFinding, 'status'>>)
 }
 
 /**
- * Load config with detection info, without throwing.
+ * Load config with detection info.
+ *
+ * Exported for tests: this is the boundary that decides whether an
+ * unreadable `--config` is a failure or a cue to auto-detect.
  */
-function loadConfigWithDetectionSafe(configPath?: string) {
+export function loadConfigForScan(configPath?: string) {
   try {
-    return loadConfigWithDetection(configPath !== undefined ? { configPath } : {});
+    const result = loadConfigWithDetection(configPath !== undefined ? { configPath } : {});
+    // loader.ts swallows unexpected faults (EACCES, a YAML crash) and reports
+    // a null config. When the operator explicitly named a path, that is a
+    // failure, not "no config found" — `scan --config <unreadable>` used to
+    // exit 1 with no diagnostic, having silently scanned auto-detected
+    // services instead. Zero-config scan (no --config) is unaffected.
+    if (configPath !== undefined && result.config === null) {
+      throw unreadableConfig(configPath);
+    }
+    return result;
   } catch (err) {
     // A config file that doesn't exist, or one that exists but is invalid,
     // is a user error, not a cue to silently scan something else.
     if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
+    if (err instanceof CrisisModeError) throw err;
     return { config: null, source: 'none' as const };
   }
 }

@@ -20,6 +20,7 @@ import { detectServices } from './detect.js';
 import { mergeLocalTargets } from './local-agents.js';
 import { serviceTargetsFromConfig } from './service-targets.js';
 import { printInfo, printDetection, printSpacer } from './output.js';
+import { unreadableConfig } from './errors.js';
 
 /**
  * Format the human-readable config source label from a load result.
@@ -71,6 +72,14 @@ export async function loadConfigWithLocalTargets(
     // A config file that doesn't exist, or one that exists but is invalid,
     // is a user error, not a cue to silently diagnose something else.
     if (err instanceof ConfigNotFoundError || err instanceof ConfigValidationError) throw err;
+    // Neither is an unexpected fault on a config the operator explicitly
+    // named — EACCES, a YAML library crash. loader.ts swallows those, so
+    // `diagnose --config <unreadable>` fell through to auto-detection and
+    // exited 0, and `watch --config <unreadable>` started observing the
+    // wrong thing. Zero-config (no --config) still auto-detects below.
+    if (opts.configPath !== undefined) {
+      throw unreadableConfig(opts.configPath, err);
+    }
     printInfo('No configuration found, scanning localhost...');
     const services = await detectServices();
     printDetection(services);

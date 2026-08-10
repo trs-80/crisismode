@@ -24,7 +24,18 @@
  */
 
 import { runCliSafely } from './run.js';
+import { ExitCode } from './exit-codes.js';
 
-runCliSafely(process.argv.slice(2)).then((code) => {
-  process.exitCode = code;
-});
+runCliSafely(process.argv.slice(2))
+  .then((code) => {
+    process.exitCode = code;
+  })
+  // `runCliSafely` already classifies everything `runCli` throws, but its own
+  // catch block has to report the error, and reporting can fail: stderr may
+  // be closed (`crisismode scan | head` is a normal thing an operator does,
+  // and yields EPIPE). Without this handler that rejection is unhandled,
+  // Node prints its own trace, and `process.exitCode` is never assigned — so
+  // a genuine failure could exit 0. The boundary has to be total.
+  .catch(() => {
+    process.exitCode = ExitCode.INTERNAL;
+  });

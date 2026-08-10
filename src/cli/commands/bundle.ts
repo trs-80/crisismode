@@ -58,19 +58,47 @@ function isUnreadablePath(err: unknown): boolean {
 }
 
 /**
- * Report a failed bundle run.
+ * A JS runtime error type that can only mean a programming mistake inside
+ * CrisisMode — never something the user's input can legitimately cause.
+ * These are rethrown so `runCliSafely` reports INTERNAL (70).
  *
- * USAGE (2) when the argument itself was wrong: missing, or a path that is
- * not a readable file. That matches `playbook validate /nope.md` and the
- * documented matrix ("missing/unreadable path" -> 2); it previously returned
- * UNHEALTHY, which told a script the *bundle* was bad when the file was
- * simply not there.
+ * `SyntaxError` is deliberately NOT here: it is what `JSON.parse` throws for
+ * a malformed bundle file, which is the user's input being wrong, not
+ * CrisisMode being broken.
+ */
+function isProgrammingFault(err: unknown): boolean {
+  return err instanceof TypeError
+    || err instanceof RangeError
+    || err instanceof ReferenceError
+    || err instanceof EvalError;
+}
+
+/**
+ * Report a failed bundle run, mapping the failure to the right code.
  *
- * UNHEALTHY (1) stays for a bundle that loaded and then failed — malformed
- * JSON, schema violations, a diagnosis that could not complete. The call was
- * correct; the work failed.
+ * - USAGE (2): the argument itself was wrong — missing, or a path that is not
+ *   a readable file. Matches `playbook validate /nope.md` and the documented
+ *   matrix; it used to return UNHEALTHY, telling a script the *bundle* was
+ *   bad when the file simply was not there.
+ * - INTERNAL (70), by rethrowing to the boundary: a programming fault inside
+ *   CrisisMode. Every unknown error used to become UNHEALTHY, so a genuine
+ *   tool bug exited 1 and blamed the bundle — which defeats the
+ *   UNHEALTHY/INTERNAL distinction entirely.
+ * - UNHEALTHY (1): everything else. The call was correct and the work failed
+ *   on the input given — malformed JSON (`SyntaxError`), schema violations, a
+ *   diagnosis that could not complete.
+ *
+ * The split is by JS error type because that is the only reliable signal
+ * available here: the bundle framework raises untyped plain `Error`s for
+ * validation (`framework/evidence-bundle-ingest.ts:45-84`), so "your bundle
+ * is invalid" and "CrisisMode threw" are otherwise indistinguishable. A typed
+ * `BundleValidationError` in `src/framework/**` would make this exact; that
+ * is a follow-up, not something to guess at here — and guessing wrong in the
+ * other direction (treating bad input as a tool bug) is the worse error,
+ * since 70 is EX_SOFTWARE.
  */
 function reportFailure(verb: string, err: unknown): ExitCode {
+  if (isProgrammingFault(err)) throw err;
   printError(`bundle ${verb} failed: ${err instanceof Error ? err.message : String(err)}`);
   return err instanceof CliUsageError || isUnreadablePath(err) ? ExitCode.USAGE : ExitCode.UNHEALTHY;
 }
