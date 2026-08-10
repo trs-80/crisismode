@@ -227,7 +227,9 @@ async function handleAlert(alert: AlertManagerAlert): Promise<{
     }
 
     // Catalog match
-    const catalogMatch = matchCatalog(plan);
+    const catalogMatch = matchCatalog(plan, {
+      preAuthorizedCatalogs: context.preAuthorizedCatalogs,
+    });
 
     // Execute
     const recorder = new ForensicRecorder();
