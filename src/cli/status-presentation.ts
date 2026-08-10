@@ -79,13 +79,37 @@ export const HEALTH_STATUS_EXIT_CODE: Record<HealthStatus, ExitCode> = {
 };
 
 /**
- * The exit code for a set of findings: OK unless something is actually
- * wrong. Worst status wins.
+ * The exit code for a set of findings.
+ *
+ * Worst status wins, with one extra rule: if every finding evaluated came
+ * back `unknown`, the answer is `INDETERMINATE` (3) rather than `OK` —
+ * CrisisMode determined nothing, and a CI gate must not read that as health.
+ *
+ * Three boundaries are deliberate:
+ *
+ * - **A definite answer beats "could not check".** `['unhealthy', 'unknown']`
+ *   is UNHEALTHY, not INDETERMINATE. Something real was measured and it was
+ *   bad news.
+ * - **Partial unknown stays OK.** Nine healthy findings plus one unknown is
+ *   OK. Failing a deploy for one unmeasurable signal is the cliff this code
+ *   exists to avoid; INDETERMINATE is for "nothing at all", not "not
+ *   everything".
+ * - **An empty set is OK, not INDETERMINATE.** `[].every()` is vacuously
+ *   true, so the all-unknown check is guarded on a non-empty set. A scan with
+ *   no findings had nothing to observe, which is a different situation from
+ *   having targets that could not be observed; the no-config onboarding path
+ *   already guides that case, and reporting 3 for `--category nonexistent`
+ *   would be actively misleading.
  */
 export function severityExitCode(statuses: Iterable<HealthStatus>): ExitCode {
+  let evaluated = 0;
+  let unknown = 0;
   for (const status of statuses) {
+    evaluated++;
     if (HEALTH_STATUS_EXIT_CODE[status] === ExitCode.UNHEALTHY) return ExitCode.UNHEALTHY;
+    if (status === 'unknown') unknown++;
   }
+  if (evaluated > 0 && unknown === evaluated) return ExitCode.INDETERMINATE;
   return ExitCode.OK;
 }
 
@@ -93,12 +117,14 @@ export function severityExitCode(statuses: Iterable<HealthStatus>): ExitCode {
  * Exhaustive: readiness's own verdict vocabulary → the same contract.
  * `at-risk` maps to UNHEALTHY for the same reason `recovering` does — the
  * report is telling you something will break, and a CI gate asking "is this
- * stack ready" wants that to fail. `unknown` (nothing could be evaluated)
- * is OK, matching the health mapping above.
+ * stack ready" wants that to fail. `unknown` means no rule could be
+ * evaluated, which is INDETERMINATE for the same reason an all-unknown scan
+ * is: the run produced no evidence either way, and the readiness report
+ * already aggregates exactly this as `evaluated` / `unknown`.
  */
 export const READINESS_VERDICT_EXIT_CODE: Record<ReadinessReport['verdict'], ExitCode> = {
   ready: ExitCode.OK,
-  unknown: ExitCode.OK,
+  unknown: ExitCode.INDETERMINATE,
   'at-risk': ExitCode.UNHEALTHY,
   'not-ready': ExitCode.UNHEALTHY,
 };

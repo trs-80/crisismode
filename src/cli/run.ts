@@ -57,6 +57,11 @@ export const HELP = `
     --config <path>     Path to crisismode.yaml
     --target <name>     Target name from config
     --category <kinds>  Comma-separated service kinds to scan (scan only)
+    --interval <seconds>
+                        Poll interval for watch, as a whole number of seconds
+                        greater than 0 (e.g. --interval 30). Unit suffixes
+                        like "30s" or "1m" are not accepted.
+    --output <file>     Write machine-readable output to a file (bundle only)
     --terse             Suppress plain-language explanations and risk framing
                         (affects human output only; machine/--json always
                         carries the full data)
@@ -75,6 +80,8 @@ export const HELP = `
     1   ran fine, the answer is bad news (unhealthy target, service down,
         validation failed)
     2   called wrong (unknown command or flag, missing value, bad config)
+    3   nothing could be checked — every finding came back unknown. Not a
+        clean bill of health: CrisisMode was blind, not reassured
     70  unexpected internal failure
 `;
 
@@ -333,6 +340,20 @@ export async function runCli(argv: readonly string[]): Promise<ExitCode> {
       const { runCompletions } = await import('./commands/completions.js');
       return runCompletions(shell);
     }
+
+    // Unreachable while `parseCli` only ever yields an own key of
+    // COMMAND_OPTIONS — but `command` arrives here through a runtime path
+    // (a string from argv, narrowed by a cast), and TypeScript's
+    // exhaustiveness check cannot protect a value the type system never
+    // validated. Without this arm the switch fell through and `runCli`
+    // resolved to `undefined`, which index.ts would assign to
+    // `process.exitCode` — silently exiting 0 for an unroutable command.
+    // Relying on the compiler here would be programming by coincidence.
+    default: {
+      console.error(`crisismode: unroutable command '${String(command)}'`);
+      console.error('Run `crisismode --help` for the list of commands.');
+      return ExitCode.USAGE;
+    }
   }
 }
 
@@ -357,7 +378,16 @@ export async function runCliSafely(argv: readonly string[]): Promise<ExitCode> {
   try {
     return await runCli(argv);
   } catch (err) {
-    console.error(formatError(err));
+    // Reporting must never be able to take the process down with it: stderr
+    // can fail with EPIPE (`crisismode scan | head` closes the stream — a
+    // normal thing an operator does), and formatError touches user data. If
+    // this throws, the classification below still runs and the caller still
+    // gets a code.
+    try {
+      console.error(formatError(err));
+    } catch {
+      // Nothing useful left to say, and nowhere to say it.
+    }
     if (
       err instanceof CliUsageError
       || err instanceof ConfigNotFoundError

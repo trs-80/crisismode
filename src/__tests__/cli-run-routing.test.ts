@@ -228,14 +228,26 @@ describe('runCliSafely — a CrisisModeError is the user\'s problem, not a crash
 
 describe('runCli — scan exit code is derived from the findings', () => {
   it.each([
+    // Zero findings: nothing was asked for, not "nothing observable".
     [[], ExitCode.OK],
     [['healthy'], ExitCode.OK],
+    // One unmeasurable signal must not fail a deploy.
     [['healthy', 'unknown'], ExitCode.OK],
     [['unhealthy'], ExitCode.UNHEALTHY],
     [['healthy', 'recovering'], ExitCode.UNHEALTHY],
+    // Nothing could be determined at all.
+    [['unknown'], ExitCode.INDETERMINATE],
+    [['unknown', 'unknown', 'unknown'], ExitCode.INDETERMINATE],
+    // A definite bad answer beats "could not check".
+    [['unknown', 'unhealthy'], ExitCode.UNHEALTHY],
   ])('findings %j -> exit %i', async (statuses, expected) => {
     runScan.mockResolvedValue({ findings: (statuses as HealthStatus[]).map((status) => ({ status })) });
     expect(await runCli(['scan'])).toBe(expected);
+  });
+
+  it('the bare `crisismode` invocation reports INDETERMINATE identically', async () => {
+    runScan.mockResolvedValue({ findings: [{ status: 'unknown' }, { status: 'unknown' }] });
+    expect(await runCli([])).toBe(ExitCode.INDETERMINATE);
   });
 
   it('applies the same derivation to the bare `crisismode` invocation', async () => {
@@ -350,6 +362,27 @@ describe('runCli — help and version', () => {
     expect(runScan).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['--interval'],
+    ['--output'],
+  ])('documents %s in the Options block', async (flag) => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runCli(['--help']);
+    const help = log.mock.calls.join('\n');
+    log.mockRestore();
+    expect(help).toContain(flag);
+  });
+
+  it('states the --interval contract in --help, so the operator does not learn it from an error', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await runCli(['--help']);
+    const help = log.mock.calls.join('\n');
+    log.mockRestore();
+    // Whole seconds, positive, suffixes rejected.
+    expect(help).toMatch(/--interval <seconds>/);
+    expect(help).toMatch(/whole number|positive integer/i);
+  });
+
   it('documents the exit codes in the help text', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await runCli(['--help']);
@@ -420,6 +453,30 @@ describe('runCliSafely — the error boundary', () => {
     expect(code).toBe(ExitCode.INTERNAL);
     expect(code).not.toBe(ExitCode.UNHEALTHY);
     expect(message).toContain('cannot read properties of undefined');
+  });
+
+  /**
+   * The boundary must be total. `runCliSafely`'s own catch calls
+   * `console.error(formatError(err))`; if that throws — stderr closed by
+   * `crisismode scan | head`, an EPIPE, a formatError fault — the returned
+   * promise rejected, Node reported an unhandled rejection, and
+   * `process.exitCode` was never assigned.
+   */
+  it('still resolves to INTERNAL when reporting the error itself throws', async () => {
+    runScan.mockRejectedValueOnce(new TypeError('original failure'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {
+      throw new Error('EPIPE: broken pipe');
+    });
+    let code: number | undefined;
+    let rejected = false;
+    try {
+      code = await runCliSafely(['scan']);
+    } catch {
+      rejected = true;
+    }
+    err.mockRestore();
+    expect(rejected).toBe(false);
+    expect(code).toBe(ExitCode.INTERNAL);
   });
 
   it('passes a successful run through untouched', async () => {

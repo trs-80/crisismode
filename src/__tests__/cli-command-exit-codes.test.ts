@@ -348,6 +348,53 @@ describe('runBundle', () => {
   });
 
   /**
+   * Every unknown error used to become UNHEALTHY, so a genuine tool bug
+   * exited 1 — telling a script the *bundle* was bad when CrisisMode was
+   * broken. That defeats the UNHEALTHY/INTERNAL distinction this PR exists
+   * to create.
+   *
+   * The split is by JS error type, because it is the only reliable signal
+   * available: the bundle framework throws untyped plain `Error`s for
+   * validation (evidence-bundle-ingest.ts:45-84), which are bad *input*, not
+   * a tool fault. A TypeError/RangeError/ReferenceError can only mean a
+   * programming mistake.
+   */
+  it.each([
+    ['TypeError', () => new TypeError("Cannot read properties of undefined (reading 'x')")],
+    ['RangeError', () => new RangeError('Maximum call stack size exceeded')],
+    ['ReferenceError', () => new ReferenceError('foo is not defined')],
+  ])('a %s from the bundle framework is rethrown so the boundary reports INTERNAL', async (_name, make) => {
+    const path = join(tmp, 'bundle.json');
+    writeFileSync(path, JSON.stringify(minimalBundle()), 'utf-8');
+    ingestEvidenceBundle.mockRejectedValueOnce(make());
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Rethrown, not swallowed into an exit code here.
+    await expect(runBundle({ subcommand: 'ingest', args: [path] })).rejects.toBeInstanceOf(Error);
+    err.mockRestore();
+  });
+
+  it('a plain Error (bundle validation) stays UNHEALTHY — bad input is not a tool bug', async () => {
+    const path = join(tmp, 'bundle.json');
+    writeFileSync(path, JSON.stringify(minimalBundle()), 'utf-8');
+    ingestEvidenceBundle.mockRejectedValueOnce(new Error('evidence_items must be a non-empty array'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runBundle({ subcommand: 'ingest', args: [path] });
+    err.mockRestore();
+    expect(code).toBe(ExitCode.UNHEALTHY);
+  });
+
+  it('a SyntaxError from JSON.parse stays UNHEALTHY — the user\'s file is malformed', async () => {
+    const path = join(tmp, 'garbage.json');
+    writeFileSync(path, '{not json', 'utf-8');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const code = await runBundle({ subcommand: 'ingest', args: [path] });
+    err.mockRestore();
+    // 70 would claim CrisisMode is broken; the user handed it a bad file.
+    expect(code).toBe(ExitCode.UNHEALTHY);
+    expect(code).not.toBe(ExitCode.INTERNAL);
+  });
+
+  /**
    * `bundle respond -` is a documented workflow (pipe a bundle in, pipe the
    * AdapterResponse out to the judge). The stdin read loop had no coverage.
    */
@@ -526,6 +573,23 @@ describe('runStatus', () => {
     expect(await runStatus()).toBe(ExitCode.UNHEALTHY);
   });
 
+  /**
+   * `status` deliberately has no INDETERMINATE case: its data is a TCP probe
+   * that either connected or did not. A failed connect is a definite "not
+   * listening", not "could not determine" — there is no unknown state to
+   * report, so the command stays 0/1.
+   */
+  it('never returns INDETERMINATE — a failed probe is a definite answer', async () => {
+    loadConfigWithDetection.mockReturnValue({
+      config: { targets: [{ name: 'pg', kind: 'postgresql', primary: { host: 'h', port: 5432 } }] },
+      source: 'file',
+    });
+    detectServices.mockResolvedValue([{ kind: 'postgresql', host: 'h', port: 5432, detected: false }]);
+    const code = await runStatus();
+    expect(code).toBe(ExitCode.UNHEALTHY);
+    expect(code).not.toBe(ExitCode.INDETERMINATE);
+  });
+
   it('returns OK from raw detection when there is no config', async () => {
     loadConfigWithDetection.mockReturnValue({ config: null, source: 'none' });
     detectServices.mockResolvedValue([{ kind: 'redis', host: 'localhost', port: 6379, detected: true }]);
@@ -564,7 +628,7 @@ function report(verdict: ReadinessReport['verdict']): ReadinessReport {
 describe('runReadinessCommand', () => {
   it.each([
     ['ready', ExitCode.OK],
-    ['unknown', ExitCode.OK],
+    ['unknown', ExitCode.INDETERMINATE],
     ['at-risk', ExitCode.UNHEALTHY],
     ['not-ready', ExitCode.UNHEALTHY],
   ] as const)('verdict %s -> exit %i (human mode)', async (verdict, expected) => {

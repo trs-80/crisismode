@@ -109,28 +109,35 @@ Three output modes are supported:
 |---|---|---|
 | 0 | `OK` | Healthy, or the command did what was asked |
 | 1 | `UNHEALTHY` | Ran correctly, the answer is bad news (unhealthy/recovering target, service down, validation failed) |
-| 2 | `USAGE` | Called wrong: unknown command or flag, flag missing its value, a malformed flag value (e.g. `--interval abc`), missing required subcommand, unknown target name, unreadable file argument, config file missing or invalid, or any `CrisisModeError` (`src/cli/errors.ts` — the class carries a user-facing `suggestion`, e.g. "no config found", "`ANTHROPIC_API_KEY` not set") |
+| 2 | `USAGE` | Called wrong: unknown command or flag, flag missing its value (including an empty `--flag=`), a malformed flag value (e.g. `--interval abc`), missing required subcommand, unknown target name, unreadable file or `--config` argument, config file missing or invalid, or any `CrisisModeError` (`src/cli/errors.ts` — the class carries a user-facing `suggestion`, e.g. "no config found", "`ANTHROPIC_API_KEY` not set") |
+| 3 | `INDETERMINATE` | Nothing could be checked — every finding evaluated came back `unknown`. Distinct from 0 because a run that measured nothing is not evidence of health; distinct from 1 because "could not check" is not "broken". Mirrors `src/framework/check-plugin.ts`'s `EXIT_CODE_MAP`, which already ships `3: 'unknown'` to plugin authors (only that row — the plugin contract's 1/2 mean warning/critical) |
 | 70 | `INTERNAL` | Unexpected failure inside CrisisMode (sysexits `EX_SOFTWARE`) — distinct from 1 so a script can tell "your infra is broken" from "this tool is broken" |
 
 Per command:
 
-| Command | 0 | 1 | 2 |
-|---|---|---|---|
-| `scan` (and bare `crisismode`) | every finding `healthy`/`unknown` | any finding `unhealthy`/`recovering` | usage |
-| `diagnose` | target healthy | target `unhealthy`/`recovering` | usage; unknown target name or unroutable finding ID |
-| `status` | every configured target reachable | any configured target not listening | usage |
-| `readiness` | verdict `ready`/`unknown` | verdict `at-risk`/`not-ready` | usage |
-| `triage` | verdict `healthy`/`remote` | verdict `local`/`network`/`mixed` | usage |
-| `down` | no failure verdict | ≥1 failure verdict | usage |
-| `recover` | the flow completed (dry-run or execute) | — | usage |
-| `playbook validate` / `dry-run` | valid | fails safety validation | missing/unreadable path |
-| `agent`, `bundle`, `registry`, `completions`, `init`, `demo`, `webhook`, `ask`, `watch`, `mcp` | success | the requested work failed | usage |
+| Command | 0 | 1 | 2 | 3 |
+|---|---|---|---|---|
+| `scan` (and bare `crisismode`) | at least one finding `healthy`, none bad | any finding `unhealthy`/`recovering` | usage | every finding `unknown` |
+| `diagnose` | target healthy | target `unhealthy`/`recovering` | usage; unknown target name or unroutable finding ID | target health `unknown` |
+| `readiness` | verdict `ready` | verdict `at-risk`/`not-ready` | usage | verdict `unknown` (no rule could be evaluated) |
+| `status` | every configured target reachable | any configured target not listening | usage | — (a TCP probe either connected or did not; there is no `unknown` state to report) |
+| `triage` | verdict `healthy`/`remote` | verdict `local`/`network`/`mixed` | usage | — (verdict contract is fixed at 0/1/2) |
+| `down` | no failure verdict | ≥1 failure verdict | usage | — (contract is fixed at 0/1/2; `offline_skipped` is already handled as "not evidence") |
+| `recover` | the flow completed (dry-run or execute) | — | usage | — |
+| `playbook validate` / `dry-run` | valid | fails safety validation | missing/unreadable path | — |
+| `agent`, `bundle`, `registry`, `completions`, `init`, `demo`, `webhook`, `ask`, `watch`, `mcp` | success | the requested work failed | usage | — |
 
-`unknown` is deliberately **not** a failure: it means "CrisisMode could not check this" (no agent registered for the kind, probe timed out), not "this is broken". Exiting non-zero on it would fail every `crisismode && deploy` chain for a service nobody asked CrisisMode to watch.
+Three boundaries in the health-derived codes are deliberate and tested on both sides (`severityExitCode`, `src/cli/status-presentation.ts`):
 
-**Known edge case — the all-`unknown` run is a false green.** Because `unknown` maps to 0, a stack where CrisisMode could determine *nothing at all* exits 0, and a CI gate reads that as "healthy". This is currently rare but is getting more likely: a misconfigured `kafka`/`etcd`/`ceph`/`flink` target now yields an `unknown` finding rather than a fabricated one, and an unprobeable resolver yields an `unknown` DNS signal.
+- **A definite answer beats "could not check".** `[unhealthy, unknown]` → 1. Something real was measured and it was bad news.
+- **Partial `unknown` stays 0.** Nine healthy findings plus one `unknown` → 0. Failing a deploy for one unmeasurable signal is the cliff a separate code exists to avoid; 3 means "nothing at all", not "not everything".
+- **Zero findings → 0, not 3.** `[].every()` is vacuously true, so the all-`unknown` test is guarded on a non-empty set. A scan with no findings had nothing to observe, which is a different situation from having targets that could not be observed — and the no-config onboarding path already guides that case. Reporting 3 for `--category nonexistent` would be actively misleading.
 
-The condition is cheaply detectable and *not* currently acted on. At the point the code is computed (`src/cli/run.ts`, `case 'scan'`) the full `ScanResult` is in hand, so `result.findings.length > 0 && result.findings.every((f) => f.status === 'unknown')` needs no new plumbing; `readiness` has the same information as `report.evaluated` / `report.unknown`. Deciding what it *should* do — stay 0, become 1, or get a distinct "indeterminate" code — is a product decision, not an implementation one, and it should be made in one go with the `scan` exit-code change rather than shipped as a second behavioral change later.
+An individual `unknown` finding is deliberately **not** a failure: it means "CrisisMode could not check this" (no agent registered for the kind, probe timed out), not "this is broken". Exiting 1 on it would fail every `crisismode && deploy` chain for a service nobody asked CrisisMode to watch.
+
+But a run in which **everything** came back `unknown` is not evidence of health either, and it used to exit 0 — a false green a CI gate would read as "healthy", the same shape as the always-0 `scan` this contract replaced. That case is now exit **3** (`INDETERMINATE`). It matters increasingly: a misconfigured `kafka`/`etcd`/`ceph`/`flink` target yields an `unknown` finding rather than a fabricated one, and an unprobeable resolver yields an `unknown` DNS signal.
+
+Scripts that only care "is it safe to proceed" should test `-eq 0`; scripts that want to distinguish "broken" from "blind" get 1 and 3 separately.
 
 `recover` returns 0 on completion rather than deriving from health: in its default dry-run mode nothing has been fixed yet, so a health-derived code would report failure for a successful preview. Wiring the real execution outcome means changing `runRecovery` in `src/live.ts`.
 

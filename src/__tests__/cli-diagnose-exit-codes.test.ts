@@ -104,7 +104,9 @@ beforeEach(() => {
 describe('runDiagnose — health verdict becomes the exit code', () => {
   it.each([
     ['healthy', ExitCode.OK],
-    ['unknown', ExitCode.OK],
+    // A single target whose health could not be determined is the
+    // all-unknown case for diagnose: nothing was measured.
+    ['unknown', ExitCode.INDETERMINATE],
     ['recovering', ExitCode.UNHEALTHY],
     ['unhealthy', ExitCode.UNHEALTHY],
   ] as const)('a %s target exits %i', async (status, expected) => {
