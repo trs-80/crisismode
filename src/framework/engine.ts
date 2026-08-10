@@ -439,7 +439,7 @@ export class LegacyExecutionEngine {
         message: 'Approval auto-satisfied by trust level or catalog',
       });
     } else {
-      result = await requestApproval(step, catalogCovered);
+      result = await requestApproval(step);
       this.recorder.addLogEntry({
         type: 'approval_received',
         stepId: step.stepId,

@@ -10,15 +10,16 @@ export type ApprovalResult = 'approved' | 'skipped' | 'rejected';
 
 /**
  * Ask a human. Callers reach this only after {@link shouldAutoApprove} declined
- * to auto-approve, so catalog coverage has already been considered — and a
- * second short-circuit here would let a catalog bypass the high/critical gate.
- * The parameter is retained for call-site compatibility and is deliberately
- * not honored as a bypass.
+ * to auto-approve, so catalog coverage has already been decided by then; this
+ * function takes no catalog argument, because a second short-circuit here would
+ * let a catalog bypass the high/critical gate.
+ *
+ * `_step` is not read yet: the prompt is generic, and the step's `timeout` and
+ * `timeoutAction` are not honored by any engine today — an approval declaring
+ * `PT10M` / `escalate` never fires, and the webhook receiver consequently waits
+ * on stdin forever. The parameter stays so that enforcement can land here.
  */
-export async function requestApproval(
-  _step: HumanApprovalStep,
-  _catalogCovered: boolean,
-): Promise<ApprovalResult> {
+export async function requestApproval(_step: HumanApprovalStep): Promise<ApprovalResult> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
 
   try {

@@ -128,9 +128,9 @@ function makeApprovalStep(): HumanApprovalStep {
 }
 
 describe('requestApproval', () => {
-  it('asks the human even when the caller claims catalog coverage', async () => {
+  it('always asks the human — there is no catalog bypass to pass in', async () => {
     questionMock.mockClear();
-    const result = await requestApproval(makeApprovalStep(), true);
+    const result = await requestApproval(makeApprovalStep());
     expect(questionMock).toHaveBeenCalledTimes(1);
     expect(result).toBe('rejected');
   });
