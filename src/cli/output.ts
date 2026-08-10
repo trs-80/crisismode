@@ -456,6 +456,20 @@ export function printNetworkProfile(profile: NetworkProfile): void {
 
 // ── Generic messages ──
 
+/**
+ * A blank separator line — suppressed in machine mode.
+ *
+ * `printInfo` and friends already no-op for `--json`, but a bare
+ * `console.log('')` next to them does not: it emitted an empty line into the
+ * middle of the JSONL stream, which strict line-by-line consumers
+ * (`while read line; do jq ...`) choke on. Use this instead of
+ * `console.log('')` anywhere machine mode can reach.
+ */
+export function printSpacer(): void {
+  if (outputOptions.mode === 'machine') return;
+  console.log('');
+}
+
 export function printInfo(msg: string): void {
   if (outputOptions.mode === 'machine') return;
   console.log(chalk.dim(`  ${msg}`));

@@ -19,7 +19,7 @@ import { discoverCheckPlugins } from '../../framework/check-discovery.js';
 import { dispatchPluginExecution, exitStatusToHealth } from '../../framework/check-plugin.js';
 import {
   printBanner, printScanSummary, printVisibility, printNextAction,
-  printInfo, printDetection, getOutputMode,
+  printInfo, printDetection, getOutputMode, printSpacer,
   printPlainEnglishSummary, printSynthesis, printTriageContext,
 } from '../output.js';
 import {
@@ -390,7 +390,9 @@ export async function runScan(opts: ScanOptions): Promise<ScanResult> {
 
   // Phase 2: Parallel health checks
   printInfo(`Running health checks on ${targets.length} target(s)...`);
-  console.log('');
+  // printSpacer, not console.log('') — the latter emitted a blank line into
+  // the middle of the --json JSONL stream, breaking strict consumers.
+  printSpacer();
 
   const registry = new AgentRegistry({ ...config, targets });
   const maturityByKind = registry.maturityByKind();

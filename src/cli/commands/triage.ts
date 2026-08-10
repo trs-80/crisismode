@@ -16,6 +16,7 @@ import { runTriage } from '../../framework/triage.js';
 import { getEscalationInfo } from '../../framework/escalation.js';
 import { getOutputMode, jsonOut, outputOptions, printBanner, printWarning } from '../output.js';
 import { triageVerdictColor } from '../status-presentation.js';
+import type { ExitCode } from '../exit-codes.js';
 import { discoverStack } from '../autodiscovery.js';
 import { ConfigNotFoundError, ConfigValidationError, loadConfigWithDetection } from '../../config/loader.js';
 import { resolveTarget } from '../../framework/service-status/catalog.js';
@@ -237,7 +238,7 @@ async function enrichWithServiceStatus(
   return lines;
 }
 
-export async function runTriageCommand(opts: TriageCommandOptions = {}): Promise<number> {
+export async function runTriageCommand(opts: TriageCommandOptions = {}): Promise<ExitCode> {
   const targets = await resolveTriageTargets(opts.configPath);
   const report = await runTriage({ targets });
 
@@ -278,7 +279,8 @@ export async function runTriageCommand(opts: TriageCommandOptions = {}): Promise
     for (const line of serviceLines) console.log(line);
   }
 
-  const code = triageExitCode(report.verdict);
-  process.exitCode = code;
-  return code;
+  // Returned, not assigned — run.ts is the only place that writes
+  // process.exitCode. `triage`'s observable contract is unchanged: 1 when
+  // the verdict is local/network/mixed, as CLAUDE.md documents.
+  return triageExitCode(report.verdict);
 }

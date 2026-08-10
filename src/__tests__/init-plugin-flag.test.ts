@@ -14,9 +14,13 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { runInit } from '../cli/commands/init.js';
+import { parseCli } from '../cli/args.js';
+import { HELP } from '../cli/run.js';
 import { configure } from '../cli/output.js';
 
-const INDEX_SOURCE = readFileSync(fileURLToPath(new URL('../cli/index.ts', import.meta.url)), 'utf-8');
+// Routing and the help text moved from index.ts to run.ts when the
+// exit-code contract was centralized; index.ts is now the process boundary.
+const RUN_SOURCE = readFileSync(fileURLToPath(new URL('../cli/run.ts', import.meta.url)), 'utf-8');
 const SCAN_SOURCE = readFileSync(
   fileURLToPath(new URL('../cli/commands/scan.ts', import.meta.url)),
   'utf-8',
@@ -208,30 +212,44 @@ describe('crisismode init — CLI flag registration', () => {
     expect(values.agent).toBeUndefined();
   });
 
-  it('registers both flags in the real parseArgs config', () => {
-    expect(INDEX_SOURCE).toContain('plugin: { type: \'string\' }');
-    expect(INDEX_SOURCE).toContain('agent: { type: \'string\' }');
+  it('registers both flags in the real parser, scoped to init', () => {
+    // Behavior, not source text: both flags must survive the shared parser
+    // with their values intact, on the `init` command specifically (the
+    // parser is now strict per-command, so a flag init does not accept is a
+    // usage error).
+    const parsed = parseCli(['init', '--plugin', 'my-check', '--agent', 'legacy']);
+    expect(parsed.kind).toBe('command');
+    if (parsed.kind !== 'command') return;
+    expect(parsed.command).toBe('init');
+    expect(parsed.values.plugin).toBe('my-check');
+    expect(parsed.values.agent).toBe('legacy');
+  });
+
+  it('rejects a valueless --plugin at the parser, before init ever runs', () => {
+    const parsed = parseCli(['init', '--plugin']);
+    expect(parsed.kind).toBe('usage');
+    if (parsed.kind === 'usage') expect(parsed.message).toContain('--plugin');
   });
 
   it('forwards both flags from the init route to runInit', () => {
-    expect(INDEX_SOURCE).toContain('plugin: values.plugin as string | boolean | undefined');
-    expect(INDEX_SOURCE).toContain('agent: values.agent as string | boolean | undefined');
+    expect(RUN_SOURCE).toContain('plugin: values.plugin');
+    expect(RUN_SOURCE).toContain('agent: values.agent');
   });
 });
 
 describe('crisismode init — documented surface matches the real one', () => {
   it('help text advertises --plugin for scaffolding', () => {
-    expect(INDEX_SOURCE).toContain('crisismode init --plugin <name>');
-    expect(INDEX_SOURCE).toMatch(/--plugin <name>\s+Scaffold a new check plugin \(init only\)/);
+    expect(HELP).toContain('crisismode init --plugin <name>');
+    expect(HELP).toMatch(/--plugin <name>\s+Scaffold a new check plugin \(init only\)/);
   });
 
   it('help text never describes --agent as the way to scaffold a plugin', () => {
-    expect(INDEX_SOURCE).not.toContain('init --agent');
-    expect(INDEX_SOURCE).not.toMatch(/--agent <name>\s+Scaffold/);
+    expect(HELP).not.toContain('init --agent');
+    expect(HELP).not.toMatch(/--agent <name>\s+Scaffold/);
   });
 
   it('help text marks --agent as a deprecated alias', () => {
-    expect(INDEX_SOURCE).toMatch(/--agent <name>\s+Deprecated alias for --plugin/);
+    expect(HELP).toMatch(/--agent <name>\s+Deprecated alias for --plugin/);
   });
 
   it('the empty-plugin scan hint suggests the canonical flag', () => {

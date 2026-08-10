@@ -26,6 +26,7 @@ import { resolveCatalogEntry } from '../../framework/service-status/catalog.js';
 import { loadConfigWithDetection, ConfigNotFoundError, ConfigValidationError, HOSTNAME_PATTERN } from '../../config/loader.js';
 import { getOutputMode, jsonOut, outputOptions, printBanner } from '../output.js';
 import { healthStatusColor } from '../status-presentation.js';
+import { ExitCode } from '../exit-codes.js';
 import type { ServiceConfigEntry } from '../../config/schema.js';
 import type { ServiceStatusReport, ServiceVerdict } from '../../framework/service-status/types.js';
 import type { HealthStatus } from '../../types/health.js';
@@ -162,58 +163,6 @@ function printDownUsage(): void {
 }
 
 /**
- * Flags this command recognizes on its own raw args (not the global
- * parser's `values`) — `--config` is a known two-token flag here so its
- * value isn't mistaken for a service id or an unrecognized flag; the actual
- * path comes from `deps.configPath`, already extracted by index.ts's global
- * parser, so there is exactly one place that turns `--config <path>` into a
- * string.
- */
-const KNOWN_DOWN_FLAGS = new Set(['--json', '--terse', '--no-color', '--verbose', '-h', '--help']);
-
-interface ParsedDownArgs {
-  serviceIds: string[];
-}
-
-/**
- * index.ts's global `parseArgs({ strict: false })` silently accepts any
- * `--flag` it doesn't recognize into `values` — it never throws, so nothing
- * in this CLI has ever exited 2 before. `down` is the first command to
- * validate its own flags: this scans the raw args index.ts hands it (before
- * that lossy global parse) for a `-`/`--` token outside the known set.
- *
- * `--config` needs its own check rather than falling into that generic scan:
- * previously it unconditionally consumed the next token as its value.
- * `down --config` (nothing after) silently proceeded with no path — Node's
- * `util.parseArgs({ strict: false })` doesn't throw for a string option with
- * a missing value either (it stores `true`), so index.ts's global parser
- * doesn't catch this — and `down --config --terse` swallowed `--terse` as a
- * literal filename ("Config file not found: .../--terse") instead of
- * treating it as a flag. Both are a missing/flag-like value for `--config`,
- * which the spec calls a usage error (exit 2), not a reachability or
- * "no services configured" outcome.
- */
-export function parseDownArgs(args: readonly string[]): ParsedDownArgs | { unknownFlag: string } | { usageError: string } {
-  const serviceIds: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
-    if (arg === '--config') {
-      const value = args[i + 1];
-      if (value === undefined || value.startsWith('-')) {
-        return { usageError: "'--config' requires a path argument" };
-      }
-      i++; // skip its value
-      continue;
-    }
-    if (arg.startsWith('--config=')) continue;
-    if (KNOWN_DOWN_FLAGS.has(arg)) continue;
-    if (arg.startsWith('-')) return { unknownFlag: arg };
-    serviceIds.push(arg);
-  }
-  return { serviceIds };
-}
-
-/**
  * Medium 4: a positional that resolves to neither a catalog id/alias nor a
  * statuspage-capable llm-provider id is treated as a raw domain and handed
  * straight to DNS — so a URL (`http://api.foo.com/path`) used to DNS-fail
@@ -284,34 +233,29 @@ export interface RunDownCommandDeps extends CheckerDeps {
   configPath?: string | undefined;
 }
 
-export async function runDownCommand(args: readonly string[], deps: RunDownCommandDeps = {}): Promise<number> {
-  const parsed = parseDownArgs(args);
-  if ('unknownFlag' in parsed) {
-    console.error(`crisismode down: unrecognized option '${parsed.unknownFlag}'`);
-    console.error('Usage: crisismode down [<service>...] [--config <path>] [--json] [--terse] [--no-color] [--verbose]');
-    process.exitCode = 2;
-    return 2;
-  }
-  if ('usageError' in parsed) {
-    console.error(`crisismode down: ${parsed.usageError}`);
-    console.error('Usage: crisismode down [<service>...] [--config <path>] [--json] [--terse] [--no-color] [--verbose]');
-    process.exitCode = 2;
-    return 2;
-  }
-
+/**
+ * `serviceIds` are positionals only — flags have already been parsed and
+ * validated by `cli/args.ts`. This command used to be handed the raw argv
+ * and re-parse it privately (`parseDownArgs`, deleted), because index.ts's
+ * global `parseArgs({ strict: false })` silently accepted any unrecognized
+ * flag. That workaround fixed one call site; `args.ts` now rejects unknown
+ * flags — and a value-taking flag with a missing or flag-like value, which
+ * is where `down --config` / `down --config --terse` were caught — for every
+ * command, so `down`'s exit-2 contract is unchanged and no longer private.
+ */
+export async function runDownCommand(serviceIds: readonly string[], deps: RunDownCommandDeps = {}): Promise<ExitCode> {
   let entries: readonly ServiceConfigEntry[];
-  if (parsed.serviceIds.length > 0) {
-    const badArg = parsed.serviceIds.find((id) => !isValidAdHocServiceId(id));
+  if (serviceIds.length > 0) {
+    const badArg = serviceIds.find((id) => !isValidAdHocServiceId(id));
     if (badArg !== undefined) {
       console.error(
         `crisismode down: invalid service argument '${badArg}' — expected a catalog id/alias or a bare domain ` +
         '(no scheme, path, or spaces).',
       );
       console.error('Usage: crisismode down [<service>...] [--config <path>] [--json] [--terse] [--no-color] [--verbose]');
-      process.exitCode = 2;
-      return 2;
+      return ExitCode.USAGE;
     }
-    entries = parsed.serviceIds;
+    entries = serviceIds;
   } else {
     const loadConfigFn = deps.loadConfig ?? loadConfigWithDetection;
     let configured: ServiceConfigEntry[] = [];
@@ -327,8 +271,7 @@ export async function runDownCommand(args: readonly string[], deps: RunDownComma
     }
     if (configured.length === 0) {
       printDownUsage();
-      process.exitCode = 0;
-      return 0;
+      return ExitCode.OK;
     }
     entries = configured;
   }
@@ -350,7 +293,5 @@ export async function runDownCommand(args: readonly string[], deps: RunDownComma
     for (const line of renderDownHuman(reports)) console.log(line);
   }
 
-  const code = downExitCode(reports);
-  process.exitCode = code;
-  return code;
+  return downExitCode(reports);
 }

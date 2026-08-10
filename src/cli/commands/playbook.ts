@@ -16,6 +16,7 @@ import { playbookToPlan, buildPlaybookManifest } from '../../framework/playbook/
 import { validatePlan } from '../../framework/validator.js';
 import { discoverPlaybooks } from '../../framework/playbook/discovery.js';
 import { printInfo, printSuccess, printError, printWarning } from '../output.js';
+import { ExitCode } from '../exit-codes.js';
 
 export interface PlaybookOptions {
   subcommand: string;
@@ -23,7 +24,7 @@ export interface PlaybookOptions {
   json?: boolean;
 }
 
-export async function runPlaybook(options: PlaybookOptions): Promise<void> {
+export async function runPlaybook(options: PlaybookOptions): Promise<ExitCode> {
   switch (options.subcommand) {
     case 'validate':
       return runValidate(options);
@@ -33,15 +34,16 @@ export async function runPlaybook(options: PlaybookOptions): Promise<void> {
       return runDryRun(options);
     default:
       printError(`Unknown subcommand: ${options.subcommand}`);
-      process.exit(1);
+      printError('Usage: crisismode playbook list|validate|dry-run');
+      return ExitCode.USAGE;
   }
 }
 
-async function runValidate(opts: PlaybookOptions): Promise<void> {
+async function runValidate(opts: PlaybookOptions): Promise<ExitCode> {
   const filePath = opts.args[0];
   if (!filePath) {
     printError('Usage: crisismode playbook validate <path>');
-    process.exit(1);
+    return ExitCode.USAGE;
   }
 
   let content: string;
@@ -54,8 +56,7 @@ async function runValidate(opts: PlaybookOptions): Promise<void> {
     } else {
       printError(`Failed to read ${filePath}: ${message}`);
     }
-    process.exit(1);
-    return;
+    return ExitCode.USAGE;
   }
 
   try {
@@ -74,7 +75,7 @@ async function runValidate(opts: PlaybookOptions): Promise<void> {
         planStepCount: plan.steps.length,
         checks: validation.checks,
       }));
-      if (!validation.valid) process.exit(1);
+      return validation.valid ? ExitCode.OK : ExitCode.UNHEALTHY;
     } else if (validation.valid) {
       printSuccess(
         `${filePath}: valid playbook "${playbook.frontmatter.name}" v${playbook.frontmatter.version} ` +
@@ -86,8 +87,9 @@ async function runValidate(opts: PlaybookOptions): Promise<void> {
       for (const check of validation.checks.filter((c) => !c.passed)) {
         printError(`  ✗ ${check.name}: ${check.message}`);
       }
-      process.exit(1);
+      return ExitCode.UNHEALTHY;
     }
+    return ExitCode.OK;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (opts.json) {
@@ -95,11 +97,11 @@ async function runValidate(opts: PlaybookOptions): Promise<void> {
     } else {
       printError(`${filePath}: ${message}`);
     }
-    process.exit(1);
+    return ExitCode.UNHEALTHY;
   }
 }
 
-async function runList(opts: PlaybookOptions): Promise<void> {
+async function runList(opts: PlaybookOptions): Promise<ExitCode> {
   const result = await discoverPlaybooks();
 
   if (opts.json) {
@@ -112,13 +114,13 @@ async function runList(opts: PlaybookOptions): Promise<void> {
       agent: p.frontmatter.agent,
       tags: p.frontmatter.tags,
     })), null, 2));
-    return;
+    return ExitCode.OK;
   }
 
   if (result.playbooks.length === 0) {
     printInfo('No playbooks discovered.');
     printInfo('Place .md playbooks in ~/.crisismode/playbooks/ or ./playbooks/');
-    return;
+    return ExitCode.OK;
   }
 
   printInfo(`${result.playbooks.length} playbook(s) discovered\n`);
@@ -147,13 +149,14 @@ async function runList(opts: PlaybookOptions): Promise<void> {
       printWarning(`${warning.path}: ${warning.reason}`);
     }
   }
+  return ExitCode.OK;
 }
 
-async function runDryRun(opts: PlaybookOptions): Promise<void> {
+async function runDryRun(opts: PlaybookOptions): Promise<ExitCode> {
   const filePath = opts.args[0];
   if (!filePath) {
     printError('Usage: crisismode playbook dry-run <path>');
-    process.exit(1);
+    return ExitCode.USAGE;
   }
 
   let content: string;
@@ -162,8 +165,7 @@ async function runDryRun(opts: PlaybookOptions): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     printError(`Failed to read ${filePath}: ${message}`);
-    process.exit(1);
-    return;
+    return ExitCode.USAGE;
   }
 
   try {
@@ -175,8 +177,7 @@ async function runDryRun(opts: PlaybookOptions): Promise<void> {
 
     if (opts.json) {
       console.log(JSON.stringify({ plan, validation }, null, 2));
-      if (!validation.valid) process.exit(1);
-      return;
+      return validation.valid ? ExitCode.OK : ExitCode.UNHEALTHY;
     }
 
     if (!validation.valid) {
@@ -184,7 +185,7 @@ async function runDryRun(opts: PlaybookOptions): Promise<void> {
       for (const check of validation.checks.filter((c) => !c.passed)) {
         printError(`  ✗ ${check.name}: ${check.message}`);
       }
-      process.exit(1);
+      return ExitCode.UNHEALTHY;
     }
     printSuccess(`Plan safety validation: ${validation.checks.length} checks passed`);
 
@@ -202,9 +203,10 @@ async function runDryRun(opts: PlaybookOptions): Promise<void> {
     }
 
     printInfo('NOTE: Actual execution against simulators is future work.');
+    return ExitCode.OK;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     printError(`Failed to compile playbook: ${message}`);
-    process.exit(1);
+    return ExitCode.UNHEALTHY;
   }
 }

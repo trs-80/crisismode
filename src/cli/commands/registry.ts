@@ -14,6 +14,7 @@ import { fetchRegistry, matchEntries } from '../../config/check-registry.js';
 import type { CheckRegistryEntry } from '../../config/check-registry.js';
 import { installCheck, getInstalledVersion } from '../../framework/check-installer.js';
 import { printInfo, printSuccess, printError } from '../output.js';
+import { ExitCode } from '../exit-codes.js';
 
 export interface RegistryOptions {
   subcommand: 'list' | 'install' | 'search';
@@ -23,7 +24,7 @@ export interface RegistryOptions {
   json?: boolean;
 }
 
-export async function runRegistry(opts: RegistryOptions): Promise<void> {
+export async function runRegistry(opts: RegistryOptions): Promise<ExitCode> {
   switch (opts.subcommand) {
     case 'list':
       return runList(opts);
@@ -34,7 +35,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<void> {
   }
 }
 
-async function runList(opts: RegistryOptions): Promise<void> {
+async function runList(opts: RegistryOptions): Promise<ExitCode> {
   const registry = await fetchRegistry();
 
   if (opts.json) {
@@ -44,20 +45,21 @@ async function runList(opts: RegistryOptions): Promise<void> {
       installedVersion: getInstalledVersion(c.name),
     }));
     console.log(JSON.stringify(entries, null, 2));
-    return;
+    return ExitCode.OK;
   }
 
   printInfo(`${registry.checks.length} check(s) available (registry updated ${registry.updatedAt.split('T')[0]})\n`);
   printTable(registry.checks);
   console.log('');
   printInfo('Install with: crisismode registry install <name>');
+  return ExitCode.OK;
 }
 
-async function runSearch(opts: RegistryOptions): Promise<void> {
+async function runSearch(opts: RegistryOptions): Promise<ExitCode> {
   const query = opts.args.join(' ');
   if (!query) {
     printError('Usage: crisismode registry search <query>');
-    process.exit(1);
+    return ExitCode.USAGE;
   }
 
   const registry = await fetchRegistry();
@@ -65,23 +67,24 @@ async function runSearch(opts: RegistryOptions): Promise<void> {
 
   if (opts.json) {
     console.log(JSON.stringify(results, null, 2));
-    return;
+    return ExitCode.OK;
   }
 
   if (results.length === 0) {
     printInfo(`No checks matching "${query}".`);
-    return;
+    return ExitCode.OK;
   }
 
   printInfo(`${results.length} check(s) matching "${query}"\n`);
   printTable(results);
+  return ExitCode.OK;
 }
 
-async function runInstall(opts: RegistryOptions): Promise<void> {
+async function runInstall(opts: RegistryOptions): Promise<ExitCode> {
   const name = opts.args[0];
   if (!name) {
     printError('Usage: crisismode registry install <name>');
-    process.exit(1);
+    return ExitCode.USAGE;
   }
 
   const registry = await fetchRegistry();
@@ -98,7 +101,9 @@ async function runInstall(opts: RegistryOptions): Promise<void> {
     } else {
       printError(`Check "${name}" not found. Run \`crisismode registry list\` to see available checks.`);
     }
-    process.exit(1);
+    // A name that isn't in the registry is a wrong invocation, not a
+    // failed install.
+    return ExitCode.USAGE;
   }
 
   try {
@@ -108,9 +113,10 @@ async function runInstall(opts: RegistryOptions): Promise<void> {
     });
     printSuccess(`Installed ${result.name}@${entry.version} -> ${result.installedTo}`);
     printInfo('Run: crisismode scan');
+    return ExitCode.OK;
   } catch (err) {
     printError(err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    return ExitCode.UNHEALTHY;
   }
 }
 

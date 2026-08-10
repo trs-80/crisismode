@@ -10,6 +10,8 @@ import { renderTriagePipe, renderTriageReport, resolveTriageTargets, runTriageCo
 import { configure, setOutputOptions } from '../cli/output.js';
 import { runTriage } from '../framework/triage.js';
 import { ConfigValidationError } from '../config/loader.js';
+import { parseCli } from '../cli/args.js';
+import { HELP } from '../cli/run.js';
 import type * as TriageFramework from '../framework/triage.js';
 import type { TriageReport } from '../framework/triage.js';
 import type { ServiceStatusReport } from '../framework/service-status/types.js';
@@ -376,18 +378,24 @@ describe('resolveTriageTargets — services/targets name collision surfaces to t
 });
 
 describe('CLI registration', () => {
-  const indexSource = readFileSync(
-    fileURLToPath(new URL('../cli/index.ts', import.meta.url)),
+  // Routing and the help text moved from index.ts (now a three-line process
+  // boundary) to run.ts when the exit-code contract was centralized.
+  const runSource = readFileSync(
+    fileURLToPath(new URL('../cli/run.ts', import.meta.url)),
     'utf-8',
   );
 
   it('routes the triage subcommand to runTriageCommand', () => {
-    expect(indexSource).toContain("case 'triage':");
-    expect(indexSource).toContain("await import('./commands/triage.js')");
-    expect(indexSource).toContain('runTriageCommand');
+    // Behavior, not source text: the parser has to resolve the token.
+    const parsed = parseCli(['triage']);
+    expect(parsed.kind).toBe('command');
+    if (parsed.kind === 'command') expect(parsed.command).toBe('triage');
+    expect(runSource).toContain("case 'triage':");
+    expect(runSource).toContain("await import('./commands/triage.js')");
+    expect(runSource).toContain('runTriageCommand');
   });
 
   it('documents triage in the help text', () => {
-    expect(indexSource).toContain('crisismode triage');
+    expect(HELP).toContain('crisismode triage');
   });
 });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runCompletions } from '../cli/commands/completions.js';
+import { ExitCode } from '../cli/exit-codes.js';
 
 describe('Shell completions (6.2)', () => {
   let stdoutChunks: string[];
@@ -60,11 +61,15 @@ describe('Shell completions (6.2)', () => {
   });
 
   it('rejects unsupported shell', async () => {
-    await runCompletions('powershell');
+    // Was `process.exit(1)`. `completions` now returns the same USAGE code
+    // `down --bogusflag` has always returned for the same class of mistake,
+    // and index.ts is the only place a code becomes process.exitCode.
+    const code = await runCompletions('powershell');
     const stderr = stderrChunks.join('');
     expect(stderr).toContain('unsupported shell');
     expect(stderr).toContain('powershell');
-    expect(process.exit).toHaveBeenCalledWith(1);
+    expect(code).toBe(ExitCode.USAGE);
+    expect(process.exit).not.toHaveBeenCalled();
   });
 
   it('bash completions include all commands', async () => {
