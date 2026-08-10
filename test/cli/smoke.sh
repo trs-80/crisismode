@@ -122,6 +122,37 @@ assert_not_contains() {
   fi
 }
 
+# Assert the captured stdout is strict JSONL: every line a standalone JSON
+# object, no blank lines.
+#
+# A bare `console.log('')` sitting next to machine-mode-aware printers
+# (printInfo and friends no-op for --json; a raw blank line does not) put
+# empty lines into the middle of the stream, which breaks
+# `while read l; do ... jq ...; done`. Checked for every --json surface, not
+# just scan — diagnose had two of them.
+assert_strict_jsonl() {
+  local name="$1"
+  local result
+  result=$(printf '%s' "$CMD_OUT" | node -e "
+let d='';
+process.stdin.on('data',c=>d+=c);
+process.stdin.on('end',()=>{
+  const lines=d.split('\n');
+  const bad=[];
+  lines.forEach((l,i)=>{
+    if(l==='' && i===lines.length-1) return;
+    if(l.trim()===''){ bad.push('blank line at '+(i+1)); return; }
+    try { JSON.parse(l); } catch(e) { bad.push('line '+(i+1)+': '+e.message); }
+  });
+  console.log(bad.length?bad.join('; '):'ok');
+})" 2>/dev/null || echo "node error")
+  if [ "$result" = "ok" ]; then
+    pass "$name"
+  else
+    fail "$name" "$result"
+  fi
+}
+
 # Assert neither stdout nor stderr contains stack traces or runtime errors
 assert_no_crash() {
   local name="$1"
@@ -216,26 +247,7 @@ run_cli "scan --json"
 assert_exit_one_of "scan --json exits 0 or 1 (health verdict)" 0 1
 assert_no_crash "scan --json has no crashes"
 
-# Every line must be a standalone JSON object (JSONL) — a stray blank line
-# breaks strict consumers.
-JSONL_CHECK=$(printf '%s' "$CMD_OUT" | node -e "
-let d='';
-process.stdin.on('data',c=>d+=c);
-process.stdin.on('end',()=>{
-  const lines=d.split('\n');
-  const bad=[];
-  lines.forEach((l,i)=>{
-    if(l==='' && i===lines.length-1) return;
-    if(l.trim()==='') { bad.push('blank line at '+(i+1)); return; }
-    try { JSON.parse(l); } catch(e) { bad.push('line '+(i+1)+': '+e.message); }
-  });
-  console.log(bad.length?bad.join('; '):'ok');
-})" 2>/dev/null || echo "node error")
-if [ "$JSONL_CHECK" = "ok" ]; then
-  pass "scan --json is strict JSONL (no blank or non-JSON lines)"
-else
-  fail "scan --json is strict JSONL" "$JSONL_CHECK"
-fi
+assert_strict_jsonl "scan --json is strict JSONL (no blank or non-JSON lines)"
 
 # JSON mode outputs JSONL — one JSON object per line.
 # The scan result line has "type":"scan"
@@ -478,6 +490,26 @@ assert_not_contains "--verbose completions bash produced no scan output" "findin
 
 run_cli "--json completions fish"
 assert_contains "--json completions fish runs completions, not scan" "complete -c crisismode"
+
+# `--json diagnose` used to emit a JSON *scan* record. It must now emit
+# diagnose's own records and no scan record, in either flag ordering, and
+# both orderings must produce the same record types.
+run_cli "--json diagnose"
+assert_exit_one_of "--json diagnose exits 0 or 1 (health verdict)" 0 1
+assert_not_contains "--json diagnose emits no scan record" '"type":"scan"'
+assert_contains "--json diagnose emits diagnose's own records" '"type":"health"'
+assert_strict_jsonl "--json diagnose is strict JSONL"
+FLAG_FIRST_TYPES=$(echo "$CMD_OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{console.log(d.split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l).type}catch(e){return 'NON-JSON'}}).join(','))})" 2>/dev/null || echo "err")
+
+run_cli "diagnose --json"
+assert_strict_jsonl "diagnose --json is strict JSONL"
+FLAG_LAST_TYPES=$(echo "$CMD_OUT" | node -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{console.log(d.split('\n').filter(Boolean).map(l=>{try{return JSON.parse(l).type}catch(e){return 'NON-JSON'}}).join(','))})" 2>/dev/null || echo "err")
+
+if [ "$FLAG_FIRST_TYPES" = "$FLAG_LAST_TYPES" ] && [ -n "$FLAG_FIRST_TYPES" ]; then
+  pass "flag order does not change diagnose output ($FLAG_FIRST_TYPES)"
+else
+  fail "flag order does not change diagnose output" "'--json diagnose'=[$FLAG_FIRST_TYPES] vs 'diagnose --json'=[$FLAG_LAST_TYPES]"
+fi
 
 echo ""
 

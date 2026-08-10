@@ -12,6 +12,9 @@ vi.mock('../cli/output.js', () => ({
   printWarning: vi.fn(),
   printError: vi.fn(),
   printDetection: vi.fn(),
+  // Machine-mode-aware blank line; runtime.ts uses it in place of a bare
+  // console.log(''), which leaked blank lines into the --json JSONL stream.
+  printSpacer: vi.fn(),
 }));
 
 vi.mock('../config/loader.js', async (importOriginal) => {

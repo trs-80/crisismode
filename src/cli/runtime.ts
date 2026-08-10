@@ -19,7 +19,7 @@ import type { SiteConfig } from '../config/schema.js';
 import { detectServices } from './detect.js';
 import { mergeLocalTargets } from './local-agents.js';
 import { serviceTargetsFromConfig } from './service-targets.js';
-import { printInfo, printDetection } from './output.js';
+import { printInfo, printDetection, printSpacer } from './output.js';
 
 /**
  * Format the human-readable config source label from a load result.
@@ -92,7 +92,9 @@ export async function loadConfigWithLocalTargets(
   }
 
   printInfo(`Config: ${source}`);
-  console.log('');
+  // printSpacer, not console.log('') — printInfo is machine-mode aware but a
+  // bare blank line is not, and it lands in the middle of the JSONL stream.
+  printSpacer();
 
   return { config, source };
 }
