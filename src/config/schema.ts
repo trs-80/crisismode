@@ -180,6 +180,17 @@ export interface ResolvedTarget {
   /** Target system version — from config or auto-discovered. */
   version?: string | undefined;
   primary: HostConfig;
+  /**
+   * True when the config omitted `primary` and `resolveTarget()` stamped the
+   * `{ host: 'aws', port: 0 }` placeholder (config/resolve.ts). `primary` is
+   * non-optional here for downstream convenience, which otherwise erases the
+   * difference between "nobody configured a host" and "the host is literally
+   * `aws`" — a difference operator-facing errors must not get wrong, and one
+   * that cannot be recovered by string-matching the placeholder because `aws`
+   * is a value a config may legitimately set. Recorded at the one site that
+   * knows the answer.
+   */
+  primaryDefaulted?: boolean | undefined;
   replicas: HostConfig[];
   credentials: ResolvedCredentials;
   /** AWS-specific config — passed through from TargetConfig. */

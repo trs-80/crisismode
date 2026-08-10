@@ -19,6 +19,7 @@ export function resolveTarget(target: TargetConfig): ResolvedTarget {
     agent: target.agent,
     version: target.version,
     primary: target.primary ?? { host: 'aws', port: 0 },
+    primaryDefaulted: target.primary === undefined,
     replicas: target.replicas ?? [],
     credentials: resolveCredentials(target.credentials),
     aws: target.aws,

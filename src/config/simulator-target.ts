@@ -11,10 +11,15 @@
  * cli/service-targets.ts, and was already the discriminator in
  * live-registration.ts.
  *
- * A missing `primary` counts as a simulator target too, because nothing was
- * pointed at. Note that `resolveTarget()` (config/resolve.ts) stamps
- * `{ host: 'aws', port: 0 }` on config-loaded targets that omit `primary`, so
- * in practice only directly-constructed targets reach here without one.
+ * The `!target.primary` arm is unreachable for config-loaded targets: every
+ * target that comes through `resolveTarget()` (config/resolve.ts) has
+ * `primary` populated, because that function stamps `{ host: 'aws', port: 0 }`
+ * when the config omits it. The arm exists solely for `ResolvedTarget`s built
+ * directly in code and in tests, which skip the resolver and may genuinely
+ * have no `primary` — for those, nothing was pointed at, so the simulator is
+ * the honest answer. Config-loaded targets that omit `primary` are a
+ * different case and are handled downstream via `primaryDefaulted`, which is
+ * how callers tell "no host configured" from "the host is literally `aws`".
  */
 
 import type { ResolvedTarget } from './schema.js';
