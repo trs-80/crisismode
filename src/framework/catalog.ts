@@ -1,45 +1,45 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
+/**
+ * Pre-authorized action catalogs.
+ *
+ * A catalog entry is a standing, human-granted approval: "for this agent, this
+ * scenario, in this environment, up to this risk level, you may act without
+ * asking again." Because it removes a human from the loop, every criterion the
+ * entry declares is enforced here, and the whole mechanism fails closed:
+ *
+ *  - no configured catalog source  -> nothing is pre-authorized
+ *  - entry not in the operator's `preAuthorizedCatalogs` -> not applied
+ *  - expired, unparseable, or unevaluable criterion -> not applied
+ *
+ * There is deliberately no built-in catalog entry. Catalogs come from a
+ * configured source (`configureCatalogSource`) — real config or the hub. The
+ * demo installs its own illustrative fixture (`src/demo/catalog-fixture.ts`).
+ */
+
+import semver from 'semver';
 import type { CatalogEntry } from '../types/catalog-entry.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
-import type { RiskLevel } from '../types/common.js';
-import { RECOVERY_PLAN_API_VERSION } from './plan-helpers.js';
+import type { Command, RiskLevel } from '../types/common.js';
+import type { RecoveryStep } from '../types/step-types.js';
+import { derivePlanMaxRiskLevel, riskExceeds } from './risk.js';
 
-export function getCatalogEntry(): CatalogEntry {
-  return {
-    apiVersion: RECOVERY_PLAN_API_VERSION,
-    kind: 'CatalogEntry',
-    metadata: {
-      catalogId: 'pg-replication-standard-recovery',
-      name: 'Standard PostgreSQL Replication Recovery',
-      description:
-        'Pre-authorized recovery for PostgreSQL replication lag cascades using the disconnect-stabilize-resync approach.',
-      approvedBy: 'jane.chen@example.com',
-      approvedAt: '2026-02-15T10:00:00Z',
-      reviewSchedule: 'P90D',
-      expiresAt: '2026-05-15T10:00:00Z',
-    },
-    matchCriteria: {
-      agentName: 'postgresql-replication-recovery',
-      agentVersionConstraint: '>=1.2.0 <2.0.0',
-      scenario: 'replication_lag_cascade',
-      environment: 'production',
-      maxRiskLevel: 'elevated',
-      requiredStepPatterns: [
-        { type: 'checkpoint', position: 'before_first_mutation' },
-        { type: 'human_notification', position: 'any' },
-      ],
-      forbiddenOperations: ['ddl', 'admin_privilege'],
-      maxStepCount: 15,
-      maxEstimatedDuration: 'PT30M',
-    },
-    authorization: {
-      satisfiesApprovalFor: ['routine', 'elevated'],
-      notificationRequired: true,
-      notificationRecipients: [{ role: 'on_call_dba', urgency: 'high' }],
-    },
-  };
+/** Everything `matchCatalog` needs beyond the plan itself. */
+export interface CatalogMatchInput {
+  /**
+   * Catalog ids the operator explicitly pre-authorized for this run
+   * (`AgentContext.preAuthorizedCatalogs`). An entry not listed here is never
+   * applied, however well it matches.
+   */
+  preAuthorizedCatalogs: readonly string[];
+  /**
+   * Deployment environment this plan will run against. Undefined means
+   * "unknown", which fails closed against any entry that declares one.
+   */
+  environment?: string | undefined;
+  /** Evaluation time; defaults to now. Injectable for tests. */
+  now?: Date | undefined;
 }
 
 export interface CatalogMatchResult {
@@ -49,53 +49,360 @@ export interface CatalogMatchResult {
   matchDetails: string[];
 }
 
-export function matchCatalog(plan: RecoveryPlan): CatalogMatchResult {
-  const catalog = getCatalogEntry();
+const NO_MATCH_INPUT: CatalogMatchInput = { preAuthorizedCatalogs: [] };
+
+let configuredCatalogs: CatalogEntry[] = [];
+
+/**
+ * Install the catalog entries in force for this process. Until this is called
+ * with a non-empty list, nothing is pre-authorized.
+ */
+export function configureCatalogSource(entries: readonly CatalogEntry[]): void {
+  configuredCatalogs = [...entries];
+}
+
+/** Remove all configured catalog entries (fail-closed default state). */
+export function clearCatalogSource(): void {
+  configuredCatalogs = [];
+}
+
+/**
+ * The first configured catalog entry, or null when no catalog source has been
+ * configured. Returns null on the production path by design — there is no
+ * built-in standing approval.
+ */
+export function getCatalogEntry(): CatalogEntry | null {
+  return configuredCatalogs[0] ?? null;
+}
+
+export function matchCatalog(
+  plan: RecoveryPlan,
+  input: CatalogMatchInput = NO_MATCH_INPUT,
+): CatalogMatchResult {
+  const entries = configuredCatalogs;
+  if (entries.length === 0) {
+    return {
+      matched: false,
+      catalogEntry: null,
+      coveredRiskLevels: [],
+      matchDetails: [
+        'No pre-authorized catalog source is configured; every approval must be granted by a human.',
+      ],
+    };
+  }
+
   const details: string[] = [];
-
-  // Check agent name
-  if (plan.metadata.agentName !== catalog.matchCriteria.agentName) {
-    details.push(`Agent name mismatch: ${plan.metadata.agentName} vs ${catalog.matchCriteria.agentName}`);
-    return { matched: false, catalogEntry: null, coveredRiskLevels: [], matchDetails: details };
+  for (const entry of entries) {
+    const evaluation = evaluateEntry(entry, plan, input);
+    details.push(...evaluation.details);
+    if (evaluation.failures.length === 0) {
+      const covered = coveredLevelsFor(entry);
+      details.push(
+        `Catalog '${entry.metadata.catalogId}' matched; covers ${covered.join(', ') || 'no'} risk levels.`,
+      );
+      return {
+        matched: true,
+        catalogEntry: entry,
+        coveredRiskLevels: covered,
+        matchDetails: details,
+      };
+    }
   }
-  details.push(`Agent name matches: ${plan.metadata.agentName}`);
 
-  // Check scenario
-  if (plan.metadata.scenario !== catalog.matchCriteria.scenario) {
-    details.push(`Scenario mismatch: ${plan.metadata.scenario} vs ${catalog.matchCriteria.scenario}`);
-    return { matched: false, catalogEntry: null, coveredRiskLevels: [], matchDetails: details };
-  }
-  details.push(`Scenario matches: ${plan.metadata.scenario}`);
-
-  // Check step count
-  if (plan.steps.length > catalog.matchCriteria.maxStepCount) {
-    details.push(`Step count ${plan.steps.length} exceeds max ${catalog.matchCriteria.maxStepCount}`);
-    return { matched: false, catalogEntry: null, coveredRiskLevels: [], matchDetails: details };
-  }
-  details.push(`Step count (${plan.steps.length}) within limit (${catalog.matchCriteria.maxStepCount})`);
-
-  // Check required patterns
-  const hasCheckpoint = plan.steps.some((s) => s.type === 'checkpoint');
-  const hasNotification = plan.steps.some((s) => s.type === 'human_notification');
-  if (!hasCheckpoint || !hasNotification) {
-    details.push('Missing required step patterns');
-    return { matched: false, catalogEntry: null, coveredRiskLevels: [], matchDetails: details };
-  }
-  details.push('Required step patterns present (checkpoint, notification)');
-
-  // Check no forbidden operations
-  details.push('No forbidden operations detected');
-
-  details.push(`Catalog entry '${catalog.metadata.catalogId}' matched`);
-
-  return {
-    matched: true,
-    catalogEntry: catalog,
-    coveredRiskLevels: catalog.authorization.satisfiesApprovalFor,
-    matchDetails: details,
-  };
+  return { matched: false, catalogEntry: null, coveredRiskLevels: [], matchDetails: details };
 }
 
 export function isCatalogCovered(riskLevel: RiskLevel, coveredLevels: RiskLevel[]): boolean {
   return coveredLevels.includes(riskLevel);
+}
+
+// --- Criterion evaluation -------------------------------------------------
+
+interface EntryEvaluation {
+  details: string[];
+  failures: string[];
+}
+
+function evaluateEntry(
+  entry: CatalogEntry,
+  plan: RecoveryPlan,
+  input: CatalogMatchInput,
+): EntryEvaluation {
+  const id = entry.metadata.catalogId;
+  const criteria = entry.matchCriteria;
+  const details: string[] = [];
+  const failures: string[] = [];
+
+  const reject = (reason: string): void => {
+    failures.push(reason);
+    details.push(`Catalog '${id}' rejected: ${reason}`);
+  };
+  const accept = (note: string): void => {
+    details.push(`Catalog '${id}': ${note}`);
+  };
+
+  // 1. Operator consent — the catalog only applies if the operator authorized it.
+  if (!input.preAuthorizedCatalogs.includes(id)) {
+    reject(
+      `catalog '${id}' is not pre-authorized by the operator (context.preAuthorizedCatalogs)`,
+    );
+  } else {
+    accept('operator pre-authorized this catalog');
+  }
+
+  // 2. Expiry — an expired standing approval approves nothing.
+  const now = input.now ?? new Date();
+  const expiresAt = Date.parse(entry.metadata.expiresAt);
+  if (Number.isNaN(expiresAt)) {
+    reject(`catalog '${id}' has an unparseable expiresAt '${entry.metadata.expiresAt}'`);
+  } else if (expiresAt <= now.getTime()) {
+    reject(
+      `catalog approval expired at ${entry.metadata.expiresAt} (evaluated ${now.toISOString()}); re-approval is required`,
+    );
+  } else {
+    accept(`approval is unexpired (expires ${entry.metadata.expiresAt})`);
+  }
+
+  // 3. Agent name.
+  if (plan.metadata.agentName !== criteria.agentName) {
+    reject(
+      `plan agent name '${plan.metadata.agentName}' does not match catalog agentName '${criteria.agentName}'`,
+    );
+  } else {
+    accept(`agent name matches (${criteria.agentName})`);
+  }
+
+  // 4. Scenario.
+  if (plan.metadata.scenario !== criteria.scenario) {
+    reject(
+      `plan scenario '${plan.metadata.scenario}' does not match catalog scenario '${criteria.scenario}'`,
+    );
+  } else {
+    accept(`scenario matches (${criteria.scenario})`);
+  }
+
+  // 5. Environment.
+  if (input.environment === undefined) {
+    reject(
+      `the deployment environment is unknown, and this catalog is only approved for environment '${criteria.environment}'`,
+    );
+  } else if (input.environment !== criteria.environment) {
+    reject(
+      `environment '${input.environment}' does not match the approved environment '${criteria.environment}'`,
+    );
+  } else {
+    accept(`environment matches (${criteria.environment})`);
+  }
+
+  // 6. Agent version constraint.
+  if (!semver.valid(plan.metadata.agentVersion)) {
+    reject(
+      `plan agent version '${plan.metadata.agentVersion}' is not a valid semantic version, so agentVersionConstraint '${criteria.agentVersionConstraint}' cannot be evaluated`,
+    );
+  } else if (!semver.validRange(criteria.agentVersionConstraint)) {
+    reject(
+      `catalog agentVersionConstraint '${criteria.agentVersionConstraint}' is not a valid semver range`,
+    );
+  } else if (!semver.satisfies(plan.metadata.agentVersion, criteria.agentVersionConstraint)) {
+    reject(
+      `plan agent version '${plan.metadata.agentVersion}' does not satisfy agentVersionConstraint '${criteria.agentVersionConstraint}'`,
+    );
+  } else {
+    accept(`agent version ${plan.metadata.agentVersion} satisfies ${criteria.agentVersionConstraint}`);
+  }
+
+  // 7. Max risk level.
+  const planRisk = derivePlanMaxRiskLevel(plan);
+  if (riskExceeds(planRisk, criteria.maxRiskLevel)) {
+    reject(
+      `plan risk level '${planRisk}' exceeds catalog maxRiskLevel '${criteria.maxRiskLevel}'`,
+    );
+  } else {
+    accept(`plan risk level '${planRisk}' is within maxRiskLevel '${criteria.maxRiskLevel}'`);
+  }
+
+  // 8. Step count.
+  if (plan.steps.length > criteria.maxStepCount) {
+    reject(`plan step count ${plan.steps.length} exceeds maxStepCount ${criteria.maxStepCount}`);
+  } else {
+    accept(`step count ${plan.steps.length} is within maxStepCount ${criteria.maxStepCount}`);
+  }
+
+  // 9. Required step patterns, including their declared positions.
+  const patternReasons = evaluateStepPatterns(plan, criteria.requiredStepPatterns);
+  for (const reason of patternReasons) reject(reason);
+  if (patternReasons.length === 0 && criteria.requiredStepPatterns.length > 0) {
+    accept(
+      `required step patterns satisfied (${criteria.requiredStepPatterns.map((p) => p.type).join(', ')})`,
+    );
+  }
+
+  // 10. Forbidden operations, checked against the actual step commands.
+  const forbiddenReasons = evaluateForbiddenOperations(plan, criteria.forbiddenOperations);
+  for (const reason of forbiddenReasons) reject(reason);
+  if (forbiddenReasons.length === 0 && criteria.forbiddenOperations.length > 0) {
+    accept(
+      `no step performs a forbidden operation (${criteria.forbiddenOperations.join(', ')})`,
+    );
+  }
+
+  // 11. Estimated duration.
+  const maxSeconds = parseIsoDurationSeconds(criteria.maxEstimatedDuration);
+  const planSeconds = parseIsoDurationSeconds(plan.metadata.estimatedDuration);
+  if (maxSeconds === null) {
+    reject(
+      `catalog maxEstimatedDuration '${criteria.maxEstimatedDuration}' is not a parseable ISO-8601 duration`,
+    );
+  } else if (planSeconds === null) {
+    reject(
+      `plan estimated duration '${plan.metadata.estimatedDuration}' is not a parseable ISO-8601 duration, so maxEstimatedDuration '${criteria.maxEstimatedDuration}' cannot be enforced`,
+    );
+  } else if (planSeconds > maxSeconds) {
+    reject(
+      `plan estimated duration '${plan.metadata.estimatedDuration}' exceeds maxEstimatedDuration '${criteria.maxEstimatedDuration}'`,
+    );
+  } else {
+    accept(
+      `estimated duration ${plan.metadata.estimatedDuration} is within ${criteria.maxEstimatedDuration}`,
+    );
+  }
+
+  return { details, failures };
+}
+
+/** Risk levels the entry grants, capped at its own declared maxRiskLevel. */
+function coveredLevelsFor(entry: CatalogEntry): RiskLevel[] {
+  return entry.authorization.satisfiesApprovalFor.filter(
+    (level) => !riskExceeds(level, entry.matchCriteria.maxRiskLevel),
+  );
+}
+
+// --- Step pattern evaluation ----------------------------------------------
+
+interface FlatStep {
+  index: number;
+  step: RecoveryStep;
+}
+
+/** Flatten conditional branches, keeping the position of the owning step. */
+function flattenSteps(steps: RecoveryStep[]): FlatStep[] {
+  const flat: FlatStep[] = [];
+  steps.forEach((step, index) => {
+    flat.push({ index, step });
+    if (step.type === 'conditional') {
+      flat.push({ index, step: step.thenStep });
+      if (step.elseStep !== 'skip') flat.push({ index, step: step.elseStep });
+    }
+  });
+  return flat;
+}
+
+function evaluateStepPatterns(
+  plan: RecoveryPlan,
+  patterns: CatalogEntry['matchCriteria']['requiredStepPatterns'],
+): string[] {
+  const flat = flattenSteps(plan.steps);
+  const mutations = flat.filter((f) => f.step.type === 'system_action');
+  const firstMutationIndex = mutations.length > 0 ? mutations[0]!.index : null;
+  const reasons: string[] = [];
+
+  for (const pattern of patterns) {
+    const matches = flat.filter((f) => f.step.type === pattern.type);
+    if (matches.length === 0) {
+      reasons.push(`plan is missing required step pattern '${pattern.type}'`);
+      continue;
+    }
+    if (pattern.position === 'any') continue;
+    if (pattern.position === 'before_first_mutation') {
+      if (firstMutationIndex === null) continue;
+      if (!matches.some((f) => f.index < firstMutationIndex)) {
+        reasons.push(
+          `required step pattern '${pattern.type}' must appear before_first_mutation, but the first '${pattern.type}' step is at index ${matches[0]!.index} and the first mutating step is at index ${firstMutationIndex}`,
+        );
+      }
+      continue;
+    }
+    // An unrecognized position is a criterion we cannot enforce — fail closed.
+    reasons.push(
+      `required step pattern '${pattern.type}' declares unsupported position '${pattern.position}', which cannot be enforced`,
+    );
+  }
+
+  return reasons;
+}
+
+// --- Forbidden operation evaluation ---------------------------------------
+
+const ADMIN_PRIVILEGE_SQL =
+  /^\s*(?:grant|revoke|reassign\s+owned|set\s+role|(?:create|alter|drop)\s+(?:role|user|group)\b)/i;
+const DDL_SQL =
+  /^\s*(?:create|alter|drop|truncate|rename|comment\s+on|refresh\s+materialized)\b/i;
+
+/** Operation classes a command performs, used to test `forbiddenOperations`. */
+function classifyCommand(command: Command): Set<string> {
+  const classes = new Set<string>();
+  if (command.subtype) classes.add(command.subtype.trim().toLowerCase());
+  if (command.operation) classes.add(command.operation.trim().toLowerCase());
+  const statement = command.statement;
+  if (statement) {
+    if (ADMIN_PRIVILEGE_SQL.test(statement)) classes.add('admin_privilege');
+    else if (DDL_SQL.test(statement)) classes.add('ddl');
+  }
+  return classes;
+}
+
+function commandOf(step: RecoveryStep): Command | null {
+  if (step.type === 'system_action' || step.type === 'diagnosis_action') return step.command;
+  return null;
+}
+
+function evaluateForbiddenOperations(plan: RecoveryPlan, forbidden: string[]): string[] {
+  if (forbidden.length === 0) return [];
+  const normalized = forbidden.map((op) => op.trim().toLowerCase());
+  const reasons: string[] = [];
+
+  for (const { step } of flattenSteps(plan.steps)) {
+    const command = commandOf(step);
+    if (!command) continue;
+    const classes = classifyCommand(command);
+    for (const op of normalized) {
+      if (classes.has(op)) {
+        reasons.push(
+          `step '${step.stepId}' performs forbidden operation '${op}' (${describeCommand(command)})`,
+        );
+      }
+    }
+  }
+
+  return reasons;
+}
+
+function describeCommand(command: Command): string {
+  if (command.statement) return `${command.type}: ${command.statement.trim().slice(0, 80)}`;
+  if (command.operation) return `${command.type}: ${command.operation}`;
+  return command.type;
+}
+
+// --- ISO-8601 duration ----------------------------------------------------
+
+const ISO_DURATION =
+  /^P(?!$)(?:(\d+)W)?(?:(\d+)D)?(?:T(?!$)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/i;
+
+/**
+ * Parse the ISO-8601 durations this framework emits (weeks/days/hours/minutes/
+ * seconds). Years and months are calendar-ambiguous and are rejected rather
+ * than guessed. Returns null when the value cannot be parsed.
+ */
+function parseIsoDurationSeconds(value: string): number | null {
+  const match = ISO_DURATION.exec(value.trim());
+  if (!match) return null;
+  const [, weeks, days, hours, minutes, seconds] = match;
+  if (!weeks && !days && !hours && !minutes && !seconds) return null;
+  return (
+    Number(weeks ?? 0) * 604800 +
+    Number(days ?? 0) * 86400 +
+    Number(hours ?? 0) * 3600 +
+    Number(minutes ?? 0) * 60 +
+    Number(seconds ?? 0)
+  );
 }

@@ -1,118 +1,428 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // Mock the Anthropic SDK so agent.ts can be imported without the dependency
 vi.mock('@anthropic-ai/sdk', () => ({ default: class {} }));
 
-import { getCatalogEntry, matchCatalog, isCatalogCovered } from '../framework/catalog.js';
+import {
+  getCatalogEntry,
+  matchCatalog,
+  isCatalogCovered,
+  configureCatalogSource,
+  clearCatalogSource,
+  type CatalogMatchInput,
+} from '../framework/catalog.js';
 import { PgReplicationAgent } from '../agent/pg-replication/agent.js';
 import { PgSimulator } from '../agent/pg-replication/simulator.js';
 import { assembleContext } from '../framework/context.js';
 import type { AgentContext } from '../types/agent-context.js';
+import type { CatalogEntry } from '../types/catalog-entry.js';
 import type { RecoveryPlan } from '../types/recovery-plan.js';
+import type { Command, RiskLevel } from '../types/common.js';
+import type { RecoveryStep, SystemActionStep } from '../types/step-types.js';
 
-function makeContext(agent: PgReplicationAgent): AgentContext {
-  const trigger: AgentContext['trigger'] = {
-    type: 'alert',
-    source: 'prometheus',
-    payload: {
-      alertname: 'PostgresReplicationLagCritical',
-      instance: 'pg-primary-us-east-1',
-      severity: 'critical',
+const NOW = new Date('2026-08-09T12:00:00Z');
+const CATALOG_ID = 'test-standard-recovery';
+
+// --- Fixtures -------------------------------------------------------------
+
+function makeCatalogEntry(overrides: Partial<CatalogEntry> = {}): CatalogEntry {
+  return {
+    apiVersion: 'v0.2.1',
+    kind: 'CatalogEntry',
+    metadata: {
+      catalogId: CATALOG_ID,
+      name: 'Test Standard Recovery',
+      description: 'Pre-authorized recovery used by the catalog decision table.',
+      approvedBy: 'operator@example.test',
+      approvedAt: '2026-06-01T10:00:00Z',
+      reviewSchedule: 'P90D',
+      expiresAt: '2026-12-01T10:00:00Z',
+      ...(overrides.metadata ?? {}),
     },
-    receivedAt: new Date().toISOString(),
+    matchCriteria: {
+      agentName: 'postgresql-replication-recovery',
+      agentVersionConstraint: '>=1.2.0 <2.0.0',
+      scenario: 'replication_lag_cascade',
+      environment: 'production',
+      maxRiskLevel: 'elevated',
+      requiredStepPatterns: [
+        { type: 'checkpoint', position: 'before_first_mutation' },
+        { type: 'human_notification', position: 'any' },
+      ],
+      forbiddenOperations: ['ddl', 'admin_privilege'],
+      maxStepCount: 15,
+      maxEstimatedDuration: 'PT30M',
+      ...(overrides.matchCriteria ?? {}),
+    },
+    authorization: {
+      satisfiesApprovalFor: ['routine', 'elevated'],
+      notificationRequired: true,
+      notificationRecipients: [{ role: 'on_call_dba', urgency: 'high' }],
+      ...(overrides.authorization ?? {}),
+    },
   };
-  return assembleContext(trigger, agent.manifest);
 }
 
-async function makeMatchingPlan(): Promise<RecoveryPlan> {
-  const agent = new PgReplicationAgent(new PgSimulator());
-  const context = makeContext(agent);
-  const diagnosis = await agent.diagnose(context);
-  return agent.plan(context, diagnosis);
+function makeSystemAction(
+  stepId: string,
+  riskLevel: RiskLevel,
+  command: Command = { type: 'sql', statement: 'SELECT pg_terminate_backend(1)' },
+): SystemActionStep {
+  return {
+    stepId,
+    type: 'system_action',
+    name: `Action ${stepId}`,
+    executionContext: 'psql_cli',
+    target: 'pg-primary',
+    riskLevel,
+    requiredCapabilities: ['db.query.read'],
+    command,
+    statePreservation: { before: [], after: [] },
+    successCriteria: {
+      description: 'OK',
+      check: { type: 'sql', statement: 'SELECT 1', expect: { operator: 'eq', value: 1 } },
+    },
+    blastRadius: {
+      directComponents: ['pg-primary'],
+      indirectComponents: [],
+      maxImpact: 'test',
+      cascadeRisk: 'low',
+    },
+    timeout: 'PT30S',
+  };
 }
 
-describe('catalog', () => {
-  describe('getCatalogEntry', () => {
-    it('returns a valid catalog entry with expected structure', () => {
-      const entry = getCatalogEntry();
-      expect(entry.apiVersion).toBe('v0.2.1');
-      expect(entry.kind).toBe('CatalogEntry');
-      expect(entry.metadata.catalogId).toBe('pg-replication-standard-recovery');
-      expect(entry.matchCriteria.agentName).toBe('postgresql-replication-recovery');
-      expect(entry.matchCriteria.scenario).toBe('replication_lag_cascade');
-      expect(entry.authorization.satisfiesApprovalFor).toContain('routine');
-      expect(entry.authorization.satisfiesApprovalFor).toContain('elevated');
-    });
+function makeCheckpoint(stepId: string): RecoveryStep {
+  return { stepId, type: 'checkpoint', name: `Checkpoint ${stepId}`, stateCaptures: [] };
+}
+
+function makeNotification(stepId: string): RecoveryStep {
+  return {
+    stepId,
+    type: 'human_notification',
+    name: `Notify ${stepId}`,
+    recipients: [{ role: 'dba', urgency: 'high' }],
+    message: { summary: 'test', detail: 'test', actionRequired: false },
+    channel: 'auto',
+  };
+}
+
+/** A plan that satisfies every declared criterion of the fixture catalog entry. */
+function makeConformingPlan(): RecoveryPlan {
+  return {
+    apiVersion: 'v0.2.1',
+    kind: 'RecoveryPlan',
+    metadata: {
+      planId: 'rp-test-001',
+      agentName: 'postgresql-replication-recovery',
+      agentVersion: '1.4.0',
+      scenario: 'replication_lag_cascade',
+      createdAt: NOW.toISOString(),
+      estimatedDuration: 'PT15M',
+      summary: 'Conforming plan',
+      supersedes: null,
+    },
+    impact: {
+      affectedSystems: [],
+      affectedServices: [],
+      estimatedUserImpact: 'none',
+      dataLossRisk: 'none',
+    },
+    steps: [
+      makeNotification('step-001'),
+      makeCheckpoint('step-002'),
+      makeSystemAction('step-003', 'elevated'),
+    ],
+    rollbackStrategy: { type: 'stepwise', description: 'stepwise' },
+  };
+}
+
+function makeInput(overrides: Partial<CatalogMatchInput> = {}): CatalogMatchInput {
+  return {
+    preAuthorizedCatalogs: [CATALOG_ID],
+    environment: 'production',
+    now: NOW,
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  clearCatalogSource();
+});
+
+afterEach(() => {
+  clearCatalogSource();
+});
+
+// --- Fail-closed default --------------------------------------------------
+
+describe('catalog fails closed when no catalog source is configured', () => {
+  it('getCatalogEntry returns null on the production path', () => {
+    expect(getCatalogEntry()).toBeNull();
   });
 
-  describe('matchCatalog', () => {
-    it('returns matched=true for a valid PG replication plan', async () => {
-      const plan = await makeMatchingPlan();
-      const result = matchCatalog(plan);
-      expect(result.matched).toBe(true);
-      expect(result.catalogEntry).not.toBeNull();
-      expect(result.coveredRiskLevels).toContain('routine');
-      expect(result.coveredRiskLevels).toContain('elevated');
+  it('matchCatalog covers nothing when no catalog source is configured', () => {
+    const result = matchCatalog(makeConformingPlan(), makeInput());
+    expect(result.matched).toBe(false);
+    expect(result.catalogEntry).toBeNull();
+    expect(result.coveredRiskLevels).toEqual([]);
+    expect(result.matchDetails.join(' ')).toMatch(/no pre-authorized catalog source is configured/i);
+  });
+
+  it('matchCatalog covers nothing when called without operator consent evidence', () => {
+    configureCatalogSource([makeCatalogEntry()]);
+    const result = matchCatalog(makeConformingPlan());
+    expect(result.matched).toBe(false);
+    expect(result.coveredRiskLevels).toEqual([]);
+  });
+
+  it('the shipped PostgreSQL replication plan is not pre-authorized by default', async () => {
+    const agent = new PgReplicationAgent(new PgSimulator());
+    const trigger: AgentContext['trigger'] = {
+      type: 'alert',
+      source: 'prometheus',
+      payload: { alertname: 'PostgresReplicationLagCritical' },
+      receivedAt: new Date().toISOString(),
+    };
+    const context = assembleContext(trigger, agent.manifest);
+    const diagnosis = await agent.diagnose(context);
+    const plan = await agent.plan(context, diagnosis);
+
+    const result = matchCatalog(plan, {
+      preAuthorizedCatalogs: context.preAuthorizedCatalogs,
     });
 
-    it('returns matched=false when agent name does not match', async () => {
-      const plan = await makeMatchingPlan();
-      plan.metadata.agentName = 'wrong-agent-name';
-      const result = matchCatalog(plan);
-      expect(result.matched).toBe(false);
-      expect(result.matchDetails.some((d) => d.includes('Agent name mismatch'))).toBe(true);
-    });
+    expect(result.matched).toBe(false);
+    expect(result.coveredRiskLevels).toEqual([]);
+  });
+});
 
-    it('returns matched=false when scenario does not match', async () => {
-      const plan = await makeMatchingPlan();
-      plan.metadata.scenario = 'wrong_scenario';
-      const result = matchCatalog(plan);
-      expect(result.matched).toBe(false);
-      expect(result.matchDetails.some((d) => d.includes('Scenario mismatch'))).toBe(true);
-    });
+// --- Happy path -----------------------------------------------------------
 
-    it('returns matched=false when step count exceeds the limit', async () => {
-      const plan = await makeMatchingPlan();
-      // Add enough dummy steps to exceed maxStepCount (15)
-      while (plan.steps.length <= 15) {
-        plan.steps.push({
-          stepId: `step-extra-${plan.steps.length}`,
-          type: 'human_notification',
-          name: 'Extra notification',
-          recipients: [{ role: 'test', urgency: 'low' }],
-          message: {
-            summary: 'Extra',
-            detail: 'Extra step to exceed limit',
-            actionRequired: false,
-          },
-          channel: 'auto',
-        });
-      }
-      const result = matchCatalog(plan);
-      expect(result.matched).toBe(false);
-      expect(result.matchDetails.some((d) => d.includes('exceeds max'))).toBe(true);
-    });
+describe('matchCatalog with a configured, unexpired, operator-authorized catalog', () => {
+  it('matches when every declared criterion is satisfied', () => {
+    configureCatalogSource([makeCatalogEntry()]);
+    const result = matchCatalog(makeConformingPlan(), makeInput());
+    expect(result.matchDetails.join('\n')).not.toMatch(/rejected/i);
+    expect(result.matched).toBe(true);
+    expect(result.coveredRiskLevels).toEqual(['routine', 'elevated']);
+  });
 
-    it('returns matched=false when checkpoint or notification steps are missing', async () => {
-      const plan = await makeMatchingPlan();
-      // Remove all checkpoint and notification steps
-      plan.steps = plan.steps.filter(
-        (s) => s.type !== 'checkpoint' && s.type !== 'human_notification',
+  it('never covers a risk level above the catalog maxRiskLevel, even if authorization claims it', () => {
+    configureCatalogSource([
+      makeCatalogEntry({
+        authorization: {
+          satisfiesApprovalFor: ['routine', 'elevated', 'high', 'critical'],
+          notificationRequired: true,
+          notificationRecipients: [{ role: 'on_call_dba', urgency: 'high' }],
+        },
+      }),
+    ]);
+    const result = matchCatalog(makeConformingPlan(), makeInput());
+    expect(result.matched).toBe(true);
+    expect(result.coveredRiskLevels).toEqual(['routine', 'elevated']);
+  });
+});
+
+// --- Decision table: every declared criterion must reject ------------------
+
+interface RejectionRow {
+  readonly name: string;
+  readonly entry?: CatalogEntry;
+  readonly mutatePlan?: (plan: RecoveryPlan) => void;
+  readonly input?: Partial<CatalogMatchInput>;
+  readonly reason: RegExp;
+}
+
+const rejectionRows: RejectionRow[] = [
+  {
+    name: 'an expired catalog entry pre-authorizes nothing',
+    entry: makeCatalogEntry({
+      metadata: {
+        catalogId: CATALOG_ID,
+        name: 'Test Standard Recovery',
+        description: 'Expired.',
+        approvedBy: 'operator@example.test',
+        approvedAt: '2026-02-15T10:00:00Z',
+        reviewSchedule: 'P90D',
+        expiresAt: '2026-05-15T10:00:00Z',
+      },
+    }),
+    reason: /expired/i,
+  },
+  {
+    name: 'a catalog entry with an unparseable expiry pre-authorizes nothing',
+    entry: makeCatalogEntry({
+      metadata: {
+        catalogId: CATALOG_ID,
+        name: 'Test Standard Recovery',
+        description: 'Bad expiry.',
+        approvedBy: 'operator@example.test',
+        approvedAt: '2026-02-15T10:00:00Z',
+        reviewSchedule: 'P90D',
+        expiresAt: 'whenever',
+      },
+    }),
+    reason: /expir/i,
+  },
+  {
+    name: 'a catalogId the operator never pre-authorized is not applied',
+    input: { preAuthorizedCatalogs: [] },
+    reason: /not pre-authorized by the operator/i,
+  },
+  {
+    name: 'a DDL statement in a step command trips forbiddenOperations',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-ddl', 'elevated', {
+          type: 'sql',
+          statement: 'ALTER TABLE orders ADD COLUMN backfilled boolean',
+        }),
       );
-      const result = matchCatalog(plan);
-      expect(result.matched).toBe(false);
-      expect(result.matchDetails.some((d) => d.includes('Missing required step patterns'))).toBe(true);
-    });
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a privilege grant in a step command trips forbiddenOperations',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-grant', 'elevated', {
+          type: 'sql',
+          statement: 'GRANT ALL PRIVILEGES ON DATABASE app TO recovery_bot',
+        }),
+      );
+    },
+    reason: /forbidden operation 'admin_privilege'/i,
+  },
+  {
+    name: 'a forbidden operation declared as a command subtype is caught',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-sub', 'elevated', {
+          type: 'structured_command',
+          subtype: 'ddl',
+          operation: 'create_index',
+        }),
+      );
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'a plan whose risk exceeds the catalog maxRiskLevel is rejected',
+    mutatePlan: (plan) => {
+      plan.steps.push(makeSystemAction('step-high', 'high'));
+    },
+    reason: /risk level 'high' exceeds catalog maxRiskLevel 'elevated'/i,
+  },
+  {
+    name: 'a plan running in a different environment than the catalog declares is rejected',
+    input: { environment: 'staging' },
+    reason: /environment 'staging'.*'production'/i,
+  },
+  {
+    name: 'an unknown environment fails closed against a catalog that declares one',
+    input: { environment: undefined },
+    reason: /environment is unknown/i,
+  },
+  {
+    name: 'an agent version outside agentVersionConstraint is rejected',
+    mutatePlan: (plan) => {
+      plan.metadata.agentVersion = '2.1.0';
+    },
+    reason: /2\.1\.0.*>=1\.2\.0 <2\.0\.0/,
+  },
+  {
+    name: 'an unparseable agent version fails closed',
+    mutatePlan: (plan) => {
+      plan.metadata.agentVersion = 'nightly';
+    },
+    reason: /version/i,
+  },
+  {
+    name: 'an estimated duration above maxEstimatedDuration is rejected',
+    mutatePlan: (plan) => {
+      plan.metadata.estimatedDuration = 'PT45M';
+    },
+    reason: /duration 'PT45M'.*'PT30M'/i,
+  },
+  {
+    name: 'an unparseable estimated duration fails closed',
+    mutatePlan: (plan) => {
+      plan.metadata.estimatedDuration = 'about an hour';
+    },
+    reason: /duration/i,
+  },
+  {
+    name: 'a different agent is rejected',
+    mutatePlan: (plan) => {
+      plan.metadata.agentName = 'wrong-agent-name';
+    },
+    reason: /agent name/i,
+  },
+  {
+    name: 'a different scenario is rejected',
+    mutatePlan: (plan) => {
+      plan.metadata.scenario = 'wrong_scenario';
+    },
+    reason: /scenario/i,
+  },
+  {
+    name: 'a plan with more steps than maxStepCount is rejected',
+    mutatePlan: (plan) => {
+      while (plan.steps.length <= 15) {
+        plan.steps.push(makeNotification(`step-extra-${plan.steps.length}`));
+      }
+    },
+    reason: /step count/i,
+  },
+  {
+    name: 'a plan missing a required checkpoint step is rejected',
+    mutatePlan: (plan) => {
+      plan.steps = plan.steps.filter((s) => s.type !== 'checkpoint');
+    },
+    reason: /required step pattern 'checkpoint'/i,
+  },
+  {
+    name: 'a plan missing a required notification step is rejected',
+    mutatePlan: (plan) => {
+      plan.steps = plan.steps.filter((s) => s.type !== 'human_notification');
+    },
+    reason: /required step pattern 'human_notification'/i,
+  },
+  {
+    name: 'a checkpoint that lands after the first mutation violates before_first_mutation',
+    mutatePlan: (plan) => {
+      plan.steps = [
+        makeNotification('step-001'),
+        makeSystemAction('step-003', 'elevated'),
+        makeCheckpoint('step-002'),
+      ];
+    },
+    reason: /before_first_mutation/i,
+  },
+];
+
+describe('matchCatalog rejects on every declared criterion', () => {
+  it.each(rejectionRows)('$name', ({ entry, mutatePlan, input, reason }) => {
+    configureCatalogSource([entry ?? makeCatalogEntry()]);
+    const plan = makeConformingPlan();
+    mutatePlan?.(plan);
+
+    const result = matchCatalog(plan, makeInput(input));
+
+    expect(result.matched).toBe(false);
+    expect(result.coveredRiskLevels).toEqual([]);
+    expect(result.matchDetails.join('\n')).toMatch(reason);
+  });
+});
+
+describe('isCatalogCovered', () => {
+  it('returns true when the risk level is in the covered levels', () => {
+    expect(isCatalogCovered('routine', ['routine', 'elevated'])).toBe(true);
   });
 
-  describe('isCatalogCovered', () => {
-    it('returns true when the risk level is in the covered levels', () => {
-      expect(isCatalogCovered('routine', ['routine', 'elevated'])).toBe(true);
-    });
-
-    it('returns false when the risk level is not in the covered levels', () => {
-      expect(isCatalogCovered('high', ['routine', 'elevated'])).toBe(false);
-    });
+  it('returns false when the risk level is not in the covered levels', () => {
+    expect(isCatalogCovered('high', ['routine', 'elevated'])).toBe(false);
   });
 });

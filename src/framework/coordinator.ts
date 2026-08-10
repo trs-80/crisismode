@@ -8,14 +8,17 @@ import type { RiskLevel } from '../types/common.js';
 
 export type ApprovalResult = 'approved' | 'skipped' | 'rejected';
 
+/**
+ * Ask a human. Callers reach this only after {@link shouldAutoApprove} declined
+ * to auto-approve, so catalog coverage has already been considered — and a
+ * second short-circuit here would let a catalog bypass the high/critical gate.
+ * The parameter is retained for call-site compatibility and is deliberately
+ * not honored as a bypass.
+ */
 export async function requestApproval(
-  step: HumanApprovalStep,
-  catalogCovered: boolean,
+  _step: HumanApprovalStep,
+  _catalogCovered: boolean,
 ): Promise<ApprovalResult> {
-  if (catalogCovered) {
-    return 'approved';
-  }
-
   const rl = readline.createInterface({ input: stdin, output: stdout });
 
   try {
@@ -47,9 +50,11 @@ export function shouldAutoApprove(
   catalogCovered: boolean,
   requireApprovalForAllElevated: boolean,
 ): boolean {
-  if (catalogCovered) return true;
-
+  // High and critical risk always reach a human. This check sits above the
+  // catalog short-circuit on purpose: no standing approval may cover them.
   if (riskLevel === 'high' || riskLevel === 'critical') return false;
+
+  if (catalogCovered) return true;
 
   if (riskLevel === 'elevated') {
     if (requireApprovalForAllElevated) return false;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 CrisisMode Contributors
 
-import type { CaptureDirective, RiskLevel } from '../types/common.js';
+import type { CaptureDirective } from '../types/common.js';
 import type { SystemActionStep } from '../types/step-types.js';
 import type { AgentManifest } from '../types/manifest.js';
 import type { AgentContext } from '../types/agent-context.js';
@@ -358,27 +358,6 @@ export function validateBlastRadius(
     valid: true,
     message: `Blast radius validated: ${step.blastRadius.directComponents.length} direct, ${step.blastRadius.indirectComponents.length} indirect components`,
   };
-}
-
-export function shouldRequireApproval(
-  riskLevel: RiskLevel,
-  trustLevel: string,
-  policies: { requireApprovalForAllElevated: boolean },
-  catalogCovers: boolean,
-): boolean {
-  if (catalogCovers) return false;
-
-  if (riskLevel === 'high' || riskLevel === 'critical') return true;
-
-  if (riskLevel === 'elevated') {
-    if (policies.requireApprovalForAllElevated) return true;
-    if (trustLevel === 'autopilot' || trustLevel === 'full_autonomy') return false;
-    return true;
-  }
-
-  // routine
-  if (trustLevel === 'observe') return true;
-  return false;
 }
 
 function normalizeIdentifier(value: string): string {

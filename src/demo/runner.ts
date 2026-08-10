@@ -4,7 +4,8 @@
 import { PgReplicationAgent } from '../agent/pg-replication/agent.js';
 import { assembleContext } from '../framework/context.js';
 import { validatePlan } from '../framework/validator.js';
-import { matchCatalog, getCatalogEntry } from '../framework/catalog.js';
+import { matchCatalog, configureCatalogSource } from '../framework/catalog.js';
+import { DEMO_CATALOG_ENTRY } from './catalog-fixture.js';
 import { ForensicRecorder } from '../framework/forensics.js';
 import { ExecutionEngine, type EngineCallbacks } from '../framework/engine.js';
 import type { AgentContext } from '../types/agent-context.js';
@@ -44,9 +45,11 @@ export async function runDemo(): Promise<void> {
   display.phase(2, 'Pre-Authorized Catalog Check');
   display.step(2, 'Checking pre-authorized action catalogs');
 
-  const catalogEntry = getCatalogEntry();
-  display.displayCatalogEntry(catalogEntry);
-  display.success('Catalog entry found for this scenario');
+  // The framework ships with no built-in catalog entry. The demo installs its
+  // own fixture so the catalog check has something to evaluate.
+  configureCatalogSource([DEMO_CATALOG_ENTRY]);
+  display.displayCatalogEntry(DEMO_CATALOG_ENTRY);
+  display.success('Catalog entry loaded — its criteria are evaluated at match time');
   await sleep(300);
 
   // ── Phase 3: Agent Selection ──
@@ -105,7 +108,9 @@ export async function runDemo(): Promise<void> {
   display.phase(8, 'Catalog Matching');
   display.step(8, 'Matching plan against pre-authorized catalog');
 
-  const catalogMatch = matchCatalog(plan);
+  const catalogMatch = matchCatalog(plan, {
+    preAuthorizedCatalogs: context.preAuthorizedCatalogs,
+  });
   display.displayCatalogMatch(catalogMatch);
   await sleep(300);
 

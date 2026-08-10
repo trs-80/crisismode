@@ -12,13 +12,20 @@ export {
 } from './provider-registry.js';
 export { buildOperatorSummary } from './operator-summary.js';
 export { validatePlan } from './validator.js';
-export { executeCapture, executeCaptureAsync, validateBlastRadius, shouldRequireApproval } from './safety.js';
+export { executeCapture, executeCaptureAsync, validateBlastRadius } from './safety.js';
 export type { CaptureResult, CaptureExecutionOptions } from './safety.js';
 export { CaptureStore, parseDuration } from './capture-store.js';
 export type { CaptureMetadata, StoredCapture } from './capture-store.js';
 export { generateCaptureRollbackCommands } from './graph-rollback.js';
 export type { CaptureRollbackCommand } from './graph-rollback.js';
-export { getCatalogEntry, matchCatalog, isCatalogCovered } from './catalog.js';
+export {
+  getCatalogEntry,
+  configureCatalogSource,
+  clearCatalogSource,
+  matchCatalog,
+  isCatalogCovered,
+} from './catalog.js';
+export type { CatalogMatchInput, CatalogMatchResult } from './catalog.js';
 export { requestApproval, shouldAutoApprove } from './coordinator.js';
 export { ForensicRecorder, StreamingForensicRecorder } from './forensics.js';
 export { RISK_ORDER, riskExceeds, getStepRisk, getMaxRiskIndex, derivePlanMaxRiskLevel } from './risk.js';
