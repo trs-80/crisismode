@@ -44,7 +44,11 @@ get_memory_info() {
       INACTIVE_PAGES="${INACTIVE_PAGES:-0}"
       AVAIL_MB=$(( (FREE_PAGES + INACTIVE_PAGES) * PAGE_SIZE / 1024 / 1024 ))
     else
-      AVAIL_MB=$((TOTAL_MB / 2))
+      # sysctl reports total RAM but without vm_stat there is no way to measure
+      # how much of it is in use. Report unknown rather than assuming half the
+      # machine is free — the same answer the no-sysctl path below gives.
+      printf '{"status":"unknown","summary":"Cannot determine memory usage (sysctl available but vm_stat missing)","confidence":0.0,"signals":[],"recommendedActions":[]}\n'
+      exit 3
     fi
     USED_MB=$((TOTAL_MB - AVAIL_MB))
     if [ "$TOTAL_MB" -gt 0 ]; then

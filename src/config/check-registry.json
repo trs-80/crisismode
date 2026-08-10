@@ -44,8 +44,8 @@
       "source": "builtin",
       "url": "https://raw.githubusercontent.com/trs-80/crisismode/main/checks/check-dns-resolution/",
       "files": ["check.sh", "manifest.json"],
-      "sha256": "e283980e332fae248706cb8ea723ba475eec2634fbe25e910dc09449f437d749",
-      "sha256v2": "24a93db9882b6afba882dbaf62b7509a803bd4581b5afdd01fb17929e3e77633"
+      "sha256": "b42d4c34166570c845554927b64267dd9584df2535ca5c36d59b44ba77f57fde",
+      "sha256v2": "c7d12adb6070b89cd89242d2d6def3ddd9e3f93c96eb66b9fb1f1445ecb140eb"
     },
     {
       "name": "check-http-endpoint",
@@ -74,8 +74,8 @@
       "source": "builtin",
       "url": "https://raw.githubusercontent.com/trs-80/crisismode/main/checks/check-memory-usage/",
       "files": ["check.sh", "manifest.json"],
-      "sha256": "e644ed8fba101e3b23389222a82c815655c1f8f52e0e0f5e80ba97a1c912f216",
-      "sha256v2": "1cc99cbaede9568b6a862a5e8620ea45976339f7a3bd10fca5413694c84288c2"
+      "sha256": "1779abf41c828c24f5d91e70f3279510ad456e05489123e1599522636aa53852",
+      "sha256v2": "c5c3b3a4b2a00767079c948fb2f6d514d2290fbd7e43c262d973bdc966757a65"
     },
     {
       "name": "example-nagios-uptime",

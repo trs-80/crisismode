@@ -21,6 +21,15 @@ HOST=$(printf '%s' "$INPUT" | sed -n 's/.*"host" *: *"\([^"]*\)".*/\1/p' | head 
 # Canary hostnames — well-known stable targets to test "does DNS work at all"
 CANARY_HOSTS="dns.google cloudflare.com"
 
+# Placeholder get_resolvers sets when discovery turned up nothing. Callers must
+# compare against the *raw* RESOLVERS value, before any whitespace stripping.
+NO_RESOLVERS="none found"
+
+# check_resolver_reachable exit status meaning "no tool available to probe with".
+# Distinct from success (0) and unreachable (1) — an unmeasured resolver is not
+# a reachable resolver.
+PROBE_UNAVAILABLE=2
+
 # Find a DNS lookup tool
 DNS_TOOL=""
 if command -v dig >/dev/null 2>&1; then
@@ -83,10 +92,13 @@ get_resolvers() {
   if [ -z "$RESOLVERS" ] && command -v scutil >/dev/null 2>&1; then
     RESOLVERS=$(scutil --dns 2>/dev/null | grep 'nameserver\[' | awk '{print $3}' | sort -u | tr '\n' ',' | sed 's/,$//' || true)
   fi
-  RESOLVERS="${RESOLVERS:-none found}"
+  RESOLVERS="${RESOLVERS:-$NO_RESOLVERS}"
 }
 
 # Check if a resolver IP is reachable (UDP 53 or TCP ping)
+#
+# Returns: 0 = reachable, 1 = probed and unreachable,
+#          $PROBE_UNAVAILABLE = could not probe (no tool)
 check_resolver_reachable() {
   local resolver="$1"
   if [ "$DNS_TOOL" = "dig" ]; then
@@ -95,8 +107,12 @@ check_resolver_reachable() {
   elif command -v nc >/dev/null 2>&1; then
     nc -zu -w2 "$resolver" 53 >/dev/null 2>&1
   else
-    # Fall back to a basic test — try to resolve anything
-    return 0
+    # Neither dig nor nc is present (the shape of any image without bind-tools,
+    # including node:*-alpine), so reachability cannot be measured at all.
+    # Report "cannot probe" rather than success: a check that says healthy
+    # because a binary is missing is the failure mode this product exists to
+    # prevent.
+    return "$PROBE_UNAVAILABLE"
   fi
 }
 
@@ -115,29 +131,50 @@ run_health() {
   get_resolvers
   local resolver_ok=0
   local resolver_total=0
+  local resolver_unprobed=0
   local resolver_unreachable=""
+  local resolver_unverified=""
 
-  IFS=',' read -ra RESOLVER_LIST <<< "$RESOLVERS"
-  for resolver in "${RESOLVER_LIST[@]}"; do
-    resolver=$(echo "$resolver" | tr -d ' ')
-    [ -z "$resolver" ] && continue
-    [ "$resolver" = "none found" ] && continue
-    resolver_total=$((resolver_total + 1))
-    if check_resolver_reachable "$resolver"; then
-      resolver_ok=$((resolver_ok + 1))
-    else
-      resolver_unreachable="${resolver_unreachable:+$resolver_unreachable, }$resolver"
-    fi
-  done
+  # Compare against the raw discovery result, before any normalization — a
+  # sentinel tested after whitespace stripping can never match.
+  if [ "$RESOLVERS" = "$NO_RESOLVERS" ]; then
+    [ "$signal_count" -gt 0 ] && signals="$signals,"
+    signals="$signals{\"source\":\"resolvers\",\"status\":\"unknown\",\"detail\":\"No DNS resolvers discovered — /etc/resolv.conf has no nameserver entries and no resolver list was available from the system\"}"
+    signal_count=$((signal_count + 1))
+    [ "$overall_status" = "healthy" ] && overall_status="warning"
+    actions='["Review /etc/resolv.conf for nameserver entries","Check the host DNS configuration"]'
+    [ "$exit_code" -lt 1 ] && exit_code=1
+  else
+    IFS=',' read -ra RESOLVER_LIST <<< "$RESOLVERS"
+    for resolver in "${RESOLVER_LIST[@]}"; do
+      [ "$resolver" = "$NO_RESOLVERS" ] && continue
+      resolver="${resolver//[[:space:]]/}"
+      [ -z "$resolver" ] && continue
+      resolver_total=$((resolver_total + 1))
+      local probe_rc=0
+      check_resolver_reachable "$resolver" || probe_rc=$?
+      if [ "$probe_rc" -eq 0 ]; then
+        resolver_ok=$((resolver_ok + 1))
+      elif [ "$probe_rc" -eq "$PROBE_UNAVAILABLE" ]; then
+        resolver_unprobed=$((resolver_unprobed + 1))
+        resolver_unverified="${resolver_unverified:+$resolver_unverified, }$resolver"
+      else
+        resolver_unreachable="${resolver_unreachable:+$resolver_unreachable, }$resolver"
+      fi
+    done
+  fi
 
-  if [ "$resolver_total" -gt 0 ]; then
-    if [ "$resolver_ok" -eq "$resolver_total" ]; then
+  # Only resolvers that were actually probed may contribute to a verdict.
+  local resolver_probed=$((resolver_total - resolver_unprobed))
+
+  if [ "$resolver_probed" -gt 0 ]; then
+    if [ "$resolver_ok" -eq "$resolver_probed" ]; then
       [ "$signal_count" -gt 0 ] && signals="$signals,"
-      signals="$signals{\"source\":\"resolvers\",\"status\":\"healthy\",\"detail\":\"All $resolver_total resolver(s) reachable ($RESOLVERS)\"}"
+      signals="$signals{\"source\":\"resolvers\",\"status\":\"healthy\",\"detail\":\"All $resolver_probed probed resolver(s) reachable ($RESOLVERS)\"}"
       signal_count=$((signal_count + 1))
     elif [ "$resolver_ok" -gt 0 ]; then
       [ "$signal_count" -gt 0 ] && signals="$signals,"
-      signals="$signals{\"source\":\"resolvers\",\"status\":\"warning\",\"detail\":\"$resolver_ok/$resolver_total resolvers reachable (unreachable: $resolver_unreachable)\"}"
+      signals="$signals{\"source\":\"resolvers\",\"status\":\"warning\",\"detail\":\"$resolver_ok/$resolver_probed probed resolvers reachable (unreachable: $resolver_unreachable)\"}"
       signal_count=$((signal_count + 1))
       [ "$overall_status" = "healthy" ] && overall_status="warning"
       actions='["Check unreachable DNS resolvers","Review /etc/resolv.conf"]'
@@ -150,6 +187,12 @@ run_health() {
       actions='["Check DNS server availability","Verify network connectivity","Review /etc/resolv.conf"]'
       exit_code=2
     fi
+  fi
+
+  if [ "$resolver_unprobed" -gt 0 ]; then
+    [ "$signal_count" -gt 0 ] && signals="$signals,"
+    signals="$signals{\"source\":\"resolvers\",\"status\":\"unknown\",\"detail\":\"Cannot verify $resolver_unprobed resolver(s) — neither dig nor nc is available to probe them ($resolver_unverified)\"}"
+    signal_count=$((signal_count + 1))
   fi
 
   # 2. Canary resolution — test that DNS actually resolves known-good hostnames
@@ -227,7 +270,16 @@ run_health() {
   # Build summary
   local health_status
   case "$overall_status" in
-    healthy)  health_status="healthy"; summary_parts="DNS healthy — resolvers reachable, canary resolution OK" ;;
+    healthy)
+      health_status="healthy"
+      if [ "$resolver_probed" -gt 0 ]; then
+        summary_parts="DNS healthy — resolvers reachable, canary resolution OK"
+      else
+        # Nothing probed the resolvers, so the summary must not claim they
+        # are reachable. The canary result is a real measurement; say only that.
+        summary_parts="DNS healthy — canary resolution OK, resolvers not verified"
+      fi
+      ;;
     warning)  health_status="recovering"; summary_parts="DNS degraded — check signals for details" ;;
     critical) health_status="unhealthy"; summary_parts="DNS failing — resolution or resolvers unreachable" ;;
     *)        health_status="unknown"; summary_parts="DNS status unknown" ;;
@@ -251,26 +303,37 @@ run_diagnose() {
 
   # 1. Configured resolvers
   get_resolvers
-  findings="$findings{\"id\":\"dns-resolvers\",\"severity\":\"info\",\"title\":\"Configured Resolvers\",\"detail\":\"$RESOLVERS\"}"
-  finding_count=$((finding_count + 1))
+  # Compare against the raw discovery result, before any normalization.
+  if [ "$RESOLVERS" = "$NO_RESOLVERS" ]; then
+    findings="$findings{\"id\":\"dns-resolvers\",\"severity\":\"warning\",\"title\":\"Configured Resolvers\",\"detail\":\"No DNS resolvers discovered — /etc/resolv.conf has no nameserver entries and no resolver list was available from the system\"}"
+    finding_count=$((finding_count + 1))
+    healthy=false
+  else
+    findings="$findings{\"id\":\"dns-resolvers\",\"severity\":\"info\",\"title\":\"Configured Resolvers\",\"detail\":\"$RESOLVERS\"}"
+    finding_count=$((finding_count + 1))
 
-  # 2. Test each resolver
-  IFS=',' read -ra RESOLVER_LIST <<< "$RESOLVERS"
-  for resolver in "${RESOLVER_LIST[@]}"; do
-    resolver=$(echo "$resolver" | tr -d ' ')
-    [ -z "$resolver" ] && continue
-    [ "$resolver" = "none found" ] && continue
-    if check_resolver_reachable "$resolver"; then
+    # 2. Test each resolver
+    IFS=',' read -ra RESOLVER_LIST <<< "$RESOLVERS"
+    for resolver in "${RESOLVER_LIST[@]}"; do
+      [ "$resolver" = "$NO_RESOLVERS" ] && continue
+      resolver="${resolver//[[:space:]]/}"
+      [ -z "$resolver" ] && continue
+      local resolver_id probe_rc=0
+      resolver_id="dns-resolver-${resolver//./-}"
+      check_resolver_reachable "$resolver" || probe_rc=$?
       [ "$finding_count" -gt 0 ] && findings="$findings,"
-      findings="$findings{\"id\":\"dns-resolver-$(echo "$resolver" | tr '.' '-')\",\"severity\":\"info\",\"title\":\"Resolver $resolver\",\"detail\":\"Reachable\"}"
+      if [ "$probe_rc" -eq 0 ]; then
+        findings="$findings{\"id\":\"$resolver_id\",\"severity\":\"info\",\"title\":\"Resolver $resolver\",\"detail\":\"Reachable\"}"
+      elif [ "$probe_rc" -eq "$PROBE_UNAVAILABLE" ]; then
+        # Not measured — must never be reported as reachable.
+        findings="$findings{\"id\":\"$resolver_id\",\"severity\":\"info\",\"title\":\"Resolver $resolver\",\"detail\":\"Unverified — neither dig nor nc is available to probe this resolver\"}"
+      else
+        findings="$findings{\"id\":\"$resolver_id\",\"severity\":\"warning\",\"title\":\"Resolver $resolver\",\"detail\":\"Unreachable\"}"
+        healthy=false
+      fi
       finding_count=$((finding_count + 1))
-    else
-      [ "$finding_count" -gt 0 ] && findings="$findings,"
-      findings="$findings{\"id\":\"dns-resolver-$(echo "$resolver" | tr '.' '-')\",\"severity\":\"warning\",\"title\":\"Resolver $resolver\",\"detail\":\"Unreachable\"}"
-      finding_count=$((finding_count + 1))
-      healthy=false
-    fi
-  done
+    done
+  fi
 
   # 3. Canary resolution with timing
   for canary in $CANARY_HOSTS; do
