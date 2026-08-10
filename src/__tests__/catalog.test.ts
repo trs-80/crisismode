@@ -264,7 +264,7 @@ const rejectionRows: RejectionRow[] = [
         expiresAt: 'whenever',
       },
     }),
-    reason: /expir/i,
+    reason: /unparseable expiresAt 'whenever'/i,
   },
   {
     name: 'a catalogId the operator never pre-authorized is not applied',
@@ -347,6 +347,42 @@ const rejectionRows: RejectionRow[] = [
     reason: /forbidden operation 'ddl'/i,
   },
   {
+    name: 'DDL hidden inside a DO block is caught',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-do', 'elevated', {
+          type: 'sql',
+          statement: 'DO $$ BEGIN DROP TABLE orders; END $$;',
+        }),
+      );
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'DDL hidden inside a dollar-quoted body is caught',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-dollar', 'elevated', {
+          type: 'sql',
+          statement: "SELECT run_maintenance($body$ DROP TABLE orders $body$)",
+        }),
+      );
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
+    name: 'DDL hidden inside dynamic EXECUTE is caught',
+    mutatePlan: (plan) => {
+      plan.steps.push(
+        makeSystemAction('step-execute', 'elevated', {
+          type: 'sql',
+          statement: "EXECUTE format('DROP TABLE %I', 'orders')",
+        }),
+      );
+    },
+    reason: /forbidden operation 'ddl'/i,
+  },
+  {
     name: 'a DDL command inside a conditional branch is caught',
     mutatePlan: (plan) => {
       plan.steps.push({
@@ -405,7 +441,7 @@ const rejectionRows: RejectionRow[] = [
     mutatePlan: (plan) => {
       plan.metadata.agentVersion = '1.4.0-rc.1';
     },
-    reason: /prerelease/i,
+    reason: /'1\.4\.0-rc\.1' is a prerelease build/i,
   },
   {
     name: 'a forbidden operation declared as a command subtype is caught',
@@ -449,7 +485,7 @@ const rejectionRows: RejectionRow[] = [
     mutatePlan: (plan) => {
       plan.metadata.agentVersion = 'nightly';
     },
-    reason: /version/i,
+    reason: /'nightly' is not a valid semantic version/i,
   },
   {
     name: 'an estimated duration above maxEstimatedDuration is rejected',
@@ -463,21 +499,21 @@ const rejectionRows: RejectionRow[] = [
     mutatePlan: (plan) => {
       plan.metadata.estimatedDuration = 'about an hour';
     },
-    reason: /duration/i,
+    reason: /'about an hour' is not a parseable ISO-8601 duration/i,
   },
   {
     name: 'a different agent is rejected',
     mutatePlan: (plan) => {
       plan.metadata.agentName = 'wrong-agent-name';
     },
-    reason: /agent name/i,
+    reason: /agent name 'wrong-agent-name' does not match/i,
   },
   {
     name: 'a different scenario is rejected',
     mutatePlan: (plan) => {
       plan.metadata.scenario = 'wrong_scenario';
     },
-    reason: /scenario/i,
+    reason: /scenario 'wrong_scenario' does not match/i,
   },
   {
     name: 'a plan with more steps than maxStepCount is rejected',
@@ -486,7 +522,7 @@ const rejectionRows: RejectionRow[] = [
         plan.steps.push(makeNotification(`step-extra-${plan.steps.length}`));
       }
     },
-    reason: /step count/i,
+    reason: /step count 16 exceeds maxStepCount 15/i,
   },
   {
     name: 'a plan missing a required checkpoint step is rejected',
@@ -525,7 +561,10 @@ describe('matchCatalog rejects on every declared criterion', () => {
 
     expect(result.matched).toBe(false);
     expect(result.coveredRiskLevels).toEqual([]);
-    expect(result.matchDetails.join('\n')).toMatch(reason);
+    // Match only the rejection lines: an accepted-criterion line such as
+    // "agent version 1.4.0 satisfies ..." must never satisfy a row's pattern.
+    const rejections = result.matchDetails.filter((d) => d.includes('rejected:'));
+    expect(rejections.join('\n')).toMatch(reason);
   });
 });
 

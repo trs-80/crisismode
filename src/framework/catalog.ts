@@ -382,10 +382,11 @@ const SQL_COMMENT = /--[^\n]*|\/\*[\s\S]*?\*\//g;
  * `/* note *\/` cannot hide the verb either.
  *
  * This is a conservative classifier, not a SQL parser: a `;` inside a string
- * literal or a dollar-quoted body splits wrongly, which produces extra
- * fragments and therefore extra classification. It errs toward classifying a
- * statement as forbidden rather than missing one — the right direction for a
- * check that gates standing approvals.
+ * literal splits wrongly, which produces extra fragments and therefore extra
+ * classification. It errs toward classifying a statement as forbidden rather
+ * than missing one — the right direction for a check that gates standing
+ * approvals. Constructs it cannot decompose at all are handled by
+ * {@link OPAQUE_SQL_BODY} rather than being split.
  */
 function splitStatements(statement: string): string[] {
   return statement
@@ -396,11 +397,25 @@ function splitStatements(statement: string): string[] {
 }
 
 /**
+ * Constructs whose contents this classifier cannot see into: dollar-quoted
+ * bodies (`$$ ... $$`, `$tag$ ... $tag$`), `DO` blocks, and dynamic `EXECUTE`.
+ * Each can carry an arbitrary statement past a verb-prefix check — `DO $$
+ * BEGIN DROP TABLE orders; END $$` splits into fragments that begin with `DO`
+ * and `END`, neither of which is a DDL verb.
+ */
+const OPAQUE_SQL_BODY = /\$[A-Za-z_]*\$|^\s*(?:do|execute)\b/i;
+
+/**
  * Operation classes a command performs, used to test `forbiddenOperations`.
  *
  * Classes are tested independently, never `else if`: `CREATE ROLE recovery_bot`
  * is both DDL and a privilege change, and a catalog forbidding only one of the
  * two must still reject it.
+ *
+ * A statement this classifier cannot decompose is treated as performing every
+ * class it could be hiding, so the unparseable case fails closed rather than
+ * open. The cost is a legitimate `DO` block or dynamic `EXECUTE` losing its
+ * standing approval and going to a human, which is the acceptable direction.
  */
 function classifyCommand(command: Command): Set<string> {
   const classes = new Set<string>();
@@ -408,6 +423,10 @@ function classifyCommand(command: Command): Set<string> {
   if (command.operation) classes.add(command.operation.trim().toLowerCase());
   const statement = command.statement;
   if (statement) {
+    if (OPAQUE_SQL_BODY.test(statement)) {
+      classes.add('ddl');
+      classes.add('admin_privilege');
+    }
     for (const fragment of splitStatements(statement)) {
       if (ADMIN_PRIVILEGE_SQL.test(fragment)) classes.add('admin_privilege');
       if (DDL_SQL.test(fragment)) classes.add('ddl');

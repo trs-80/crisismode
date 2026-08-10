@@ -118,6 +118,13 @@ async function runDemoScenario(): Promise<void> {
   display.phase(8, 'Catalog Matching');
   display.step(8, 'Matching plan against pre-authorized catalog');
 
+  // No `environment` is passed on purpose. The demo runs against a simulator
+  // and has no SiteConfig, so it genuinely does not know a deployment
+  // environment; "unknown" is the true answer, and the catalog rejecting on it
+  // is the fail-closed rule working. Feeding the criterion the fixture's own
+  // expected value would make that check self-satisfying — the exact defect
+  // this module was fixed for. Real call sites (live.ts, webhook.ts) pass
+  // SiteConfig.metadata.environment.
   const catalogMatch = matchCatalog(plan, {
     preAuthorizedCatalogs: context.preAuthorizedCatalogs,
   });
