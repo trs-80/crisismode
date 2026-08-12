@@ -907,7 +907,7 @@
         CrisisMode is the recovery layer for your infrastructure. Monitoring tells you something is wrong. CrisisMode tells you what to do about it — safely. AI-powered diagnosis, validated recovery plans, human-in-the-loop execution with an immutable forensic trail — and now, a scale-readiness report that tells you what will break under load <em>before</em> it does.
       </p>
       <div class="hero-actions">
-        <a href="https://github.com/trs-80/crisismode/releases/latest" class="btn btn-primary" target="_blank" rel="noopener">Download v0.8.0</a>
+        <a href="https://github.com/trs-80/crisismode/releases/latest" class="btn btn-primary" target="_blank" rel="noopener">Download v0.10.0</a>
         <a href="https://github.com/trs-80/crisismode" class="btn" target="_blank" rel="noopener">View on GitHub</a>
         <a href="#how-it-works" class="btn">How It Works &darr;</a>
       </div>
@@ -958,7 +958,7 @@
 
       <div class="ready-stats reveal">
         <div class="ready-stat">
-          <div class="ready-stat-value">19</div>
+          <div class="ready-stat-value">26</div>
           <div class="ready-stat-label">Recovery Agents</div>
           <div class="ready-stat-detail">Execute-capable live clients for PostgreSQL, Redis, Kubernetes, AWS, and Vercel; the rest run diagnosis-only or simulator-backed</div>
         </div>
@@ -1010,7 +1010,7 @@
   <!-- READINESS -->
   <section class="readiness-section" id="readiness">
     <div class="section-inner">
-      <div class="section-label reveal">New in v0.8.0</div>
+      <div class="section-label reveal">Scale Readiness</div>
       <h2 class="section-title reveal">Your app works. Will it survive success?</h2>
       <p class="section-description reveal">
         Recovery is what you need <em>after</em> things break. <code class="inline-code">crisismode readiness</code> is what you run <em>before</em>: one command that checks the failure modes that take working apps down at scale — connection limits, missing indexes, stuck transactions, slow queries — and computes how much load your stack can actually take. Every number is labeled with where it came from. Nothing is ever made up.
@@ -1045,9 +1045,9 @@
 
       <div class="features-grid reveal">
         <div class="feature-card">
-          <div class="feature-icon">01 — Six Rules</div>
+          <div class="feature-icon">01 — Eight Rules</div>
           <h3>Checks That Map to Real Outages</h3>
-          <p>Connection headroom, connection-limit tiers, idle transactions, missing indexes, slow queries, serverless pooling. Each finding explains what it means in plain English, what to do about it, and where to learn more — whether you've run production for ten years or shipped your first app last week.</p>
+          <p>Connection headroom, connection-limit tiers, idle transactions, missing indexes, slow queries, serverless pooling, missing vector indexes, and pgvector list sizing. Each finding explains what it means in plain English, what to do about it, and where to learn more — whether you've run production for ten years or shipped your first app last week.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">02 — Capacity Ceilings</div>
@@ -1366,7 +1366,7 @@
         <div><span class="t-amber">./crisismode readiness</span><span class="t-dim">&nbsp;&nbsp;# what breaks under load?</span></div>
       </div>
       <div class="cta-actions reveal">
-        <a href="https://github.com/trs-80/crisismode/releases/latest" class="btn btn-primary" target="_blank" rel="noopener">Download v0.8.0</a>
+        <a href="https://github.com/trs-80/crisismode/releases/latest" class="btn btn-primary" target="_blank" rel="noopener">Download v0.10.0</a>
         <a href="https://github.com/trs-80/crisismode" class="btn" target="_blank" rel="noopener">GitHub Repository</a>
         <a href="blog/" class="btn">Read the Blog</a>
       </div>
@@ -1375,7 +1375,7 @@
 
   <!-- FOOTER -->
   <footer>
-    <p>CrisisMode v0.8.0 &mdash; Recovery Agent Contract Specification v0.3.0-draft &mdash; Apache 2.0</p>
+    <p>CrisisMode v0.10.0 &mdash; Recovery Agent Contract Specification v0.3.0-draft &mdash; Apache 2.0</p>
   </footer>
 
   <script src="assets/asciinema-player.min.js"></script>
