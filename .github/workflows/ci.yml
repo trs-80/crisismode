@@ -35,6 +35,13 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
+      # oxlint is the pre-commit gate, not a CI gate — ESLint below is a
+      # superset. It runs here (~0.5s) only so a broken or drifted
+      # .oxlintrc.json fails a PR instead of silently breaking every
+      # contributor's commit hook.
+      - name: Lint (oxlint — pre-commit hook parity)
+        run: pnpm lint:fast
+
       - name: Lint
         run: pnpm lint
 

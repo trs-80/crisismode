@@ -229,8 +229,28 @@ These are enforced by the validator (`src/framework/validator.ts`).
 - `pnpm run typecheck` — runs `tsc --noEmit`
 
 ### Linting
-- `pnpm run lint` — ESLint (flat config in `eslint.config.js`); `pnpm run lint:fix` to autofix
+
+Two linters run the same rule set at different speeds. **ESLint is authoritative** — oxlint exists only so the pre-commit hook stays cheap.
+
+- `pnpm run lint` — ESLint (flat config in `eslint.config.js`), ~15s over 619 files; `pnpm run lint:fix` to autofix. Runs in CI and is the gate that decides whether a PR is clean.
+- `pnpm run lint:fast` — oxlint (`.oxlintrc.json`), ~0.5s. Runs in the pre-commit hook. Also runs in CI, purely so a broken or drifted `.oxlintrc.json` fails a PR instead of silently breaking every contributor's hook.
 - Lint-time TypeScript is pinned to 6.0.2 via `.pnpmfile.cjs` (typescript-eslint does not yet support the TS 7 native compiler); `tsc` stays on TS 7
+
+**`.oxlintrc.json` must mirror `eslint.config.js`.** When you add, remove, or retune a rule in one, do the same in the other — nothing enforces the correspondence automatically. The mapping today:
+
+| `eslint.config.js` | `.oxlintrc.json` |
+|---|---|
+| `js.configs.recommended` + `tseslint.configs.recommended` | `categories.correctness: error`, `plugins: ["typescript"]` |
+| `@typescript-eslint/no-explicit-any` | `typescript/no-explicit-any` |
+| `@typescript-eslint/consistent-type-imports` | `typescript/consistent-type-imports` |
+| `@typescript-eslint/no-unused-vars` (+ `^_` patterns) | `typescript/no-unused-vars` (same options) |
+| test overrides (`no-non-null-assertion`, `no-explicit-any` off) | `overrides` block, same globs |
+| `ignores` | `ignorePatterns` |
+| `no-restricted-syntax` — no default exports | **not expressible in oxlint** — see below |
+
+oxlint does not implement `no-restricted-syntax` (its config parser rejects the rule outright), so the no-default-exports convention cannot move. The pre-commit hook greps staged `.ts`/`.tsx` for `^export default ` instead, exempting the same tool-config and `.d.ts` paths ESLint exempts. That grep is a heuristic — it can be fooled by the phrase inside a string or comment — so CI's ESLint run remains the real check.
+
+oxlint's `unicorn` and `oxc` plugins are on by default and flag opinions this codebase has never enforced; `.oxlintrc.json` names `plugins` explicitly to keep them off. Don't enable them without also deciding what ESLint should do about the same code. `--type-aware` is deliberately unused: it needs the extra `oxlint-tsgolint` binary, and `pnpm run typecheck` already covers that ground in ~1s.
 
 ### CI
 - GitHub Actions (`.github/workflows/ci.yml`) — runs typecheck, unit tests, and gitleaks on push to main and PRs
