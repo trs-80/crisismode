@@ -8,8 +8,34 @@ if echo "$STAGED_FILES" | grep -qE '\.tsx?$'; then
     echo "🔍 Running TypeScript type check..."
     pnpm run typecheck || exit 1
 
-    echo "🧹 Running ESLint..."
-    pnpm run lint || exit 1
+    # oxlint enforces the same rules as eslint.config.js (see .oxlintrc.json)
+    # in ~0.5s where ESLint takes ~15s, which is what makes this hook cheap
+    # enough to leave on. ESLint stays authoritative and still runs in CI —
+    # oxlint has no `no-restricted-syntax`, so the one rule it cannot express
+    # (no default exports) is grepped below.
+    echo "🧹 Running oxlint..."
+    pnpm run lint:fast || exit 1
+
+    # Convention: named exports only. Tool configs and ambient declarations are
+    # exempt in eslint.config.js, so they are exempt here too. A grep can be
+    # fooled by the phrase appearing in a string or comment; CI's ESLint run is
+    # the real gate, this is just the fast local signal.
+    EXPORT_CANDIDATES=$(echo "$STAGED_FILES" \
+        | grep -E '\.tsx?$' \
+        | grep -vE '(^|/)(scripts|site)/' \
+        | grep -vE '\.d\.ts$' \
+        | grep -vE '(^|/)[^/]*\.config\.(js|ts|mjs)$' || true)
+    if [ -n "$EXPORT_CANDIDATES" ]; then
+        DEFAULT_EXPORTS=$(echo "$EXPORT_CANDIDATES" \
+            | xargs grep -HnE '^[[:space:]]*export[[:space:]]+default[[:space:]]' 2>/dev/null || true)
+        if [ -n "$DEFAULT_EXPORTS" ]; then
+            echo "❌ Default exports found (repo convention: named exports only):"
+            echo "$DEFAULT_EXPORTS" | head -5 | sed 's/^/   /'
+            echo ""
+            echo "   To override: git commit --no-verify"
+            exit 1
+        fi
+    fi
 fi
 
 # --- 2. Gitleaks secret detection ---
