@@ -60,7 +60,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.116.0",
+    "@anthropic-ai/sdk": "^0.117.1",
     "@crisismode/agent-sdk": "workspace:*",
     "@kubernetes/client-node": "^1.4.0",
     "@langchain/core": "^1.2.3",
@@ -95,7 +95,7 @@
     "postject": "^1.0.0-alpha.6",
     "tsx": "^4.23.1",
     "typescript": "^7.0.2",
-    "typescript-eslint": "8.66.0",
+    "typescript-eslint": "8.67.0",
     "vitest": "^4.1.10"
   }
 }
